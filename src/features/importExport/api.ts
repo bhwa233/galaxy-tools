@@ -1,6 +1,6 @@
 import { t, type TFunction } from "i18next";
-import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "../../platform/desktop";
+import { open, save } from "../../platform/desktop";
 import type { Note } from "../notes/types";
 
 const markdownFilters = [{ name: "Markdown", extensions: ["md"] }];

@@ -1,4 +1,4 @@
-import { emit } from "@tauri-apps/api/event";
+import { emit } from "../../platform/desktop";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   TILE_WINDOW_UNPINNED_EVENT,
@@ -7,7 +7,7 @@ import {
   tileSurfaceModeUnpinNoteId,
 } from "./tileWindowEvents";
 
-vi.mock("@tauri-apps/api/event", () => ({
+vi.mock("../../platform/desktop", () => ({
   emit: vi.fn(),
 }));
 

@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "../../platform/desktop";
+import { open } from "../../platform/desktop";
 import type { AppConfig, ViewMode } from "./types";
 
 export interface ShortcutCheckResult {

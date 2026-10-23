@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "../../platform/desktop";
+import { open } from "../../platform/desktop";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   checkGlobalShortcut,
@@ -10,11 +10,8 @@ import {
 } from "./api";
 import type { AppConfig } from "./types";
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../../platform/desktop", () => ({
   invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
@@ -27,7 +24,7 @@ describe("settings api", () => {
     mockedOpen.mockReset();
   });
 
-  test("gets config through Rust", async () => {
+  test("gets config through the desktop adapter", async () => {
     const config: AppConfig = {
       locale: "zh-CN",
       dataDir: "D:\\notes",
@@ -61,7 +58,7 @@ describe("settings api", () => {
     expect(invoke).toHaveBeenCalledWith("config_get");
   });
 
-  test("saves config through Rust", async () => {
+  test("saves config through the desktop adapter", async () => {
     const config: AppConfig = {
       locale: "zh-CN",
       dataDir: "D:\\notes",
@@ -95,7 +92,7 @@ describe("settings api", () => {
     expect(invoke).toHaveBeenCalledWith("config_save", { config });
   });
 
-  test("checks global shortcut availability through Rust", async () => {
+  test("checks global shortcut availability through the desktop adapter", async () => {
     const result = {
       available: false,
       conflictType: "system",

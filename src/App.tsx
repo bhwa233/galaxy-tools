@@ -11,11 +11,14 @@ import { applyTheme, watchSystemTheme } from "./features/settings/theme";
 import type { AppConfig, ThemeOption } from "./features/settings/types";
 import { getInitialRoute } from "./features/windows/windowRoutes";
 import { syncLanguage } from "./locales";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, listen } from "./platform/desktop";
 
 function App() {
   const route = getInitialRoute();
   const activeView = route.view;
+  useEffect(() => {
+    void invoke("desktop_ready").catch(console.error);
+  }, []);
 
   useEffect(() => {
     let cleanup = () => {};

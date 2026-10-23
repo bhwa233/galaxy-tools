@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform/desktop";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   cancelUpdate,
@@ -14,7 +14,7 @@ import {
 } from "./api";
 import type { UpdateSettings } from "./types";
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../../platform/desktop", () => ({
   invoke: vi.fn(),
 }));
 

@@ -1,5 +1,5 @@
 import { t, type TFunction } from "i18next";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform/desktop";
 import type { Note, NoteMetadata, SaveNoteRequest } from "./types";
 
 interface SerializedAppError {

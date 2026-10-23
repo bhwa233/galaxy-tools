@@ -1,3 +1,4 @@
+import type { ClosePrepareRequest } from "../platform/desktop";
 import {
   useCallback,
   useDeferredValue,
@@ -11,8 +12,8 @@ import {
 import type { MouseEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emit, listen, type UnlistenFn } from "../platform/desktop";
+import { getCurrentWindow } from "../platform/desktop";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
 import { showToast } from "./Toast";
@@ -33,7 +34,8 @@ import {
 } from "../features/settings/api";
 import type { AppConfig, ViewMode } from "../features/settings/types";
 import { normalizeTileColor } from "../features/settings/tileColor";
-import { getUpdateStatus, reportInstallPreparation } from "../features/update/api";
+import { getUpdateStatus } from "../features/update/api";
+import { reportClosePreparation } from "../platform/desktop";
 import {
   ABOUT_UPDATE_LABEL_DURATION_MS,
   applyAboutUpdateStatus,
@@ -41,11 +43,7 @@ import {
   dismissAboutUpdateReminderText,
   type AboutUpdateReminderState,
 } from "../features/update/presentation";
-import type {
-  UpdateErrorPayload,
-  UpdateInstallPrepareRequest,
-  UpdateState,
-} from "../features/update/types";
+import type { UpdateErrorPayload, UpdateState } from "../features/update/types";
 import { BackgroundLayer } from "./BackgroundLayer";
 import { POPUP_VIEWPORT_MARGIN, useViewportPopupPosition } from "./popupPosition";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
@@ -899,12 +897,12 @@ export function MainWindow({
           if (!currentId) return;
           const stillExists = loaded.some((n) => n.id === currentId);
           if (stillExists) {
-            if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
+            if (!["dirty", "saving", "error"].includes(saveStateRef.current)) {
               void getNote(currentId)
                 .then((note) => {
                   if (isStale()) return;
                   if (selectedIdRef.current !== currentId) return;
-                  if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
+                  if (["dirty", "saving", "error"].includes(saveStateRef.current)) {
                     return;
                   }
                   titleValueRef.current = note.title;
@@ -1185,37 +1183,37 @@ export function MainWindow({
   );
 
   useEffect(() => {
-    const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
+    const unlisten = listen<ClosePrepareRequest>("desktop:prepare-close", (event) => {
       const respond = async () => {
         const windowLabel = windowLabelRef.current;
         // 无未保存修改时直接上报就绪：避免排进 saveQueueRef，被正在执行的
-        // 防抖自动保存拖住、不必要地延迟安装准备响应
-        if (saveStateRef.current !== "dirty") {
-          await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
+        // 防抖自动保存拖住、不必要地延迟关闭保存响应
+        if (!["dirty", "saving", "error"].includes(saveStateRef.current)) {
+          await reportClosePreparation(event.payload.requestId, windowLabel, "ready");
           return;
         }
-        const saved = await saveCurrentNote();
-        await reportInstallPreparation(
+        const saved = await saveCurrentNote(true);
+        await reportClosePreparation(
           event.payload.requestId,
           windowLabel,
-          saved ? "ready" : "failed",
+          saved && saveStateRef.current === "saved" ? "ready" : "failed",
           saved
             ? undefined
-            : t("settings.update.error.installSaveFailed", {
-                defaultValue: "安装前自动保存失败，请先处理当前笔记后重试",
+            : t("errors.closeSaveFailed", {
+                defaultValue: "关闭前保存失败，请先保存当前笔记后重试",
               }),
         );
       };
 
       void respond().catch(async (error) => {
-        await reportInstallPreparation(
+        await reportClosePreparation(
           event.payload.requestId,
           windowLabelRef.current,
           "failed",
           error instanceof Error
             ? error.message
-            : t("settings.update.error.installSaveFailed", {
-                defaultValue: "安装前自动保存失败，请先处理当前笔记后重试",
+            : t("errors.closeSaveFailed", {
+                defaultValue: "关闭前保存失败，请先保存当前笔记后重试",
               }),
         ).catch(() => undefined);
       });
@@ -1976,7 +1974,7 @@ export function MainWindow({
       <div className="relative noise-bg bg-cloud overflow-hidden flex flex-col flex-1">
         <BackgroundLayer config={settingsConfig} />
         <div
-          className={`relative z-10 flex items-center justify-between h-11 bg-paper/55 backdrop-blur-[1px] border-b border-paper-deep/30 shrink-0 select-none cursor-default ${
+          className={`electron-title-drag relative z-10 flex items-center justify-between h-11 bg-paper/55 backdrop-blur-[1px] border-b border-paper-deep/30 shrink-0 select-none cursor-default ${
             isMacOS ? "pl-20 pr-5" : "pl-5 pr-0"
           }`}
           onMouseDown={handleTitleBarMouseDown}

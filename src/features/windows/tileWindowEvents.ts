@@ -1,4 +1,4 @@
-import { emit } from "@tauri-apps/api/event";
+import { emit } from "../../platform/desktop";
 import type { NoteSurfaceMode } from "./surfaceMode";
 
 export const TILE_WINDOW_CLOSED_EVENT = "tile-window-closed";

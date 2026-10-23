@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-23",
+  "baseCommit": "23e6df7bfaf785c0bbf7f7c2c05b6d01a53a59e9",
+  "sourceTreeDirty": true,
+  "sourceSnapshotSha256": "0394133cfba202dfd5169bb9b448572c5ca33b2672cd71053f509796df564c6d",
+  "electron": "45.0.0",
+  "electronBuilder": "26.15.3",
+  "target": "Windows 11 x64",
+  "hardwareAcceleration": "enabled",
+  "sandbox": "enabled",
+  "codeSigned": false,
+  "unitTests": {
+    "files": 24,
+    "passed": 100
+  },
+  "nativeAcceptance": "Docs/evidence/electron-windows-smoke.json",
+  "buildEnvironment": "Windows Node, temporary staging, builder traversal collector, NSIS prepackaged input",
+  "artifacts": [
+    {
+      "path": "release-electron/win-unpacked/resources/app.asar",
+      "sizeBytes": 22994149,
+      "sha256": "a5249b721ebc8ff069f7df95abb67f7af100f7601d1a4b1daf7c953fff2972a6"
+    },
+    {
+      "path": "release-electron/win-unpacked/花笺 Electron.exe",
+      "sizeBytes": 249798144,
+      "sha256": "adcc81dcfb40f1c9eb4feacaad64960b08278480f30a91329dda3740786186bb"
+    },
+    {
+      "path": "release-electron/floral-notepaper-electron-1.2.0-x64.exe",
+      "sizeBytes": 126783940,
+      "sha256": "7731fa6d440947fd61f768c3474eb6ca9285d39cb4a4bc4c969aadf15cb8d553"
+    }
+  ]
+}

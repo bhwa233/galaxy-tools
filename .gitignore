@@ -60,10 +60,14 @@ Desktop.ini
 src-tauri/icons/macOS
 
 ## Generated
-src/generated/contributors.json
 
 ## Temp
 temp/
 nul
 tsconfig.tsbuildinfo
 Docs/windows-install-chain-code-review.md
+
+# Electron build/runtime outputs
+dist-electron/
+release-electron/
+.electron-smoke/

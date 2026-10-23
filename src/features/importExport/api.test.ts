@@ -1,13 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "../../platform/desktop";
+import { open, save } from "../../platform/desktop";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { exportMarkdownNote, importMarkdownNote } from "./api";
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../../platform/desktop", () => ({
   invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),
 }));

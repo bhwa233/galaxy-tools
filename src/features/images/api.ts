@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform/desktop";
 
 export function saveImage(noteId: string, data: Uint8Array, extension: string): Promise<string> {
   // 图片字节流作为 raw payload 直传（元数据走 headers），避免把二进制

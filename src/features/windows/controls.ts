@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
-import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "../../platform/desktop";
+import { setWindowBounds, startPointerOperation } from "../../platform/desktop";
+import { getCurrentWindow } from "../../platform/desktop";
 import type { WindowBounds } from "./api";
 
 export type ResizeDirection = "NorthWest" | "NorthEast" | "SouthWest" | "SouthEast";
@@ -45,9 +45,9 @@ export function startCurrentWindowDrag(): Promise<void> {
   return getCurrentWindow().startDragging();
 }
 
-/** Shift window by `(dx, dy)` logical px then start an OS drag, in one IPC. */
-export function startCurrentWindowDragWithOffset(dx: number, dy: number): Promise<void> {
-  return invoke("start_window_drag_with_offset", { dx, dy });
+/** Pointer capture keeps the original press position, including the tile drag dead zone. */
+export function startCurrentWindowDragWithOffset(_dx: number, _dy: number): Promise<void> {
+  return startPointerOperation();
 }
 
 export function startCurrentWindowResize(direction: ResizeDirection = "SouthEast"): Promise<void> {
@@ -67,11 +67,7 @@ export async function getCurrentWindowBounds(): Promise<WindowBounds> {
 }
 
 export async function setCurrentWindowBounds(bounds: WindowBounds): Promise<void> {
-  const window = getCurrentWindow();
-  await Promise.all([
-    window.setPosition(new PhysicalPosition(bounds.x, bounds.y)),
-    window.setSize(new PhysicalSize(bounds.width, bounds.height)),
-  ]);
+  await setWindowBounds(bounds);
 }
 
 export async function animateCurrentWindowBounds(

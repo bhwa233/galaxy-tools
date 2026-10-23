@@ -16,14 +16,6 @@
   font-display: swap;
 }
 
-@font-face {
-  font-family: "Source Han Serif SC";
-  src: url("./assets/fonts/SourceHanSerifSC-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 @theme {
   --color-paper: #f6f3ec;
   --color-paper-warm: #f0ebe0;
@@ -754,4 +746,18 @@ input::placeholder {
 }
 :root[data-theme="dark"] .markdown-alert-caution .markdown-alert-title {
   color: #e87462;
+}
+
+/* Electron hit testing is native: these regions work across Windows DPI settings. */
+.electron-title-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.electron-title-drag button,
+.electron-title-drag input,
+.electron-title-drag textarea,
+.electron-title-drag a,
+.electron-title-drag [role="button"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }

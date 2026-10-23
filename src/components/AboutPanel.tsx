@@ -1,5 +1,5 @@
-import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion } from "../platform/desktop";
+import { openUrl } from "../platform/desktop";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
