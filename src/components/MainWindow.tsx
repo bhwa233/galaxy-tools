@@ -81,7 +81,13 @@ import {
   getNoteContextMenuItems,
   type NoteContextMenuAction,
 } from "../features/notes/noteContextMenu";
-import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
+import {
+  openNotepadWindow,
+  showNoteOnDesktop,
+  takeStartupFile,
+  setNotePinned,
+  hideNoteOnDesktop,
+} from "../features/windows/api";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -89,11 +95,9 @@ import {
   isCurrentWindowMaximized,
   startCurrentWindowDrag,
 } from "../features/windows/controls";
-import {
-  TILE_WINDOW_CLOSED_EVENT,
-  TILE_WINDOW_UNPINNED_EVENT,
-  syncPinnedTileIds,
-} from "../features/windows/tileWindowEvents";
+import { useNoteWindowStates } from "../features/windows/useNoteWindowStates";
+import { NoteStateBadges } from "../features/windows/NoteStateBadges";
+import type { NoteWindowState } from "../features/windows/noteWindowState";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 type SidePanelMode = "about" | "settings";
@@ -307,10 +311,6 @@ function runEditorCommand(textarea: HTMLTextAreaElement | null, command: "undo" 
   return document.execCommand(command);
 }
 
-export function pinTileButtonTitle(isPinned: boolean): string {
-  return isPinned ? "取消钉屏" : "钉到屏幕";
-}
-
 interface LoadEpoch {
   // 开始一次新的异步加载，返回本次 epoch token；之后用 isCurrent 校验是否仍然有效
   bump: () => number;
@@ -320,7 +320,7 @@ interface LoadEpoch {
   isCurrent: (token: number) => boolean;
 }
 
-// 统一封装"加载竞态守卫"：每次切换/加载笔记自增 epoch，异步结果回来后用
+// 统一封装"加载竞态守卫"：每次切换/加载便签自增 epoch，异步结果回来后用
 // isCurrent 判断是否过期。集中此处后，新增异步加载路径只需 bump/isCurrent 两步，
 // 避免裸 ref 在多处内联导致的"忘记连线 → stale 结果覆盖新选中"竞态回归
 function useLoadEpoch(): LoadEpoch {
@@ -376,7 +376,18 @@ export function MainWindow({
   const [noteTransitionKey, setNoteTransitionKey] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteExiting, setDeleteExiting] = useState(false);
-  const [pinnedTileIds, setPinnedTileIds] = useState<Set<string>>(new Set());
+  const noteWindowStates = useNoteWindowStates();
+  const pinnedIds = useMemo(
+    () =>
+      new Set(
+        Object.values(noteWindowStates)
+          .filter((state) => state.pinned)
+          .map((state) => state.noteId),
+      ),
+    [noteWindowStates],
+  );
+  const stateFor = (id: string): NoteWindowState =>
+    noteWindowStates[id] ?? { noteId: id, pinned: false, presence: "unopened", view: "notepad" };
   const [categories, setCategories] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [activeCategory, setActiveCategory] = useState<string>("");
@@ -439,10 +450,10 @@ export function MainWindow({
   notesRef.current = notes;
   const externalFilesRef = useRef(externalFiles);
   externalFilesRef.current = externalFiles;
-  // 每次"应用/切换当前笔记"都会自增；异步加载完成后若 epoch 已变化，说明用户
-  // 已切换到别处，该次结果直接丢弃，避免旧的加载结果覆盖新选中的笔记
+  // 每次"应用/切换当前便签"都会自增；异步加载完成后若 epoch 已变化，说明用户
+  // 已切换到别处，该次结果直接丢弃，避免旧的加载结果覆盖新选中的便签
   const loadEpoch = useLoadEpoch();
-  // 串行化所有保存请求，避免自动保存与切换触发的保存并发写同一篇笔记
+  // 串行化所有保存请求，避免自动保存与切换触发的保存并发写同一张便签
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const selectedNote = useMemo(
@@ -466,7 +477,11 @@ export function MainWindow({
     () => notes.find((note) => note.id === noteMenu?.noteId) ?? null,
     [noteMenu?.noteId, notes],
   );
-  const noteContextMenuItems = useMemo(() => getNoteContextMenuItems(t), [t]);
+  const noteContextMenuItems = useMemo(
+    () =>
+      getNoteContextMenuItems(t, noteMenu?.noteId ? noteWindowStates[noteMenu.noteId] : undefined),
+    [t, noteMenu?.noteId, noteWindowStates],
+  );
   const saveStateLabel = useMemo<Record<SaveState, string>>(
     () => ({
       idle: t("main.statusBar.saveState.idle", { defaultValue: "未选择" }),
@@ -588,8 +603,8 @@ export function MainWindow({
   const filteredNotes = useMemo(() => filterNotes(notes, searchQuery), [notes, searchQuery]);
 
   const categoryGroups = useMemo(
-    () => groupNotesByCategory(filteredNotes, categories),
-    [filteredNotes, categories],
+    () => groupNotesByCategory(filteredNotes, categories, pinnedIds),
+    [filteredNotes, categories, pinnedIds],
   );
 
   // 打字时输入框优先响应：预览渲染与字数/字节统计使用延迟值，
@@ -635,7 +650,7 @@ export function MainWindow({
     async (id: string) => {
       const epoch = loadEpoch.bump();
       const note = await getNote(id);
-      // 加载期间用户又切换/加载了别的笔记，丢弃本次结果
+      // 加载期间用户又切换/加载了别的便签，丢弃本次结果
       if (!loadEpoch.isCurrent(epoch)) return;
       applyNote(note);
       replaceNoteMetadata(note);
@@ -886,8 +901,8 @@ export function MainWindow({
 
   useEffect(() => {
     const unlisten = listen("notes-changed", () => {
-      // 记录事件到达时的 epoch；其间用户一旦切换/加载了笔记，本次同步即过期，
-      // 不再用过期的列表快照去改选中或回填内容，避免把选中"拉回"刚保存的旧笔记
+      // 记录事件到达时的 epoch；其间用户一旦切换/加载了便签，本次同步即过期，
+      // 不再用过期的列表快照去改选中或回填内容，避免把选中"拉回"刚保存的旧便签
       const epochAtEvent = loadEpoch.peek();
       const isStale = () => !loadEpoch.isCurrent(epochAtEvent);
       void refreshNotes()
@@ -1021,24 +1036,6 @@ export function MainWindow({
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<string>(TILE_WINDOW_CLOSED_EVENT, (event) => {
-      setPinnedTileIds((previous) => syncPinnedTileIds(previous, event.payload, false));
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen<string>(TILE_WINDOW_UNPINNED_EVENT, (event) => {
-      setPinnedTileIds((previous) => syncPinnedTileIds(previous, event.payload, false));
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
     if (!selectedExternalFile) return;
 
     const interval = window.setInterval(async () => {
@@ -1128,8 +1125,8 @@ export function MainWindow({
       const id = selectedIdRef.current;
       if (!id) return false;
 
-      // 在保存瞬间对当前笔记做快照；之后用户切换笔记不影响本次写入的内容，
-      // 保存完成后也只在"仍停留在这篇笔记"时才更新保存状态
+      // 在保存瞬间对当前便签做快照；之后用户切换便签不影响本次写入的内容，
+      // 保存完成后也只在"仍停留在这张便签"时才更新保存状态
       const titleSnapshot = titleValueRef.current;
       const contentSnapshot = contentValueRef.current;
       const stillCurrent = () => selectedIdRef.current === id;
@@ -1200,7 +1197,7 @@ export function MainWindow({
           saved
             ? undefined
             : t("errors.closeSaveFailed", {
-                defaultValue: "关闭前保存失败，请先保存当前笔记后重试",
+                defaultValue: "关闭前保存失败，请先保存当前便签后重试",
               }),
         );
       };
@@ -1213,7 +1210,7 @@ export function MainWindow({
           error instanceof Error
             ? error.message
             : t("errors.closeSaveFailed", {
-                defaultValue: "关闭前保存失败，请先保存当前笔记后重试",
+                defaultValue: "关闭前保存失败，请先保存当前便签后重试",
               }),
         ).catch(() => undefined);
       });
@@ -1514,6 +1511,31 @@ export function MainWindow({
     const note = noteMenuTarget;
     if (!note) return;
 
+    if (action === "desktop") {
+      setNoteMenuClosing(true);
+      void (async () => {
+        try {
+          // Only the context-menu target is opened. Its active draft must reach disk first.
+          if (note.id === selectedIdRef.current && !(await saveCurrentNote())) return;
+          await showNoteOnDesktop(note.id);
+        } catch (error) {
+          showToast(getErrorMessage(error));
+        }
+      })();
+      return;
+    }
+
+    if (action === "pin") {
+      setNoteMenuClosing(true);
+      void toggleNotePin(note.id);
+      return;
+    }
+    if (action === "hide") {
+      setNoteMenuClosing(true);
+      void hideNoteOnDesktop(note.id).catch((error) => showToast(getErrorMessage(error)));
+      return;
+    }
+
     if (action === "export") {
       setNoteMenuClosing(true);
       void handleExportNote(note);
@@ -1805,7 +1827,7 @@ export function MainWindow({
     [cancelScrollMeasurement, content, scrollSyncEnabled, viewMode],
   );
 
-  // 切换笔记时通过 rAF 测量（不阻塞首帧渲染），编辑时 debounce 避免频繁重排
+  // 切换便签时通过 rAF 测量（不阻塞首帧渲染），编辑时 debounce 避免频繁重排
   useEffect(() => {
     if (viewMode !== "split" || !scrollSyncEnabled) {
       scrollMaps.current = null;
@@ -1920,23 +1942,15 @@ export function MainWindow({
 
   useEffect(() => cancelScheduledScrollSync, [cancelScheduledScrollSync]);
 
-  const handlePinEntry = async () => {
-    if (!selectedId) return;
-    const isPinned = pinnedTileIds.has(selectedId);
-    if (!isPinned) {
-      await saveCurrentNote();
-    }
+  const toggleNotePin = async (id: string) => {
     try {
-      const pinned = await toggleTileWindow(selectedId);
-      setPinnedTileIds((previous) => {
-        return syncPinnedTileIds(previous, selectedId, pinned);
-      });
+      await setNotePinned(id, !stateFor(id).pinned);
     } catch (error) {
       showToast(getErrorMessage(error));
     }
   };
-
-  const selectedTilePinned = selectedId ? pinnedTileIds.has(selectedId) : false;
+  const selectedNotePinned = selectedId ? pinnedIds.has(selectedId) : false;
+  const pinTitle = t(selectedNotePinned ? "noteState.unpin" : "noteState.pin");
 
   const toggleMaximize = () => {
     void toggleMaximizeCurrentWindow().then(() => isCurrentWindowMaximized().then(setIsMaximized));
@@ -1989,7 +2003,7 @@ export function MainWindow({
             <span className="text-[11px] text-ink-faint font-body truncate max-w-[240px] leading-none translate-y-px">
               {title ||
                 selectedNote?.preview ||
-                t("common.untitledNote", { defaultValue: "无标题笔记" })}
+                t("common.untitledNote", { defaultValue: "无标题便签" })}
             </span>
           </div>
           <div className="flex items-center">
@@ -2180,7 +2194,7 @@ export function MainWindow({
                     type="text"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder={t("main.sidebar.searchPlaceholder", { defaultValue: "搜索笔记…" })}
+                    placeholder={t("main.sidebar.searchPlaceholder", { defaultValue: "搜索便签…" })}
                     className="flex-1 text-[12px] font-body text-ink placeholder:text-ink-ghost/60 bg-transparent"
                   />
                   {searchQuery && (
@@ -2222,7 +2236,7 @@ export function MainWindow({
                   >
                     <path d="M12 5v14M5 12h14" />
                   </svg>
-                  <span>{t("main.sidebar.newNote", { defaultValue: "新建笔记" })}</span>
+                  <span>{t("main.sidebar.newNote", { defaultValue: "新建便签" })}</span>
                 </button>
                 <button
                   onClick={() => void handleImportNote()}
@@ -2250,7 +2264,7 @@ export function MainWindow({
                 <span className="text-[10px] text-ink-ghost font-mono tracking-wider uppercase">
                   {t("common.noteCount", {
                     count: filteredNotes.length,
-                    defaultValue: "{{count}} 篇笔记",
+                    defaultValue: "{{count}} 张便签",
                   })}
                   {externalFiles.length > 0
                     ? ` · ${t("common.externalFileCount", {
@@ -2430,6 +2444,7 @@ export function MainWindow({
                                   e.dataTransfer.effectAllowed = "move";
                                 }}
                                 onClick={() => void handleSelectNote(note.id)}
+                                data-note-id={note.id}
                                 onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
                                 onMouseEnter={() => setHoveredId(note.id)}
                                 onMouseLeave={() => setHoveredId(null)}
@@ -2460,8 +2475,14 @@ export function MainWindow({
                                 </div>
                                 <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
                                   {note.preview ||
-                                    t("common.blankNote", { defaultValue: "空白笔记" })}
+                                    t("common.blankNote", { defaultValue: "空白便签" })}
                                 </p>
+                                <div className="mt-1">
+                                  <NoteStateBadges
+                                    state={stateFor(note.id)}
+                                    onTogglePin={() => void toggleNotePin(note.id)}
+                                  />
+                                </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
                                     {formatTime(note.updatedAt)}
@@ -2607,6 +2628,7 @@ export function MainWindow({
                                       e.dataTransfer.effectAllowed = "move";
                                     }}
                                     onClick={() => void handleSelectNote(note.id)}
+                                    data-note-id={note.id}
                                     onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
                                     onMouseEnter={() => setHoveredId(note.id)}
                                     onMouseLeave={() => setHoveredId(null)}
@@ -2640,9 +2662,15 @@ export function MainWindow({
 
                                     <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
                                       {note.preview ||
-                                        t("common.blankNote", { defaultValue: "空白笔记" })}
+                                        t("common.blankNote", { defaultValue: "空白便签" })}
                                     </p>
 
+                                    <div className="mt-1">
+                                      <NoteStateBadges
+                                        state={stateFor(note.id)}
+                                        onTogglePin={() => void toggleNotePin(note.id)}
+                                      />
+                                    </div>
                                     <div className="flex items-center gap-2 mt-1">
                                       <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
                                         {formatTime(note.updatedAt)}
@@ -2668,8 +2696,8 @@ export function MainWindow({
                   {!isLoading && filteredNotes.length === 0 && externalFiles.length === 0 && (
                     <div className="px-3 py-8 text-center text-[12px] text-ink-ghost leading-relaxed">
                       {searchQuery
-                        ? t("main.search.noResults", { defaultValue: "没有匹配的笔记" })
-                        : t("main.search.empty", { defaultValue: "还没有笔记" })}
+                        ? t("main.search.noResults", { defaultValue: "没有匹配的便签" })
+                        : t("main.search.empty", { defaultValue: "还没有便签" })}
                     </div>
                   )}
                 </div>
@@ -2721,15 +2749,19 @@ export function MainWindow({
                 <div className="h-4 w-px bg-paper-deep/30 mx-1" />
 
                 <button
-                  onClick={() => void handlePinEntry()}
-                  disabled={!selectedId}
-                  aria-label={pinTileButtonTitle(selectedTilePinned)}
+                  onClick={() => {
+                    if (selectedId) void toggleNotePin(selectedId);
+                  }}
+                  disabled={!selectedId || isExternal}
+                  aria-label={pinTitle}
+                  aria-pressed={selectedNotePinned}
+                  data-note-pin-toolbar="true"
                   className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
-                    selectedTilePinned
+                    selectedNotePinned
                       ? "text-bamboo bg-bamboo-mist/40 hover:text-red-400 hover:bg-danger-bg"
                       : "text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50"
                   }`}
-                  title={pinTileButtonTitle(selectedTilePinned)}
+                  title={pinTitle}
                 >
                   <svg
                     width="13"
@@ -2743,6 +2775,38 @@ export function MainWindow({
                   >
                     <path d="M12 17v5" />
                     <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!selectedId || isExternal}
+                  data-show-desktop-toolbar="true"
+                  title={t("noteMenu.showOnDesktop")}
+                  aria-label={t("noteMenu.showOnDesktop")}
+                  onClick={() => {
+                    if (!selectedId) return;
+                    void (async () => {
+                      try {
+                        if (await saveCurrentNote()) await showNoteOnDesktop(selectedId);
+                      } catch (error) {
+                        showToast(getErrorMessage(error));
+                      }
+                    })();
+                  }}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="4" width="18" height="13" rx="2" />
+                    <path d="M8 21h8m-4-4v4" />
                   </svg>
                 </button>
 
@@ -2846,7 +2910,7 @@ export function MainWindow({
                     onClick={() => setDeleteConfirm(true)}
                     disabled={!selectedId}
                     className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-red-400 hover:bg-danger-bg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                    title={t("noteMenu.delete", { defaultValue: "删除笔记" })}
+                    title={t("noteMenu.delete", { defaultValue: "删除便签" })}
                   >
                     <svg
                       width="13"
@@ -2890,7 +2954,7 @@ export function MainWindow({
                     contentRef.current?.focus();
                   }
                 }}
-                placeholder={t("common.untitledNote", { defaultValue: "无标题笔记" })}
+                placeholder={t("common.untitledNote", { defaultValue: "无标题便签" })}
                 disabled={!selectedId}
                 className="w-full text-[20px] font-display font-bold text-ink placeholder:text-ink-ghost/50 tracking-wide disabled:opacity-60"
               />
@@ -2932,7 +2996,7 @@ export function MainWindow({
             >
               {!selectedId && !isLoading ? (
                 <div className="flex-1 flex items-center justify-center text-[13px] text-ink-ghost">
-                  {t("main.editor.emptyHint", { defaultValue: "选择或新建一篇笔记" })}
+                  {t("main.editor.emptyHint", { defaultValue: "选择或新建一张便签" })}
                 </div>
               ) : (
                 <>
@@ -3157,6 +3221,7 @@ export function MainWindow({
               {noteContextMenuItems.map((item, index) => (
                 <button
                   key={item.action}
+                  data-note-action={item.action}
                   onClick={() => handleNoteMenuAction(item.action)}
                   className={`w-full flex items-center justify-between px-3 py-1.5 text-[12px] font-body transition-colors cursor-pointer ${
                     item.tone === "danger"

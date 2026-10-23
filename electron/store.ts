@@ -73,7 +73,7 @@ function request(value: SaveNoteRequest): SaveNoteRequest {
     typeof value.content !== "string" ||
     value.content.length > 16 * 1024 * 1024
   )
-    throw new AppError("invalidPayload", "笔记内容不合法或超过 16 MiB");
+    throw new AppError("invalidPayload", "便签内容不合法或超过 16 MiB");
   return {
     title: value.title,
     content: value.content,
@@ -219,7 +219,7 @@ export class NoteStore {
           index = stem.indexOf("_");
         const id = index < 0 ? stem : stem.slice(0, index);
         if (notes.some((n) => n.id === id))
-          throw new AppError("duplicateNoteId", "文件中存在重复笔记 ID，请先检查备份");
+          throw new AppError("duplicateNoteId", "文件中存在重复便签 ID，请先检查备份");
         const title =
           text
             .split(/\r?\n/)
@@ -253,7 +253,7 @@ export class NoteStore {
   }
   get(id: string): Note {
     const meta = this.metadata().find((note) => note.id === id);
-    if (!meta) throw new AppError("noteNotFound", `找不到笔记 ${id}`, { noteId: id });
+    if (!meta) throw new AppError("noteNotFound", `找不到便签 ${id}`, { noteId: id });
     const { preview: _, ...rest } = meta;
     return { ...rest, content: fs.readFileSync(this.notePath(meta), "utf8") };
   }
@@ -261,7 +261,7 @@ export class NoteStore {
     const req = request(value),
       notes = this.metadata(),
       old = id ? notes.find((note) => note.id === id) : undefined;
-    if (id && !old) throw new AppError("noteNotFound", "找不到笔记", { noteId: id });
+    if (id && !old) throw new AppError("noteNotFound", "找不到便签", { noteId: id });
     id ??= randomUUID();
     const now = new Date().toISOString();
     const meta: NoteMetadata = {
@@ -289,7 +289,7 @@ export class NoteStore {
   async delete(id: string): Promise<void> {
     const notes = this.metadata(),
       note = notes.find((n) => n.id === id);
-    if (!note) throw new AppError("noteNotFound", "找不到笔记", { noteId: id });
+    if (!note) throw new AppError("noteNotFound", "找不到便签", { noteId: id });
     const target = this.notePath(note);
     if (fs.existsSync(target)) await this.recycle(target);
     this.commit(this.metadata().filter((n) => n.id !== id));

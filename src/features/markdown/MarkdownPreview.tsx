@@ -355,7 +355,7 @@ export function MarkdownPreview({
           </Markdown>
         ) : (
           <p className="text-ink-ghost leading-[1.9]">
-            {t("markdown.emptyHint", { defaultValue: "预览区会显示当前笔记内容" })}
+            {t("markdown.emptyHint", { defaultValue: "预览区会显示当前便签内容" })}
           </p>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { CapsuleHost } from "./features/capsules/CapsuleHost";
 import { useEffect } from "react";
 import "./App.css";
 import { ContextMenuProvider } from "./components/ContextMenu";
@@ -80,6 +81,8 @@ function App() {
     document.addEventListener("keydown", preventSystemMenu, true);
     return () => document.removeEventListener("keydown", preventSystemMenu, true);
   }, []);
+
+  if (activeView === "capsule") return <CapsuleHost />;
 
   return (
     <ContextMenuProvider>

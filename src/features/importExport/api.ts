@@ -40,7 +40,7 @@ export async function exportMarkdownNote(note: ExportableNote): Promise<boolean>
 
 function markdownFileName(title: string, translate: TFunction = t): string {
   const safeTitle =
-    safeFileStem(title) || translate("common.untitledNote", { defaultValue: "无标题笔记" });
+    safeFileStem(title) || translate("common.untitledNote", { defaultValue: "无标题便签" });
   return `${safeTitle}.md`;
 }
 

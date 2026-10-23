@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-23",
+  "baseCommit": "49feec54aa38bb9ebad73ce52b2327d062288d11",
+  "sourceTreeDirty": true,
+  "target": "Windows 11 x64",
+  "electron": "45.0.0",
+  "typecheck": "passed",
+  "lint": "passed",
+  "tests": {
+    "files": 25,
+    "passed": 103
+  },
+  "nativeAcceptance": "unified-notes-windows-smoke.json",
+  "nativeChecks": {
+    "contextMenuTarget": true,
+    "reusesWindow": true,
+    "noCopy": true,
+    "listToDesktop": true,
+    "desktopToList": true,
+    "dirtyInputPreserved": true
+  },
+  "stderrBytes": 0,
+  "hardwareAcceleration": "enabled",
+  "sandbox": "enabled",
+  "codeSigned": false,
+  "deliveryFolder": "/mnt/d/temp/FloralNotepaper-Electron-Unified",
+  "verifiedFiles": 76,
+  "appAsarSha256": "de965293c16d4067f99f9b3f691f71b9bdce1eafbc8f519c03ed1dd78ba7fc05"
+}

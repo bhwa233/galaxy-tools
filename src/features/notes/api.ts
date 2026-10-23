@@ -156,7 +156,7 @@ function getLocalizedAppErrorMessage(
         defaultValue: "分类「{{category}}」已存在",
       });
     case "noteNotFound":
-      return translate("errors.noteNotFound", { defaultValue: "找不到该笔记" });
+      return translate("errors.noteNotFound", { defaultValue: "找不到该便签" });
     case "duplicateShortcut":
       return translate("errors.duplicateShortcut", {
         defaultValue: "显示/隐藏窗口快捷键不能与呼出小窗快捷键重复",

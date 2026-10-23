@@ -1,6 +1,7 @@
 import { t, type TFunction } from "i18next";
+import type { NoteWindowState } from "../windows/noteWindowState";
 
-export type NoteContextMenuAction = "export" | "move" | "delete";
+export type NoteContextMenuAction = "desktop" | "pin" | "hide" | "export" | "move" | "delete";
 
 export interface NoteContextMenuItem {
   action: NoteContextMenuAction;
@@ -8,8 +9,16 @@ export interface NoteContextMenuItem {
   tone?: "danger";
 }
 
-export function getNoteContextMenuItems(translate: TFunction = t): NoteContextMenuItem[] {
+export function getNoteContextMenuItems(
+  translate: TFunction = t,
+  state?: NoteWindowState,
+): NoteContextMenuItem[] {
   return [
+    { action: "desktop", label: translate("noteMenu.showOnDesktop", { defaultValue: "贴到桌面" }) },
+    { action: "pin", label: translate(state?.pinned ? "noteState.unpin" : "noteState.pin") },
+    ...(state?.presence === "desktop" || state?.presence === "capsule"
+      ? [{ action: "hide" as const, label: translate("noteState.hide") }]
+      : []),
     {
       action: "export",
       label: translate("noteMenu.export", { defaultValue: "导出 Markdown" }),
@@ -20,7 +29,7 @@ export function getNoteContextMenuItems(translate: TFunction = t): NoteContextMe
     },
     {
       action: "delete",
-      label: translate("noteMenu.delete", { defaultValue: "删除笔记" }),
+      label: translate("noteMenu.delete", { defaultValue: "删除便签" }),
       tone: "danger",
     },
   ];

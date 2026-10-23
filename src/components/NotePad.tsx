@@ -1,3 +1,4 @@
+import { useNoteWindowStates } from "../features/windows/useNoteWindowStates";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useMemo } from "react";
@@ -146,7 +147,10 @@ export function NotePad({
     resolveTileColor("system", normalizeTileColor(initialTileColor)),
   );
   const [isExiting, setIsExiting] = useState(false);
-  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [draftAlwaysOnTop, setAlwaysOnTop] = useState(false);
+  const noteWindowStates = useNoteWindowStates();
+  const alwaysOnTop =
+    (editingNoteId ? noteWindowStates[editingNoteId]?.pinned : undefined) ?? draftAlwaysOnTop;
   useEffect(() => {
     void invoke<boolean>("window_control", { action: "isAlwaysOnTop" })
       .then(setAlwaysOnTop)
@@ -164,12 +168,13 @@ export function NotePad({
     <button
       type="button"
       aria-pressed={alwaysOnTop}
-      title={alwaysOnTop ? "取消置顶" : "置顶"}
+      title={t(alwaysOnTop ? "noteState.unpin" : "noteState.pin")}
+      data-note-pin-paper="true"
       onMouseDown={(event) => event.stopPropagation()}
       onClick={() => void toggleAlwaysOnTop()}
       className={`px-1.5 py-1 text-[11px] rounded cursor-pointer ${alwaysOnTop ? "text-bamboo bg-bamboo/10" : "text-ink-ghost hover:bg-paper-warm"}`}
     >
-      {alwaysOnTop ? "已置顶" : "置顶"}
+      {t(alwaysOnTop ? "noteState.pinned" : "noteState.pin")}
     </button>
   );
   const titleRef = useRef<HTMLInputElement>(null);
@@ -190,9 +195,11 @@ export function NotePad({
       new URLSearchParams(window.location.search).get("standby") === "1",
   );
   // 窗口位于池中（standby 预热或已回收隐藏）时为 true：
-  // 休眠期间跳过笔记列表拉取，激活时统一刷新
+  // 休眠期间跳过便签列表拉取，激活时统一刷新
   const dormantRef = useRef(isStandby.current);
   const hasEnteredOnce = useRef(false);
+  const noteSyncEpoch = useRef(0);
+  const pendingSaves = useRef(0);
   const statusLabel = useMemo<Record<NotePadStatus, string>>(
     () => ({
       empty: t("notepad.status.empty", { defaultValue: "空" }),
@@ -215,7 +222,7 @@ export function NotePad({
   statusRef.current = status;
 
   const refreshNotes = useCallback(async () => {
-    // 池中休眠的窗口不拉取笔记列表，激活时会统一刷新
+    // 池中休眠的窗口不拉取便签列表，激活时会统一刷新
     if (dormantRef.current) return [] as NoteMetadata[];
     const loadedNotes = await listNotes();
     setNotes(loadedNotes);
@@ -223,6 +230,10 @@ export function NotePad({
   }, []);
 
   const applyNote = useCallback((note: Note) => {
+    noteSyncEpoch.current += 1;
+    titleValueRef.current = note.title;
+    contentValueRef.current = note.content;
+    statusRef.current = "opened";
     editingIdRef.current = note.id;
     setEditingNoteId(note.id);
     setTitle(note.title);
@@ -265,10 +276,40 @@ export function NotePad({
   }, [applyNote, initialNoteId, refreshNotes]);
 
   useEffect(() => {
+    let disposed = false;
     const unlisten = listen("notes-changed", () => {
-      void refreshNotes().catch(() => undefined);
+      const epoch = ++noteSyncEpoch.current;
+      const id = editingIdRef.current;
+      const titleBefore = titleValueRef.current,
+        contentBefore = contentValueRef.current;
+      const clean = () =>
+        !pendingSaves.current && !["dirty", "saveFailed"].includes(statusRef.current);
+      void refreshNotes()
+        .then(async () => {
+          if (!id || disposed || !clean()) return;
+          const note = await getNote(id);
+          // A late response may not replace a different note, a pending save, or local typing.
+          if (
+            disposed ||
+            epoch !== noteSyncEpoch.current ||
+            editingIdRef.current !== id ||
+            !clean() ||
+            titleValueRef.current !== titleBefore ||
+            contentValueRef.current !== contentBefore
+          )
+            return;
+          if (note.title === titleBefore && note.content === contentBefore) return;
+          titleValueRef.current = note.title;
+          contentValueRef.current = note.content;
+          setTitle(note.title);
+          setContent(note.content);
+          statusRef.current = "saved";
+          setStatus("saved");
+        })
+        .catch(() => undefined);
     });
     return () => {
+      disposed = true;
       void unlisten.then((fn) => fn());
     };
   }, [refreshNotes]);
@@ -370,32 +411,37 @@ export function NotePad({
     const run = noteSaveQueue.current
       .catch(() => undefined)
       .then(async () => {
-        const currentId = editingIdRef.current;
-        const titleSnapshot = titleValueRef.current;
-        const contentSnapshot = contentValueRef.current;
-        const existingCategory = notes.find((n) => n.id === currentId)?.category ?? "";
-        const request = {
-          title: titleSnapshot,
-          content: contentSnapshot,
-          category: existingCategory,
-        };
-        const note = currentId ? await updateNote(currentId, request) : await createNote(request);
-        editingIdRef.current = note.id;
-        setEditingNoteId(note.id);
-        setNotes((current) => {
-          const metadata = metadataFromNote(note);
-          const exists = current.some((item) => item.id === note.id);
-          const next = exists
-            ? current.map((item) => (item.id === note.id ? metadata : item))
-            : [metadata, ...current];
-          return [...next].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        });
-        await invoke("surface_state", { noteId: note.id, mode: surfaceModeRef.current });
-        const dirty =
-          contentValueRef.current !== contentSnapshot || titleValueRef.current !== titleSnapshot;
-        statusRef.current = dirty ? "dirty" : "saved";
-        setStatus(statusRef.current);
-        return note;
+        pendingSaves.current += 1;
+        try {
+          const currentId = editingIdRef.current;
+          const titleSnapshot = titleValueRef.current;
+          const contentSnapshot = contentValueRef.current;
+          const existingCategory = notes.find((n) => n.id === currentId)?.category ?? "";
+          const request = {
+            title: titleSnapshot,
+            content: contentSnapshot,
+            category: existingCategory,
+          };
+          const note = currentId ? await updateNote(currentId, request) : await createNote(request);
+          editingIdRef.current = note.id;
+          setEditingNoteId(note.id);
+          setNotes((current) => {
+            const metadata = metadataFromNote(note);
+            const exists = current.some((item) => item.id === note.id);
+            const next = exists
+              ? current.map((item) => (item.id === note.id ? metadata : item))
+              : [metadata, ...current];
+            return [...next].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          });
+          await invoke("surface_state", { noteId: note.id, mode: surfaceModeRef.current });
+          const dirty =
+            contentValueRef.current !== contentSnapshot || titleValueRef.current !== titleSnapshot;
+          statusRef.current = dirty ? "dirty" : "saved";
+          setStatus(statusRef.current);
+          return note;
+        } finally {
+          pendingSaves.current -= 1;
+        }
       });
     noteSaveQueue.current = run;
     return run;
@@ -667,6 +713,17 @@ export function NotePad({
     }
   }, [content, t]);
 
+  useEffect(() => {
+    const fold = (event: KeyboardEvent) => {
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        handleClose();
+      }
+    };
+    document.addEventListener("keydown", fold);
+    return () => document.removeEventListener("keydown", fold);
+  }, [handleClose]);
+
   const handleCloseRef = useRef(handleClose);
   handleCloseRef.current = handleClose;
   const copyTileContentRef = useRef(copyTileContent);
@@ -760,12 +817,12 @@ export function NotePad({
   const isTile = surfaceMode === "tile";
   const tileTitle = title.trim();
   const enterClass = hasEnteredOnce.current ? "" : "animate-window-enter";
-  const surfaceWrapperClassName = `w-full h-screen flex flex-col bg-transparent p-0 ${isExiting ? "animate-window-exit" : enterClass}`;
+  const surfaceWrapperClassName = `w-full h-screen flex flex-col bg-transparent p-0 ${enterClass}`;
   const padSurfaceClassName =
     "app-surface-frame relative noise-bg w-full h-full min-h-0 bg-cloud overflow-hidden flex flex-col flex-1 border border-paper-deep/70 shadow-[0_1px_10px_rgba(26,26,24,0.06)] transition-all duration-200 ease-out";
 
   return (
-    <div className={surfaceWrapperClassName}>
+    <div className={surfaceWrapperClassName} aria-busy={isExiting}>
       {isTile ? (
         <Tile
           title={tileTitle || undefined}
@@ -788,11 +845,33 @@ export function NotePad({
           onMouseDown={handleDrag}
           onDoubleClick={handleTileDoubleClick}
         >
+          <button
+            type="button"
+            aria-label={t("contextMenu.tile.switchToPad")}
+            title={t("contextMenu.tile.switchToPad")}
+            data-surface-action="switchToPad"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={() => void switchSurfaceMode("pad")}
+            className="absolute top-2 right-18 z-10 w-6 h-6 flex items-center justify-center rounded-full text-ink-ghost/70 hover:text-bamboo hover:bg-bamboo-mist transition-colors cursor-pointer"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L9 17l-4 1 1-4Z" />
+            </svg>
+          </button>
           <div className="absolute top-2 right-10 z-10">{topmostButton}</div>
           <button
             type="button"
-            aria-label="取消钉屏"
-            title="取消钉屏"
+            aria-label="折叠成胶囊"
+            title="折叠成胶囊"
             onMouseDown={(event) => event.stopPropagation()}
             onClick={() => void handleClose()}
             className="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full text-ink-ghost/70 hover:text-red-400 hover:bg-danger-bg/80 transition-colors cursor-pointer"
@@ -806,7 +885,7 @@ export function NotePad({
               strokeWidth="2.5"
               strokeLinecap="round"
             >
-              <path d="M18 6L6 18M6 6l12 12" />
+              <path d="m6 9 6 6 6-6" />
             </svg>
           </button>
           <SurfaceResizeHandles />
@@ -872,7 +951,7 @@ export function NotePad({
                 <button
                   onClick={() => void handleClose()}
                   className="group w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:bg-danger-bg hover:text-red-400 transition-all duration-200 cursor-pointer"
-                  title={t("notepad.tooltip.close", { defaultValue: "关闭" })}
+                  title="折叠成胶囊"
                 >
                   <svg
                     width="13"
@@ -883,7 +962,7 @@ export function NotePad({
                     strokeWidth="2.5"
                     strokeLinecap="round"
                   >
-                    <path d="M18 6L6 18M6 6l12 12" />
+                    <path d="m6 9 6 6 6-6" />
                   </svg>
                 </button>
               </div>

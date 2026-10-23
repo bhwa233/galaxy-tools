@@ -13,15 +13,15 @@
   },
   "common": {
     "back": "返回",
-    "blankNote": "空白笔记",
+    "blankNote": "空白便签",
     "cancel": "取消",
     "default": "默认",
     "delete": "删除",
     "externalFileCount": "{{count}} 个外部文件",
-    "noteCount": "{{count}} 篇笔记",
+    "noteCount": "便签列表 · {{count}} 张",
     "operationFailed": "操作失败",
     "save": "保存",
-    "untitledNote": "无标题笔记",
+    "untitledNote": "无标题便签",
     "untitledFile": "未命名文件",
     "wordCount": "{{count}} 字",
     "wordCountUnit": "字"
@@ -34,10 +34,10 @@
       "selectAll": "全选"
     },
     "tile": {
-      "close": "取消钉屏",
+      "close": "折叠成胶囊",
       "copy": "复制",
       "save": "保存",
-      "switchToPad": "转为小窗"
+      "switchToPad": "切回便签"
     }
   },
   "errors": {
@@ -50,7 +50,7 @@
     "imagePasteFailed": "图片粘贴失败",
     "imageTooLarge": "图片文件过大（上限 20 MB）",
     "noPool": "便签窗口池尚未初始化",
-    "noteNotFound": "找不到该笔记",
+    "noteNotFound": "找不到该便签",
     "unsupportedFile": "只支持导入 .md 文件",
     "unsupportedImageFormat": "不支持的图片格式",
     "unsupportedShortcut": "{{field}} 配置无效",
@@ -59,7 +59,7 @@
   "markdown": {
     "copied": "已复制",
     "copy": "复制",
-    "emptyHint": "预览区会显示当前笔记内容",
+    "emptyHint": "预览区会显示当前便签内容",
     "alert": {
       "note": "备注",
       "tip": "提示",
@@ -85,7 +85,7 @@
     "editor": {
       "confirmDelete": "确认删除？",
       "contentPlaceholder": "开始写作……",
-      "emptyHint": "选择或新建一篇笔记",
+      "emptyHint": "选择或新建一张便签",
       "pinToTile": "钉为磁贴",
       "previewLabel": "预览",
       "undo": "撤销（Ctrl+Z）",
@@ -109,14 +109,14 @@
       "quoteText": "引用文本"
     },
     "search": {
-      "empty": "还没有笔记",
-      "noResults": "没有匹配的笔记"
+      "empty": "还没有便签",
+      "noResults": "没有匹配的便签"
     },
     "sidebar": {
       "clearSearch": "清空搜索",
       "importMarkdown": "导入 Markdown",
-      "newNote": "新建笔记",
-      "searchPlaceholder": "搜索笔记…"
+      "newNote": "新建便签",
+      "searchPlaceholder": "搜索便签…"
     },
     "images": {
       "cleanUnused": "清理未使用图片",
@@ -161,19 +161,20 @@
     }
   },
   "noteMenu": {
-    "delete": "删除笔记",
+    "delete": "删除便签",
     "export": "导出 Markdown",
-    "moveToCategory": "移动到分类…"
+    "moveToCategory": "移动到分类…",
+    "showOnDesktop": "贴到桌面"
   },
   "notepad": {
     "button": {
       "clear": "清空"
     },
-    "emptyState": "还没有可打开的笔记",
+    "emptyState": "还没有可打开的便签",
     "search": {
       "clear": "清空搜索",
-      "noResults": "没有匹配的笔记",
-      "placeholder": "搜索笔记…"
+      "noResults": "没有匹配的便签",
+      "placeholder": "搜索便签…"
     },
     "error": {
       "copyUnsupported": "当前环境不支持复制"
@@ -204,8 +205,8 @@
   "settings": {
     "autoSave": {
       "externalFile": "外部文件自动保存",
-      "note": "自动保存笔记",
-      "surface": "小窗笔记自动保存"
+      "note": "自动保存便签",
+      "surface": "小窗便签自动保存"
     },
     "autostart": "开机自启",
     "closeTitle": "关闭设置",
@@ -441,5 +442,15 @@
   },
   "tile": {
     "empty": "空"
+  },
+  "noteState": {
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "pinned": "已置顶",
+    "desktop": "已贴桌面",
+    "capsule": "胶囊",
+    "hidden": "已隐藏",
+    "unopened": "未贴桌面",
+    "hide": "隐藏到托盘"
   }
 }

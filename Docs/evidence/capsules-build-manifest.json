@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-23",
+  "baseCommit": "49feec54aa38bb9ebad73ce52b2327d062288d11",
+  "sourceTreeDirty": true,
+  "target": "Windows 11 x64",
+  "electron": "45.0.0",
+  "tests": {
+    "files": 25,
+    "passed": 103
+  },
+  "nativeAcceptance": "capsules-windows-smoke.json",
+  "hardwareAcceleration": "enabled",
+  "sandbox": "enabled",
+  "codeSigned": false,
+  "artifact": {
+    "path": "release-electron/floral-notepaper-electron-1.2.0-capsules-win-x64-portable.zip",
+    "sizeBytes": 174403552,
+    "sha256": "685301ff8e3b89d8bc349fa0c0b2df861130368cd7e98039e8213719f999e221"
+  },
+  "appAsarSha256": "aa184695fe536c4e486cdff83e74ff3bd2d4f679f8848ac8580a68587828afac",
+  "limitations": [
+    "Physical mouse dragging and mixed DPI not accepted yet",
+    "External fullscreen probe did not acquire foreground focus; real fullscreen acceptance pending"
+  ]
+}

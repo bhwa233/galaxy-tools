@@ -174,12 +174,12 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             onChange={(checked) => setConfigValue("autostart", checked)}
           />
           <ToggleRow
-            label={t("settings.autoSave.note", { defaultValue: "自动保存笔记" })}
+            label={t("settings.autoSave.note", { defaultValue: "自动保存便签" })}
             checked={config.noteAutoSave}
             onChange={(checked) => setConfigValue("noteAutoSave", checked)}
           />
           <ToggleRow
-            label={t("settings.autoSave.surface", { defaultValue: "小窗笔记自动保存" })}
+            label={t("settings.autoSave.surface", { defaultValue: "小窗便签自动保存" })}
             checked={config.noteSurfaceAutoSave}
             onChange={(checked) => setConfigValue("noteSurfaceAutoSave", checked)}
           />

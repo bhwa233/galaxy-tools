@@ -24,7 +24,7 @@ describe("notes api error localization", () => {
   });
 
   test("parses serialized backend error strings when a structured payload is unavailable", () => {
-    expect(getErrorMessage("noteNotFound: Note note-1 was not found")).toBe("找不到该笔记");
+    expect(getErrorMessage("noteNotFound: Note note-1 was not found")).toBe("找不到该便签");
   });
 
   test("localizes serialized category errors when interpolation details can be recovered", () => {

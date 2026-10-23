@@ -29,3 +29,15 @@ export function openNoteInEditor(noteId: string): Promise<void> {
 export function takeStartupFile(): Promise<string | null> {
   return invoke("take_startup_file");
 }
+
+/** Show the same saved note, retaining its current desktop view and reusing its window. */
+export function showNoteOnDesktop(noteId: string): Promise<string> {
+  return invoke("show_note_on_desktop", { noteId });
+}
+
+export function setNotePinned(noteId: string, pinned: boolean): Promise<void> {
+  return invoke("note_set_pinned", { noteId, pinned });
+}
+export function hideNoteOnDesktop(noteId: string): Promise<void> {
+  return invoke("hide_note_on_desktop", { noteId });
+}

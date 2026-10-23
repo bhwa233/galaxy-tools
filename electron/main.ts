@@ -22,7 +22,14 @@ import { externalUrl, FileGrants, imagePath } from "./security.js";
 import type { AppConfig } from "../src/features/settings/types.js";
 import type { SaveNoteRequest } from "../src/features/notes/types.js";
 
-import { initializeWindowsRuntime } from "./windows.js";
+import { initializeWindowsRuntime, watchFullscreen } from "./windows.js";
+import { Capsules } from "./capsules.js";
+import { deriveNoteWindowState } from "./note-window-state.js";
+import {
+  NOTE_WINDOW_STATES_CHANGED,
+  type NoteWindowSnapshot,
+} from "../src/features/windows/noteWindowState.js";
+import type { CapsuleEntry, CapsuleQueue } from "../src/features/capsules/types.js";
 
 const startupWorkingDirectory = process.cwd();
 initializeWindowsRuntime();
@@ -73,7 +80,8 @@ if (
 if (!app.requestSingleInstanceLock()) app.exit(0);
 const grants = new FileGrants();
 const windows = new Map<string, BrowserWindow>();
-interface Layout {
+interface Layout extends CapsuleEntry {
+  everOpened?: boolean;
   label: string;
   view: "main" | "notepad" | "tile";
   noteId?: string;
@@ -86,15 +94,114 @@ const pending = new Map<string, { windowId: number; resolve: (result: boolean) =
 const ready = new Set<number>();
 let store: NoteStore;
 let tray: Tray;
+let capsules: Capsules;
+let stopFullscreen = () => {};
+const releasing = new Map<number, Promise<void>>();
 let exiting = false;
 let quitting = false;
 let layoutTimer: ReturnType<typeof setTimeout> | undefined;
 let startupFile: string | null = null;
 let mutations: Promise<unknown> = Promise.resolve();
+let noteStateVersion = 0;
+let noteStateFingerprint = "";
+let fullscreenRects: Electron.Rectangle[] = [];
 const emit = (name: string, payload?: unknown, target?: BrowserWindow) => {
-  for (const win of target ? [target] : windows.values())
+  for (const win of target
+    ? [target]
+    : [
+        ...windows.values(),
+        ...[...(capsules?.surfaces.values() ?? [])].map((surface) => surface.win),
+      ])
     if (!win.isDestroyed()) win.webContents.send(`floral:event:${name}`, payload);
 };
+function noteWindowSnapshot(): NoteWindowSnapshot {
+  // Desktop state belongs to layouts. Do not read/recover Markdown metadata while publishing
+  // a move, hide or pin event; ordinary notes without a layout use the renderer's unopened default.
+  const entries = new Map(
+    [...layouts.values()]
+      .filter((entry) => entry.noteId && entry.view !== "main")
+      .map((entry) => [entry.noteId!, entry]),
+  );
+  const notes = [...entries].map(([noteId, layout]) => {
+    const win = windows.get(layout.label);
+    return deriveNoteWindowState(
+      noteId,
+      layout,
+      !!win && !win.isDestroyed() && win.isVisible(),
+      capsules?.isHidden() ?? false,
+    );
+  });
+  return { version: noteStateVersion, notes };
+}
+function publishNoteStates(): void {
+  if (!store) return;
+  const snapshot = noteWindowSnapshot(),
+    fingerprint = JSON.stringify(snapshot.notes);
+  if (fingerprint === noteStateFingerprint) return;
+  noteStateFingerprint = fingerprint;
+  snapshot.version = ++noteStateVersion;
+  emit(NOTE_WINDOW_STATES_CHANGED, snapshot);
+}
+function applyNoteTopmost(win: BrowserWindow, layout: Layout): void {
+  const b = win.getBounds(),
+    blocked = fullscreenRects.some(
+      (r) =>
+        b.x < r.x + r.width && b.x + b.width > r.x && b.y < r.y + r.height && b.y + b.height > r.y,
+    );
+  win.setAlwaysOnTop(layout.topmost && !blocked);
+}
+function setNotePinned(id: string, pinned: boolean): void {
+  store.get(id);
+  let layout = [...layouts.values()].find((e) => e.noteId === id && e.view !== "main");
+  const created = !layout;
+  if (!layout) {
+    layout = {
+      label: `notepad-${id}`,
+      view: "notepad",
+      noteId: id,
+      bounds: safeBounds({ width: store.config.surfaceWidth, height: store.config.surfaceHeight }),
+      visible: false,
+      folded: false,
+      topmost: false,
+      everOpened: false,
+    };
+    layouts.set(layout.label, layout);
+  }
+  const before = layout.topmost,
+    win = windows.get(layout.label);
+  try {
+    layout.topmost = pinned;
+    if (win && !win.isDestroyed()) applyNoteTopmost(win, layout);
+    persistLayout();
+  } catch (error) {
+    layout.topmost = before;
+    if (created) layouts.delete(layout.label);
+    if (win && !win.isDestroyed()) applyNoteTopmost(win, layout);
+    publishNoteStates();
+    throw error;
+  }
+}
+async function hideNoteOnDesktop(id: string): Promise<void> {
+  store.get(id);
+  const layout = [...layouts.values()].find((e) => e.noteId === id && e.view !== "main");
+  if (!layout) return;
+  const win = windows.get(layout.label);
+  if (win) {
+    await hideAndRelease(win);
+    return;
+  }
+  const wasVisible = layout.visible;
+  layout.visible = false;
+  try {
+    persistLayout();
+  } catch (error) {
+    layout.visible = wasVisible;
+    throw error;
+  }
+  capsules.refresh();
+  refreshTray();
+  publishNoteStates();
+}
 function layoutFile(): string {
   return path.join(store.dataDir, "electron-layout.json");
 }
@@ -104,13 +211,15 @@ function persistLayout(): void {
     layoutFile(),
     JSON.stringify(
       {
-        version: 1,
+        version: 2,
+        capsuleQueues: [...(capsules?.queues.values() ?? [])],
         windows: [...layouts.values()].filter((entry) => entry.view === "main" || entry.noteId),
       },
       null,
       2,
     ),
   );
+  publishNoteStates();
 }
 function scheduleLayout(): void {
   clearTimeout(layoutTimer);
@@ -129,7 +238,6 @@ function remember(win: BrowserWindow): void {
   const layout = layouts.get(labelOf(win));
   if (!layout || win.isDestroyed()) return;
   layout.bounds = win.getBounds();
-  layout.topmost = win.isAlwaysOnTop();
   scheduleLayout();
 }
 function safeBounds(bounds: Partial<Electron.Rectangle> = {}, main = false): Electron.Rectangle {
@@ -169,6 +277,7 @@ function createWindow(layout: Layout): BrowserWindow {
   }
   layout.bounds = safeBounds(layout.bounds, layout.view === "main");
   layouts.set(layout.label, layout);
+  if (layout.view !== "main") layout.everOpened = true;
   const win = new BrowserWindow({
     ...layout.bounds,
     title: "花笺",
@@ -193,6 +302,7 @@ function createWindow(layout: Layout): BrowserWindow {
     },
   });
   windows.set(layout.label, win);
+  applyNoteTopmost(win, layout);
   win.setMenu(null);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event) => event.preventDefault());
@@ -219,6 +329,12 @@ function createWindow(layout: Layout): BrowserWindow {
       win,
     );
   });
+  win.on("system-context-menu", (event) => {
+    if (layout.view !== "main") {
+      event.preventDefault();
+      paperMenu(win).popup({ window: win });
+    }
+  });
   win.on("move", () => remember(win));
   win.on("resize", () => {
     remember(win);
@@ -227,16 +343,22 @@ function createWindow(layout: Layout): BrowserWindow {
   win.on("show", () => {
     layout.visible = true;
     scheduleLayout();
+    publishNoteStates();
   });
+  win.on("hide", () => publishNoteStates());
   win.on("close", (event) => {
     if (exiting) return;
     event.preventDefault();
     if (layout.view === "main" && !store.config.closeToTray) void quit();
-    else void hideAndRelease(win).catch((error) => reportError(error, win));
+    else
+      void (layout.view === "main" ? hideAndRelease(win) : foldAndRelease(win)).catch((error) =>
+        reportError(error, win),
+      );
   });
   win.on("closed", () => {
     ready.delete(win.id);
     windows.delete(layout.label);
+    publishNoteStates();
   });
   const params = new URLSearchParams({
     view: layout.view,
@@ -280,6 +402,7 @@ function openNote(noteId?: string, view?: "notepad" | "tile", bounds?: Electron.
     topmost: false,
   };
   layout.visible = true;
+  layout.folded = false;
   const modeChanged = !!view && layout.view !== view;
   if (modeChanged && view) {
     layout.view = view;
@@ -300,6 +423,7 @@ function openNote(noteId?: string, view?: "notepad" | "tile", bounds?: Electron.
   }
   scheduleLayout();
   refreshTray();
+  capsules?.refresh();
   return label;
 }
 async function prepare(win: BrowserWindow): Promise<boolean> {
@@ -322,23 +446,42 @@ async function prepare(win: BrowserWindow): Promise<boolean> {
     emit("desktop:prepare-close", { requestId }, win);
   });
 }
-async function hideAndRelease(win: BrowserWindow): Promise<void> {
-  if (!(await prepare(win)))
-    throw new AppError("saveFailed", "保存未完成，已保留窗口，请先保存再关闭");
-  const layout = layouts.get(labelOf(win));
-  if (!layout) return;
-  remember(win);
-  layout.visible = false;
-  persistLayout();
-  win.hide();
-  if (layout.noteId) emit("tile-window-closed", layout.noteId);
-  win.destroy();
-  refreshTray();
+function hideAndRelease(win: BrowserWindow): Promise<void> {
+  return releaseWindow(win, false);
+}
+function foldAndRelease(win: BrowserWindow): Promise<void> {
+  return releaseWindow(win, true);
+}
+function releaseWindow(win: BrowserWindow, fold: boolean): Promise<void> {
+  const existing = releasing.get(win.id);
+  if (existing) return existing;
+  const operation = (async () => {
+    if (!(await prepare(win)))
+      throw new AppError("saveFailed", "保存未完成，已保留窗口，请先保存再收起");
+    const layout = layouts.get(labelOf(win));
+    if (!layout || win.isDestroyed()) return;
+    remember(win);
+    if (fold && layout.view !== "main" && layout.noteId) await capsules.fold(layout);
+    else {
+      layout.visible = false;
+      layout.folded = false;
+      persistLayout();
+    }
+    win.hide();
+    if (layout.noteId) emit("tile-window-closed", layout.noteId);
+    win.destroy();
+    capsules.refresh();
+    refreshTray();
+  })();
+  releasing.set(win.id, operation);
+  void operation.finally(() => releasing.delete(win.id)).catch(() => {});
+  return operation;
 }
 async function quit(): Promise<void> {
   if (quitting) return;
   quitting = true;
   try {
+    await Promise.all(releasing.values());
     const saved = await Promise.all([...windows.values()].map(prepare));
     if (!saved.every(Boolean)) throw new AppError("saveFailed", "有窗口未完成保存，已取消退出");
     for (const win of windows.values()) remember(win);
@@ -363,25 +506,56 @@ function reportError(error: unknown, win?: BrowserWindow): void {
 }
 function refreshTray(): void {
   if (!tray) return;
+  tray.setContextMenu(globalMenu());
+}
+function globalMenu(): Electron.Menu {
   const notes = store.list();
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "打开便签管理", click: () => showMain() },
-      { label: "新建便签", click: () => openNote() },
-      { type: "separator" },
-      {
-        label: "找回便签",
-        submenu: notes.length
-          ? notes.map((note) => ({
-              label: (note.title || note.preview || "无标题便签").slice(0, 50).replace(/&/g, "&&"),
-              click: () => openNote(note.id),
-            }))
-          : [{ label: "暂无便签", enabled: false }],
+  return Menu.buildFromTemplate([
+    { label: "打开便签列表", click: () => showMain() },
+    { label: "新建便签", click: () => openNote() },
+    { type: "separator" },
+    {
+      label: "找回便签",
+      submenu: notes.length
+        ? notes.map((note) => ({
+            label: (note.title || note.preview || "无标题便签").slice(0, 50).replace(/&/g, "&&"),
+            click: () => openNote(note.id),
+          }))
+        : [{ label: "暂无便签", enabled: false }],
+    },
+    { type: "separator" },
+    { label: "退出（保存后关闭）", click: () => void quit() },
+  ]);
+}
+function paperMenu(win: BrowserWindow): Electron.Menu {
+  const layout = layouts.get(labelOf(win))!;
+  return Menu.buildFromTemplate([
+    ...(layout.view === "tile"
+      ? [
+          {
+            label: "切回便签",
+            click: () => emit("surface-mode-request", "pad", win),
+          },
+        ]
+      : []),
+    {
+      label: "折叠成胶囊",
+      click: () => void foldAndRelease(win).catch((error) => reportError(error, win)),
+    },
+    {
+      label: "隐藏到托盘",
+      click: () => void hideAndRelease(win).catch((error) => reportError(error, win)),
+    },
+    { type: "separator" },
+    {
+      label: "置顶",
+      type: "checkbox",
+      checked: layout.topmost,
+      click: (item) => {
+        if (layout.noteId) setNotePinned(layout.noteId, item.checked);
       },
-      { type: "separator" },
-      { label: "退出（保存后关闭）", click: () => void quit() },
-    ]),
-  );
+    },
+  ]);
 }
 let recording = false;
 function registerShortcuts(config: AppConfig): void {
@@ -392,14 +566,22 @@ function registerShortcuts(config: AppConfig): void {
       [
         config.toggleVisibilityShortcut,
         () => {
-          const visible = [...windows.values()].filter((win) => win.isVisible());
-          if (visible.length) for (const win of visible) win.hide();
-          else {
+          const visible = [
+            ...windows.values(),
+            ...[...capsules.surfaces.values()].map((surface) => surface.win),
+          ].filter((win) => win.isVisible());
+          if (visible.length) {
+            for (const win of visible) win.hide();
+            capsules.setHidden(true);
+          } else {
             const notes = [...layouts.values()].filter(
               (entry) => entry.visible && entry.view !== "main",
             );
-            if (notes.length) for (const entry of notes) createWindow(entry).show();
-            else showMain();
+            capsules.setHidden(false);
+            if (notes.length)
+              for (const entry of notes)
+                if (!entry.folded) createWindow(entry).show();
+                else showMain();
           }
         },
       ],
@@ -418,7 +600,7 @@ function sender(event: Electron.IpcMainInvokeEvent): BrowserWindow {
   const expectedOrigin = devUrl ? new URL(devUrl).origin : "floral://app";
   if (
     !win ||
-    !windows.has(labelOf(win)) ||
+    (!windows.has(labelOf(win)) && !capsules?.owns(win)) ||
     !frame ||
     frame !== event.sender.mainFrame ||
     frame.origin !== expectedOrigin
@@ -435,12 +617,14 @@ const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 const changed = () => {
   emit("notes-changed");
   refreshTray();
+  capsules?.refresh();
 };
 async function handle(
   win: BrowserWindow,
   command: string,
   args: Record<string, any>,
 ): Promise<unknown> {
+  if (capsules.owns(win)) return capsules.handle(win, command, args);
   const label = labelOf(win),
     layout = layouts.get(label)!;
   switch (command) {
@@ -461,6 +645,7 @@ async function handle(
       return store.get(text(args.id));
     case "notes_create": {
       const note = store.save(args.request as SaveNoteRequest);
+      if (layout.view !== "main" && !layout.noteId) layout.noteId = note.id;
       changed();
       return note;
     }
@@ -600,6 +785,18 @@ async function handle(
       recording = false;
       registerShortcuts(store.config);
       return;
+    case "note_window_states":
+      publishNoteStates();
+      return noteWindowSnapshot();
+    case "note_set_pinned":
+      if (typeof args.pinned !== "boolean") throw new AppError("invalidPayload", "置顶参数不合法");
+      setNotePinned(text(args.noteId), args.pinned);
+      return;
+    case "hide_note_on_desktop":
+      await hideNoteOnDesktop(text(args.noteId));
+      return;
+    case "show_note_on_desktop":
+      return openNote(text(args.noteId));
     case "open_notepad_window":
       return openNote(args.noteId ?? undefined, "notepad", args.bounds ?? undefined);
     case "open_tile_window":
@@ -621,6 +818,13 @@ async function handle(
       openNote(id, "tile", args.bounds ?? undefined);
       return true;
     }
+    case "note_context_menu":
+      if (layout.view === "main") return;
+      paperMenu(win).popup({ window: win });
+      return;
+    case "fold_note_window":
+      if (layout.view !== "main") await foldAndRelease(win);
+      return;
     case "recycle_notepad_window":
       await hideAndRelease(win);
       return;
@@ -672,7 +876,8 @@ async function handle(
           return;
         case "close":
           if (layout.view === "main" && !store.config.closeToTray) await quit();
-          else await hideAndRelease(win);
+          else if (layout.view === "main") await hideAndRelease(win);
+          else await foldAndRelease(win);
           return;
         case "minimize":
           win.minimize();
@@ -684,12 +889,17 @@ async function handle(
         case "isMaximized":
           return win.isMaximized();
         case "isAlwaysOnTop":
-          return win.isAlwaysOnTop();
+          return layout.topmost;
         case "alwaysOnTop":
           if (typeof args.value !== "boolean")
             throw new AppError("invalidPayload", "置顶参数不合法");
-          win.setAlwaysOnTop(args.value);
-          remember(win);
+          if (layout.noteId) setNotePinned(layout.noteId, args.value);
+          else {
+            layout.topmost = args.value;
+            applyNoteTopmost(win, layout);
+            remember(win);
+            publishNoteStates();
+          }
           return;
         case "bounds":
           return win.getBounds();
@@ -850,6 +1060,8 @@ app.on("before-quit", (event) => {
 });
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  stopFullscreen();
+  capsules?.dispose();
   tray?.destroy();
 });
 app
@@ -857,6 +1069,42 @@ app
   .then(async () => {
     store = new NoteStore(configDir, path.join(app.getPath("documents"), "花笺"), (file) =>
       shell.trashItem(file),
+    );
+    capsules = new Capsules({
+      here,
+      url: devUrl || "floral://app/index.html",
+      entries: layouts,
+      store: () => store,
+      save: persistLayout,
+      open: (id) => openNote(id),
+      hide: async (id) => {
+        try {
+          await hideNoteOnDesktop(id);
+        } catch (error) {
+          const entry = [...layouts.values()].find((e) => e.noteId === id);
+          reportError(error, entry ? windows.get(entry.label) : undefined);
+          throw error;
+        }
+      },
+      changed: () => {
+        refreshTray();
+        publishNoteStates();
+      },
+      globalMenu,
+    });
+    stopFullscreen = watchFullscreen(
+      here,
+      configDir,
+      (rects) => {
+        fullscreenRects = rects;
+        capsules.setFullscreen(rects);
+        for (const [label, win] of windows) {
+          const layout = layouts.get(label);
+          if (!layout || win.isDestroyed()) continue;
+          applyNoteTopmost(win, layout);
+        }
+      },
+      () => [...windows.values(), ...[...capsules.surfaces.values()].map((s) => s.win)],
     );
     startupFile = externalArg(process.argv.slice(1));
     protocol.handle("floral", async (request) => {
@@ -901,7 +1149,8 @@ app
     tray.setToolTip("花笺 Electron");
     tray.on("click", () => showMain());
     if (fs.existsSync(layoutFile())) {
-      const saved = readJson<{ windows: Layout[] }>(layoutFile());
+      const saved = readJson<{ windows: Layout[]; capsuleQueues?: CapsuleQueue[] }>(layoutFile());
+      capsules.restore(saved.capsuleQueues);
       for (const entry of saved.windows) {
         if (
           !entry ||
@@ -911,9 +1160,21 @@ app
         )
           throw new AppError("invalidLayout", "布局文件格式无效，请检查 electron-layout.json");
         if (entry.noteId && !store.list().some((note) => note.id === entry.noteId)) continue;
+        if (
+          entry.capsule &&
+          (!Number.isFinite(entry.capsule.x) ||
+            !Number.isFinite(entry.capsule.y) ||
+            !Number.isFinite(entry.capsule.order) ||
+            !["left", "right"].includes(entry.capsule.edge) ||
+            !["floating", "docked"].includes(entry.capsule.kind) ||
+            typeof entry.capsule.displayId !== "string")
+        )
+          throw new AppError("invalidLayout", "胶囊布局格式无效，请检查 electron-layout.json");
+        if (entry.folded && !entry.capsule) entry.folded = false;
         layouts.set(entry.label, entry);
       }
-      for (const entry of layouts.values()) if (entry.visible) createWindow(entry);
+      for (const entry of layouts.values()) if (entry.visible && !entry.folded) createWindow(entry);
+      capsules.refresh();
     } else {
       if (!store.list().length) {
         const note = store.save({ title: "", content: "", category: "" });
@@ -926,6 +1187,7 @@ app
       console.error("shortcut-registration", error);
     }
     refreshTray();
+    publishNoteStates();
     if (smokeOutput) {
       const { runSmoke } = await import("./smoke.js");
       await runSmoke({
@@ -945,6 +1207,8 @@ app
         openNote,
         showMain,
         hideAndRelease,
+        foldAndRelease,
+        capsules,
         emit,
         quit: () => {
           exiting = true;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "../platform/desktop";
+import { invoke, listen } from "../platform/desktop";
 import { readText, writeText } from "../platform/desktop";
 import { getConfig } from "../features/settings/api";
 import type { AppConfig } from "../features/settings/types";
@@ -53,6 +53,12 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
         target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable;
       const tileTarget = target.closest<HTMLElement>('[data-context-menu="tile"]');
 
+      const isPaper = new URLSearchParams(window.location.search).get("view");
+      if (!isEditable && !tileTarget && (isPaper === "notepad" || isPaper === "tile")) {
+        event.preventDefault();
+        void invoke("note_context_menu").catch(console.error);
+        return;
+      }
       if (!isEditable && !tileTarget) {
         event.preventDefault();
         return;
@@ -178,12 +184,24 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
     () =>
       menu
         ? menu.type === "tile"
-          ? tileContextMenuItems.map((item) => ({
-              ...item,
-              shortcut: "",
-              action: () => runSurfaceAction(item.action),
-              disabled: false,
-            }))
+          ? [
+              ...tileContextMenuItems.map((item) => ({
+                ...item,
+                surfaceAction: item.action,
+                shortcut: "",
+                action: () => runSurfaceAction(item.action),
+                disabled: false,
+              })),
+              {
+                label: "隐藏到托盘",
+                shortcut: "",
+                action: () => {
+                  dismissMenu();
+                  void invoke("window_control", { action: "hide" }).catch(console.error);
+                },
+                disabled: false,
+              },
+            ]
           : [
               {
                 label: t("contextMenu.edit.cut", { defaultValue: "剪切" }),
@@ -210,6 +228,30 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
                 action: () => runCommand("selectAll"),
                 disabled: false,
               },
+              ...(new URLSearchParams(window.location.search).get("view") === "main" ||
+              !new URLSearchParams(window.location.search).get("view")
+                ? []
+                : [
+                    { separator: true as const },
+                    {
+                      label: "折叠成胶囊",
+                      shortcut: "Ctrl+W",
+                      action: () => {
+                        dismissMenu();
+                        void invoke("fold_note_window").catch(console.error);
+                      },
+                      disabled: false,
+                    },
+                    {
+                      label: "隐藏到托盘",
+                      shortcut: "",
+                      action: () => {
+                        dismissMenu();
+                        void invoke("window_control", { action: "hide" }).catch(console.error);
+                      },
+                      disabled: false,
+                    },
+                  ]),
             ]
         : [],
     [menu, runCommand, t, tileContextMenuItems],
@@ -236,6 +278,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
             ) : (
               <button
                 key={item.label}
+                data-surface-action={"surfaceAction" in item ? item.surfaceAction : undefined}
                 onClick={() => void item.action()}
                 disabled={item.disabled}
                 className={`w-full flex items-center justify-between px-3 py-1.5 text-[12px] font-body transition-colors cursor-pointer disabled:text-ink-ghost/40 disabled:cursor-default disabled:hover:bg-transparent ${

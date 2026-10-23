@@ -19,11 +19,11 @@ export function getTileContextMenuItems(translate: TFunction = t): TileContextMe
     },
     {
       action: "switchToPad",
-      label: translate("contextMenu.tile.switchToPad", { defaultValue: "转为小窗" }),
+      label: translate("contextMenu.tile.switchToPad", { defaultValue: "切回便签" }),
     },
     {
       action: "close",
-      label: translate("contextMenu.tile.close", { defaultValue: "取消钉屏" }),
+      label: translate("contextMenu.tile.close", { defaultValue: "折叠成胶囊" }),
       tone: "danger",
     },
   ];

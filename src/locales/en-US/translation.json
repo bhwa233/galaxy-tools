@@ -18,7 +18,7 @@
     "default": "Default",
     "delete": "Delete",
     "externalFileCount": "{{count}} external file(s)",
-    "noteCount": "{{count}} note(s)",
+    "noteCount": "Sticky notes · {{count}}",
     "operationFailed": "Operation failed",
     "save": "Save",
     "untitledNote": "Untitled Note",
@@ -34,10 +34,10 @@
       "selectAll": "Select All"
     },
     "tile": {
-      "close": "Unpin",
+      "close": "Fold into Capsule",
       "copy": "Copy",
       "save": "Save",
-      "switchToPad": "Switch to Window"
+      "switchToPad": "Edit Note"
     }
   },
   "errors": {
@@ -163,7 +163,8 @@
   "noteMenu": {
     "delete": "Delete Note",
     "export": "Export Markdown",
-    "moveToCategory": "Move to category…"
+    "moveToCategory": "Move to category…",
+    "showOnDesktop": "Show on Desktop"
   },
   "notepad": {
     "button": {
@@ -441,5 +442,15 @@
   },
   "tile": {
     "empty": "Empty"
+  },
+  "noteState": {
+    "pin": "Pin to Top",
+    "unpin": "Unpin",
+    "pinned": "Pinned",
+    "desktop": "On Desktop",
+    "capsule": "Capsule",
+    "hidden": "Hidden",
+    "unopened": "Not on Desktop",
+    "hide": "Hide to Tray"
   }
 }

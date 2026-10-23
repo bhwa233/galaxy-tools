@@ -37,7 +37,7 @@ export function NotepadOpenPanel({ notes, onOpenNote }: NotepadOpenPanelProps) {
             type="text"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder={t("notepad.search.placeholder", { defaultValue: "搜索笔记…" })}
+            placeholder={t("notepad.search.placeholder", { defaultValue: "搜索便签…" })}
             className="flex-1 text-[12px] font-body text-ink placeholder:text-ink-ghost/60 bg-transparent"
           />
           {searchQuery && (
@@ -109,7 +109,7 @@ export function NotepadOpenPanel({ notes, onOpenNote }: NotepadOpenPanelProps) {
                 </div>
               </div>
               <p className="text-[12px] text-ink-ghost leading-relaxed line-clamp-1 group-hover:text-ink-faint transition-colors">
-                {note.preview || t("common.blankNote", { defaultValue: "空白笔记" })}
+                {note.preview || t("common.blankNote", { defaultValue: "空白便签" })}
               </p>
               {hoveredNote === note.id && (
                 <div className="mt-1.5 h-px bg-bamboo/10 transition-all duration-300" />
@@ -118,12 +118,12 @@ export function NotepadOpenPanel({ notes, onOpenNote }: NotepadOpenPanelProps) {
           ))}
           {notes.length === 0 && (
             <div className="px-4 py-8 text-center text-[12px] text-ink-ghost">
-              {t("notepad.emptyState", { defaultValue: "还没有可打开的笔记" })}
+              {t("notepad.emptyState", { defaultValue: "还没有可打开的便签" })}
             </div>
           )}
           {notes.length > 0 && filteredNotes.length === 0 && (
             <div className="px-4 py-8 text-center text-[12px] text-ink-ghost">
-              {t("notepad.search.noResults", { defaultValue: "没有匹配的笔记" })}
+              {t("notepad.search.noResults", { defaultValue: "没有匹配的便签" })}
             </div>
           )}
         </div>

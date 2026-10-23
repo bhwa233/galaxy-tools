@@ -11,7 +11,7 @@ export function getDisplayTitle(
   const preview = note.preview.trim();
   if (preview) return preview.slice(0, 20);
 
-  return translate("common.untitledNote", { defaultValue: "无标题笔记" });
+  return translate("common.untitledNote", { defaultValue: "无标题便签" });
 }
 
 export function buildPreview(content: string): string {
@@ -48,6 +48,7 @@ export interface CategoryGroup {
 export function groupNotesByCategory(
   notes: NoteMetadata[],
   allCategories: string[] = [],
+  pinnedIds: ReadonlySet<string> = new Set(),
 ): CategoryGroup[] {
   const groups = new Map<string, NoteMetadata[]>();
 
@@ -67,11 +68,19 @@ export function groupNotesByCategory(
 
   const result: CategoryGroup[] = [];
   for (const [category, categoryNotes] of groups) {
-    categoryNotes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    categoryNotes.sort(
+      (a, b) =>
+        Number(pinnedIds.has(b.id)) - Number(pinnedIds.has(a.id)) ||
+        b.updatedAt.localeCompare(a.updatedAt) ||
+        a.id.localeCompare(b.id),
+    );
     result.push({
       category,
       notes: categoryNotes,
-      latestUpdatedAt: categoryNotes[0]?.updatedAt ?? "",
+      latestUpdatedAt: categoryNotes.reduce(
+        (latest, note) => (note.updatedAt > latest ? note.updatedAt : latest),
+        "",
+      ),
     });
   }
 

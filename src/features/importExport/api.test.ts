@@ -81,7 +81,7 @@ describe("importExport api", () => {
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
     expect(save).toHaveBeenNthCalledWith(2, {
-      defaultPath: "无标题笔记.md",
+      defaultPath: "无标题便签.md",
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
     expect(save).toHaveBeenNthCalledWith(3, {
