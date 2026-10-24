@@ -63,6 +63,7 @@ src-tauri/icons/macOS
 
 ## Temp
 temp/
+/tmp/
 nul
 tsconfig.tsbuildinfo
 Docs/windows-install-chain-code-review.md

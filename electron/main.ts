@@ -7,6 +7,7 @@ import {
   ipcMain,
   Menu,
   net,
+  Notification,
   protocol,
   screen,
   session,
@@ -24,6 +25,9 @@ import type { SaveNoteRequest } from "../src/features/notes/types.js";
 
 import { initializeWindowsRuntime, watchFullscreen } from "./windows.js";
 import { Capsules } from "./capsules.js";
+import { Reminders, type ReminderNotification } from "./reminders.js";
+import { REMINDER_PRESETS } from "../src/features/reminders/presets.js";
+import type { ReminderItem } from "../src/features/reminders/types.js";
 import { deriveNoteWindowState } from "./note-window-state.js";
 import {
   NOTE_WINDOW_STATES_CHANGED,
@@ -95,6 +99,8 @@ const ready = new Set<number>();
 let store: NoteStore;
 let tray: Tray;
 let capsules: Capsules;
+let reminders: Reminders;
+let lastBalloonReminder: ReminderItem | undefined;
 let stopFullscreen = () => {};
 const releasing = new Map<number, Promise<void>>();
 let exiting = false;
@@ -527,8 +533,34 @@ function globalMenu(): Electron.Menu {
     { label: "退出（保存后关闭）", click: () => void quit() },
   ]);
 }
+function openNoteWithAnchor(noteId: string, taskText?: string): void {
+  const main = showMain();
+  store.get(noteId);
+  // 旧载荷是纯 id 字符串；带任务锚点的提醒用对象载荷，渲染端两者都接受。
+  const payload: string | { noteId: string; taskText?: string } = taskText
+    ? { noteId, taskText }
+    : noteId;
+  if (ready.has(main.id)) emit("open-note", payload, main);
+  else main.webContents.once("did-finish-load", () => emit("open-note", payload, main));
+}
+function fireReminderNotification({ item, noteTitle, body }: ReminderNotification): void {
+  const open = () => openNoteWithAnchor(item.noteId, item.taskText);
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: noteTitle,
+      body,
+      silent: !store.config.reminderSound,
+    });
+    notification.on("click", open);
+    notification.show();
+    return;
+  }
+  lastBalloonReminder = item;
+  tray?.displayBalloon({ iconType: "info", title: noteTitle, content: body });
+}
 function paperMenu(win: BrowserWindow): Electron.Menu {
   const layout = layouts.get(labelOf(win))!;
+  const noteReminders = layout.noteId ? reminders.forNote(layout.noteId) : [];
   return Menu.buildFromTemplate([
     ...(layout.view === "tile"
       ? [
@@ -547,6 +579,34 @@ function paperMenu(win: BrowserWindow): Electron.Menu {
       click: () => void hideAndRelease(win).catch((error) => reportError(error, win)),
     },
     { type: "separator" },
+    ...(layout.noteId
+      ? [
+          {
+            label: "设置提醒",
+            submenu: REMINDER_PRESETS.map((preset) => ({
+              label: preset.label,
+              click: () => {
+                try {
+                  reminders.setPreset({ noteId: layout.noteId!, preset: preset.id });
+                } catch (error) {
+                  reportError(error, win);
+                }
+              },
+            })),
+          },
+          ...(noteReminders.length
+            ? [
+                {
+                  label: `取消提醒（${noteReminders.length} 条）`,
+                  click: () => {
+                    if (layout.noteId) reminders.cancelForNote(layout.noteId);
+                  },
+                },
+              ]
+            : []),
+          { type: "separator" as const },
+        ]
+      : []),
     {
       label: "置顶",
       type: "checkbox",
@@ -649,6 +709,11 @@ async function handle(
       changed();
       return note;
     }
+    case "notes_set_editor_mode": {
+      const note = store.setEditorMode(text(args.id), args.mode);
+      changed();
+      return note;
+    }
     case "notes_update": {
       const note = store.save(args.request as SaveNoteRequest, text(args.id));
       changed();
@@ -661,6 +726,7 @@ async function handle(
       );
       if (editors.length) throw new AppError("noteInUse", "请先关闭该便签的独立窗口再删除");
       await store.delete(id);
+      reminders?.cancelForNote(id);
       for (const entry of layouts.values()) if (entry.noteId === id) layouts.delete(entry.label);
       persistLayout();
       changed();
@@ -791,6 +857,19 @@ async function handle(
     case "note_set_pinned":
       if (typeof args.pinned !== "boolean") throw new AppError("invalidPayload", "置顶参数不合法");
       setNotePinned(text(args.noteId), args.pinned);
+      return;
+    case "reminders_list":
+      return reminders.list();
+    case "reminders_set": {
+      const taskText = args.taskText === undefined ? undefined : text(args.taskText);
+      return reminders.set({
+        noteId: text(args.noteId),
+        fireAt: text(args.fireAt),
+        taskText,
+      });
+    }
+    case "reminders_cancel":
+      reminders.cancel(text(args.id));
       return;
     case "hide_note_on_desktop":
       await hideNoteOnDesktop(text(args.noteId));
@@ -991,9 +1070,10 @@ function setupIpc(): void {
         throw new AppError("invalidPayload", "IPC 参数不合法");
       const run = () => handle(win, command, (args ?? {}) as Record<string, any>);
       // Disk writes and read/modify/write metadata transactions are globally serialized.
-      const queued = /^(notes_|categories_|images_|config_|copy_background|save_external)/.test(
-        command,
-      );
+      const queued =
+        /^(notes_|categories_|images_|reminders_|config_|copy_background|save_external)/.test(
+          command,
+        );
       const value = queued ? await (mutations = mutations.catch(() => {}).then(run)) : await run();
       return { ok: true, value };
     } catch (error) {
@@ -1062,6 +1142,7 @@ app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   stopFullscreen();
   capsules?.dispose();
+  reminders?.dispose();
   tray?.destroy();
 });
 app
@@ -1092,6 +1173,13 @@ app
       },
       globalMenu,
     });
+    reminders = new Reminders({
+      file: () => path.join(store.dataDir, "reminders.json"),
+      getNote: (id) => store.get(id),
+      notify: fireReminderNotification,
+      onChanged: () => emit("reminders-changed", reminders.list()),
+    });
+    reminders.load();
     stopFullscreen = watchFullscreen(
       here,
       configDir,
@@ -1148,6 +1236,12 @@ app
     );
     tray.setToolTip("花笺 Electron");
     tray.on("click", () => showMain());
+    tray.on("balloon-click", () => {
+      // 气泡通知无法携带载荷，只记最近触发的一条；点击即定位。
+      const item = lastBalloonReminder;
+      lastBalloonReminder = undefined;
+      if (item) openNoteWithAnchor(item.noteId, item.taskText);
+    });
     if (fs.existsSync(layoutFile())) {
       const saved = readJson<{ windows: Layout[]; capsuleQueues?: CapsuleQueue[] }>(layoutFile());
       capsules.restore(saved.capsuleQueues);
@@ -1165,7 +1259,7 @@ app
           (!Number.isFinite(entry.capsule.x) ||
             !Number.isFinite(entry.capsule.y) ||
             !Number.isFinite(entry.capsule.order) ||
-            !["left", "right"].includes(entry.capsule.edge) ||
+            !["left", "right", "top"].includes(entry.capsule.edge) ||
             !["floating", "docked"].includes(entry.capsule.kind) ||
             typeof entry.capsule.displayId !== "string")
         )
@@ -1186,12 +1280,15 @@ app
     } catch (error) {
       console.error("shortcut-registration", error);
     }
+    // 首轮 tick 会补发停机期间到期的提醒（迟超一天的直接丢弃）。
+    reminders.start();
     refreshTray();
     publishNoteStates();
     if (smokeOutput) {
       const { runSmoke } = await import("./smoke.js");
       await runSmoke({
         output: smokeOutput,
+        fullscreenRects: () => fullscreenRects,
         gpuDiagnostics: () => ({
           crashCount: gpuCrashCount,
           features: app.getGPUFeatureStatus(),

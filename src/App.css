@@ -45,11 +45,13 @@
 }
 
 :root {
+  color-scheme: light;
   --app-window-radius: 14px;
   --app-surface-radius: 14px;
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --color-paper: #222120;
   --color-paper-warm: #2c2a27;
   --color-paper-deep: #3c3935;
@@ -280,6 +282,21 @@ input::placeholder {
 .markdown-selectable svg {
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* 提醒通知点击后的任务行定位闪烁 */
+@keyframes task-flash-kf {
+  0% {
+    background: color-mix(in srgb, var(--color-bamboo) 28%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+li.task-flash {
+  animation: task-flash-kf 2.2s ease;
+  border-radius: 4px;
 }
 
 /* Noise texture overlay for paper feel */

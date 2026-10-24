@@ -15,7 +15,10 @@ try {
   $report = Join-Path $run 'report.json'
   $applicationArgs = @(('"' + $repo + '"'), ('"--smoke-output=' + $report + '"'))
   $process = Start-Process -FilePath $ElectronExe -ArgumentList $applicationArgs -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $run 'stdout.log') -RedirectStandardError (Join-Path $run 'stderr.log')
-  if (-not $process.WaitForExit(45000)) { throw "Smoke test timed out. Isolated process: $($process.Id), evidence: $run" }
+  $deadline = (Get-Date).AddSeconds(120)
+  while (-not $process.WaitForExit(1000)) {
+    if ((Get-Date) -ge $deadline) { throw "Smoke test timed out. Isolated process: $($process.Id), evidence: $run" }
+  }
   if (-not (Test-Path -LiteralPath $report)) { throw "No report generated; inspect $run" }
   $result = Get-Content -LiteralPath $report -Raw -Encoding UTF8 | ConvertFrom-Json
   if (-not $result.ok) { throw ($result | ConvertTo-Json -Depth 10) }

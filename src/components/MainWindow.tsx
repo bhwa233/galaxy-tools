@@ -1,3 +1,4 @@
+import { NOTE_TITLE_MAX_LENGTH } from "../features/notes/types";
 import type { ClosePrepareRequest } from "../platform/desktop";
 import {
   useCallback,
@@ -16,7 +17,6 @@ import { emit, listen, type UnlistenFn } from "../platform/desktop";
 import { getCurrentWindow } from "../platform/desktop";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
-import { showToast } from "./Toast";
 import {
   createScrollSyncMap,
   interpolateScrollOffset,
@@ -25,6 +25,8 @@ import {
   tagPreviewBlocks,
   type ScrollSyncMap,
 } from "../features/markdown/scrollSync";
+
+import { showToast } from "./Toast";
 import {
   chooseDataDirectory,
   getConfig,
@@ -98,6 +100,10 @@ import {
 import { useNoteWindowStates } from "../features/windows/useNoteWindowStates";
 import { NoteStateBadges } from "../features/windows/NoteStateBadges";
 import type { NoteWindowState } from "../features/windows/noteWindowState";
+import { useReminders } from "../features/reminders/useReminders";
+import { ReminderBadge } from "../features/reminders/ReminderBadge";
+import { ReminderPicker } from "../features/reminders/ReminderPicker";
+import { NoteReminderButton } from "../features/reminders/NoteReminderButton";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 type SidePanelMode = "about" | "settings";
@@ -350,7 +356,7 @@ export function MainWindow({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>(
-    normalizeViewMode(initialConfig?.defaultViewMode ?? "split"),
+    normalizeViewMode(initialConfig?.defaultViewMode ?? "edit"),
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [content, setContent] = useState("");
@@ -360,6 +366,7 @@ export function MainWindow({
   const [isLoading, setIsLoading] = useState(true);
   const [noteMenu, setNoteMenu] = useState<NoteMenuState | null>(null);
   const [noteMenuClosing, setNoteMenuClosing] = useState(false);
+  const pendingTaskAnchorRef = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
@@ -393,7 +400,7 @@ export function MainWindow({
   const [activeCategory, setActiveCategory] = useState<string>("");
   const [showCategoryInput, setShowCategoryInput] = useState(false);
   const [categoryInputValue, setCategoryInputValue] = useState("");
-  const [noteMenuMode, setNoteMenuMode] = useState<"main" | "move">("main");
+  const [noteMenuMode, setNoteMenuMode] = useState<"main" | "move" | "reminder">("main");
   const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
   const [renameCategoryValue, setRenameCategoryValue] = useState("");
   const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
@@ -482,6 +489,16 @@ export function MainWindow({
       getNoteContextMenuItems(t, noteMenu?.noteId ? noteWindowStates[noteMenu.noteId] : undefined),
     [t, noteMenu?.noteId, noteWindowStates],
   );
+  const reminderItems = useReminders();
+  const noteReminderMap = useMemo(() => {
+    const map = new Map<string, { fireAt: string; item: (typeof reminderItems)[number] }>();
+    for (const item of reminderItems) {
+      const existing = map.get(item.noteId);
+      if (!existing || Date.parse(item.fireAt) < Date.parse(existing.fireAt))
+        map.set(item.noteId, { fireAt: item.fireAt, item });
+    }
+    return map;
+  }, [reminderItems]);
   const saveStateLabel = useMemo<Record<SaveState, string>>(
     () => ({
       idle: t("main.statusBar.saveState.idle", { defaultValue: "未选择" }),
@@ -568,10 +585,6 @@ export function MainWindow({
       {
         value: "split" as ViewMode,
         label: t("settings.defaultView.split", { defaultValue: "分栏" }),
-      },
-      {
-        value: "preview" as ViewMode,
-        label: t("settings.defaultView.preview", { defaultValue: "预览" }),
       },
     ],
     [t],
@@ -993,6 +1006,7 @@ export function MainWindow({
           try {
             const rels = await Promise.all(imagePaths.map((p) => saveImageFromPath(noteId, p)));
             const markdown = rels.map((rel) => `![](${rel})`).join("\n");
+            if (selectedIdRef.current !== noteId) return;
             insertTextAtCursor(textarea, setContent, markdown);
             saveStateRef.current = "dirty";
             setSaveState("dirty");
@@ -1009,13 +1023,40 @@ export function MainWindow({
   }, [loadExternalFile, setContent]);
 
   useEffect(() => {
-    const unlisten = listen<string>("open-note", (event) => {
-      void loadNote(event.payload);
-    });
+    const unlisten = listen<string | { noteId: string; taskText?: string }>(
+      "open-note",
+      (event) => {
+        const payload = event.payload;
+        if (typeof payload === "string") {
+          void loadNote(payload);
+          return;
+        }
+        // 提醒通知点击：定位到便签，任务级再滚动到具体任务行。
+        void loadNote(payload.noteId);
+        pendingTaskAnchorRef.current = payload.taskText ?? null;
+      },
+    );
     return () => {
       void unlisten.then((fn) => fn());
     };
   }, [loadNote]);
+
+  // 任务锚点定位：渲染完成后按 data-task-label 找到任务行，滚动居中并闪烁一次。
+  useEffect(() => {
+    const taskText = pendingTaskAnchorRef.current;
+    if (!taskText || !content) return;
+    pendingTaskAnchorRef.current = null;
+    if (viewMode === "edit") setViewMode("split");
+    const target = document.querySelector<HTMLInputElement>(
+      `input[data-task-label="${CSS.escape(taskText)}"]`,
+    );
+    const row = target?.closest("li");
+    if (!row) return;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.classList.add("task-flash");
+    const timer = window.setTimeout(() => row.classList.remove("task-flash"), 2400);
+    return () => window.clearTimeout(timer);
+  }, [content, viewMode]);
 
   useEffect(() => {
     const unlisten = listen("open-about-panel", () => {
@@ -1483,6 +1524,7 @@ export function MainWindow({
     event.stopPropagation();
 
     setNoteMenuClosing(false);
+    setNoteMenuMode("main");
     setHoveredId(noteId);
     setNoteMenu({
       x: event.clientX,
@@ -1528,6 +1570,10 @@ export function MainWindow({
     if (action === "pin") {
       setNoteMenuClosing(true);
       void toggleNotePin(note.id);
+      return;
+    }
+    if (action === "reminder") {
+      setNoteMenuMode("reminder");
       return;
     }
     if (action === "hide") {
@@ -1647,6 +1693,7 @@ export function MainWindow({
     markDirty,
     onEnsureNoteSaved: ensureNoteSaved,
     disabled: isExternal,
+    autoCompress: settingsConfig?.imageAutoCompress ?? true,
     onError: showToast,
     t,
   });
@@ -2482,6 +2529,9 @@ export function MainWindow({
                                     state={stateFor(note.id)}
                                     onTogglePin={() => void toggleNotePin(note.id)}
                                   />
+                                  {noteReminderMap.get(note.id) && (
+                                    <ReminderBadge item={noteReminderMap.get(note.id)!.item} />
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
@@ -2670,6 +2720,9 @@ export function MainWindow({
                                         state={stateFor(note.id)}
                                         onTogglePin={() => void toggleNotePin(note.id)}
                                       />
+                                      {noteReminderMap.get(note.id) && (
+                                        <ReminderBadge item={noteReminderMap.get(note.id)!.item} />
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-2 mt-1">
                                       <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
@@ -2929,12 +2982,19 @@ export function MainWindow({
                 )}
               </div>
 
-              <SlidingButtonGroup
-                options={viewModeOptions}
-                value={viewMode}
-                onChange={setViewMode}
-                buttonClassName="px-3 py-1"
-              />
+              <div className="flex items-center gap-2">
+                <NoteReminderButton
+                  noteId={selectedId}
+                  disabled={!selectedId || isExternal}
+                  onError={showToast}
+                />
+                <SlidingButtonGroup
+                  options={viewModeOptions}
+                  value={viewMode}
+                  onChange={setViewMode}
+                  buttonClassName="px-3 py-1"
+                />
+              </div>
             </div>
 
             <div
@@ -2943,6 +3003,7 @@ export function MainWindow({
             >
               <input
                 type="text"
+                maxLength={isExternal ? undefined : NOTE_TITLE_MAX_LENGTH}
                 value={title}
                 onChange={(event) => {
                   setTitle(event.target.value);
@@ -3035,6 +3096,7 @@ export function MainWindow({
                           data-tab-indent="true"
                           value={content}
                           onChange={(event) => {
+                            contentValueRef.current = event.target.value;
                             setContent(event.target.value);
                             markDirty();
                           }}
@@ -3077,7 +3139,7 @@ export function MainWindow({
                     </div>
                   )}
 
-                  {(viewMode === "preview" || viewMode === "split") && (
+                  {viewMode === "split" && (
                     <div className="flex flex-col min-h-0 min-w-0 flex-1">
                       {viewMode === "split" && (
                         <div className="px-4 pt-2.5 pb-1 shrink-0">
@@ -3089,9 +3151,7 @@ export function MainWindow({
                       <div
                         ref={previewScrollRef}
                         onScroll={handlePreviewScroll}
-                        className={`flex-1 overflow-y-auto px-6 pb-6 ${
-                          viewMode === "preview" ? "pt-3" : "pt-1"
-                        }`}
+                        className="flex-1 overflow-y-auto px-6 pb-6 pt-1"
                       >
                         <MarkdownPreview
                           content={deferredContent}
@@ -3110,6 +3170,7 @@ export function MainWindow({
                           fontSize={settingsConfig?.fontSize ?? 14}
                           renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
                           imageBaseDir={imageBaseDir ?? undefined}
+                          imageDisplay={settingsConfig?.imageDisplay ?? "show"}
                         />
                       </div>
                     </div>
@@ -3232,6 +3293,33 @@ export function MainWindow({
                   <span>{item.label}</span>
                 </button>
               ))}
+            </div>
+          ) : noteMenuMode === "reminder" ? (
+            <div key="reminder" className="animate-menu-slide-left">
+              <button
+                onClick={() => setNoteMenuMode("main")}
+                className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-body text-ink-ghost hover:bg-paper-warm transition-colors cursor-pointer border-b border-paper-deep/20"
+              >
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+                <span>{t("common.back", { defaultValue: "返回" })}</span>
+              </button>
+              <ReminderPicker
+                noteId={noteMenuTarget.id}
+                scopeItems={reminderItems.filter((item) => item.noteId === noteMenuTarget.id)}
+                onDone={() => setNoteMenuClosing(true)}
+                onError={showToast}
+              />
             </div>
           ) : (
             <div key="move" className="animate-menu-slide-left">

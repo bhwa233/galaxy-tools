@@ -2,8 +2,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_NOTE_EDITOR_MODE } from "../src/features/notes/types.js";
 import type { AppConfig } from "../src/features/settings/types.js";
-import type { Note, NoteMetadata, SaveNoteRequest } from "../src/features/notes/types.js";
+import type {
+  Note,
+  NoteMetadata,
+  NoteEditorMode,
+  SaveNoteRequest,
+} from "../src/features/notes/types.js";
 
 export class AppError extends Error {
   constructor(
@@ -78,7 +84,13 @@ function request(value: SaveNoteRequest): SaveNoteRequest {
     title: value.title,
     content: value.content,
     category: component(value.category ?? "", true),
+    ...(value.editorMode !== undefined ? { editorMode: validateEditorMode(value.editorMode) } : {}),
   };
+}
+function validateEditorMode(value: unknown): NoteEditorMode {
+  if (value !== "markdown" && value !== "text")
+    throw new AppError("invalidPayload", "便签模式不合法");
+  return value;
 }
 const preview = (text: string) =>
   Array.from(text.replace(/\s+/g, " ").trim()).slice(0, 80).join("");
@@ -98,7 +110,7 @@ export function defaultConfig(dataDir: string): AppConfig {
     globalShortcut: "Ctrl+Shift+N",
     closeToTray: true,
     autostart: false,
-    defaultViewMode: "split",
+    defaultViewMode: "edit",
     noteAutoSave: true,
     noteSurfaceAutoSave: true,
     tileColor: "#f6f3ec",
@@ -112,9 +124,11 @@ export function defaultConfig(dataDir: string): AppConfig {
     tileCtrlClose: true,
     tileDoubleClickToEdit: false,
     tileSaveReturnsToPin: false,
-    tileRenderMarkdown: false,
     renderHtmlMarkdown: false,
     splitScrollSync: true,
+    imageAutoCompress: true,
+    imageDisplay: "show",
+    reminderSound: true,
     toggleVisibilityShortcut: "",
     openAtCursor: true,
     backgroundImagePath: "",
@@ -146,6 +160,7 @@ export class NoteStore {
       process.env.FLORAL_NOTEPAPER_DATA_DIR || saved.dataDir || legacy || defaultDataDir,
     );
     this.config = { ...defaultConfig(this.dataDir), ...saved, dataDir: this.dataDir };
+    this.config.defaultViewMode = this.config.defaultViewMode === "split" ? "split" : "edit";
     this.ensure();
   }
   ensure(): void {
@@ -158,6 +173,7 @@ export class NoteStore {
       typeof config !== "object" ||
       !["system", "light", "dark"].includes(config.theme) ||
       !["system", "custom"].includes(config.tileColorMode) ||
+      !["show", "click", "hidden"].includes(config.imageDisplay) ||
       typeof config.globalShortcut !== "string" ||
       typeof config.toggleVisibilityShortcut !== "string" ||
       typeof config.autostart !== "boolean" ||
@@ -168,6 +184,7 @@ export class NoteStore {
       ...this.config,
       ...config,
       dataDir: this.dataDir,
+      defaultViewMode: config.defaultViewMode === "split" ? "split" : "edit",
       tabIndentSize: Math.max(1, Math.min(8, Number(config.tabIndentSize) || 2)),
     };
     atomicWrite(path.join(this.configDir, "config.json"), JSON.stringify(value, null, 2));
@@ -273,6 +290,7 @@ export class NoteStore {
       updatedAt: now,
       wordCount: wordCount(req.content),
       preview: preview(req.content),
+      editorMode: req.editorMode ?? old?.editorMode ?? DEFAULT_NOTE_EDITOR_MODE,
     };
     const target = this.notePath(meta);
     atomicWrite(target, req.content);
@@ -285,6 +303,15 @@ export class NoteStore {
     }
     const { preview: _, ...rest } = meta;
     return { ...rest, content: req.content };
+  }
+  setEditorMode(id: string, mode: unknown): NoteMetadata {
+    const editorMode = validateEditorMode(mode);
+    const notes = this.metadata();
+    const note = notes.find((item) => item.id === id);
+    if (!note) throw new AppError("noteNotFound", "找不到便签", { noteId: id });
+    const updated = { ...note, editorMode };
+    this.commit(notes.map((item) => (item.id === id ? updated : item)));
+    return updated;
   }
   async delete(id: string): Promise<void> {
     const notes = this.metadata(),
@@ -397,6 +424,7 @@ export class NoteStore {
       "backgrounds",
       "metadata.json",
       "electron-layout.json",
+      "reminders.json",
     ]) {
       const from = confined(source, item);
       if (fs.existsSync(from))

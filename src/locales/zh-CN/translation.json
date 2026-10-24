@@ -60,6 +60,7 @@
     "copied": "已复制",
     "copy": "复制",
     "emptyHint": "预览区会显示当前便签内容",
+    "imageLoad": "点击加载",
     "alert": {
       "note": "备注",
       "tip": "提示",
@@ -164,9 +165,33 @@
     "delete": "删除便签",
     "export": "导出 Markdown",
     "moveToCategory": "移动到分类…",
+    "setReminder": "设置提醒…",
     "showOnDesktop": "贴到桌面"
   },
+  "reminder": {
+    "noteButton": "便签提醒",
+    "saveFirstFailed": "保存便签失败，暂时无法设置提醒",
+    "presets": {
+      "15m": "15 分钟",
+      "30m": "30 分钟",
+      "1h": "1 小时",
+      "3h": "3 小时",
+      "today-evening": "今天 18:00",
+      "tomorrow-morning": "明天 9:00"
+    },
+    "customMinutes": "自定义（分钟）",
+    "apply": "确定",
+    "cancel": "取消提醒",
+    "setTaskReminder": "设置任务提醒",
+    "hasReminder": "已设提醒：{{time}}",
+    "remaining": {
+      "minutes": "{{count}} 分",
+      "hours": "{{count}} 小时"
+    }
+  },
   "notepad": {
+    "markdownEmptyHint": "切换到文本模式，开始记录……",
+    "textMode": "文本",
     "button": {
       "clear": "清空"
     },
@@ -270,6 +295,14 @@
     "tileSaveReturnsToPin": "保存后回到磁贴",
     "renderHtmlMarkdown": "允许 HTML 标签渲染",
     "splitScrollSync": "分栏同步滚动",
+    "imageAutoCompress": "自动压缩大图（粘贴/拖入，窗口拖入除外）",
+    "imageDisplay": {
+      "label": "预览图片显示",
+      "show": "直接显示",
+      "click": "点击加载",
+      "hidden": "不显示"
+    },
+    "reminderSound": "提醒提示音",
     "title": "应用设置",
     "update": {
       "advanced": "高级",

@@ -6,6 +6,7 @@ import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection"
 import type {
   AppConfig,
   BackgroundFit,
+  ImageDisplayMode,
   ThemeOption,
   TileColorMode,
   ViewMode,
@@ -64,10 +65,6 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
     () => [
       { value: "edit", label: t("settings.defaultView.edit", { defaultValue: "编辑" }) },
       { value: "split", label: t("settings.defaultView.split", { defaultValue: "分栏" }) },
-      {
-        value: "preview",
-        label: t("settings.defaultView.preview", { defaultValue: "预览" }),
-      },
     ],
     [t],
   );
@@ -85,6 +82,23 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
         value,
         label: t(labelKey, { defaultValue: defaultLabel }),
       })),
+    [t],
+  );
+  const imageDisplayOptions = useMemo<Array<{ value: ImageDisplayMode; label: string }>>(
+    () => [
+      {
+        value: "show",
+        label: t("settings.imageDisplay.show", { defaultValue: "直接显示" }),
+      },
+      {
+        value: "click",
+        label: t("settings.imageDisplay.click", { defaultValue: "点击加载" }),
+      },
+      {
+        value: "hidden",
+        label: t("settings.imageDisplay.hidden", { defaultValue: "不显示" }),
+      },
+    ],
     [t],
   );
 
@@ -194,11 +208,6 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             onChange={(checked) => setConfigValue("rememberSurfaceSize", checked)}
           />
           <ToggleRow
-            label={t("settings.tileRenderMarkdown", { defaultValue: "磁贴渲染 Markdown" })}
-            checked={config.tileRenderMarkdown}
-            onChange={(checked) => setConfigValue("tileRenderMarkdown", checked)}
-          />
-          <ToggleRow
             label={t("settings.tileDoubleClickToEdit", { defaultValue: "双击磁贴进入编辑" })}
             checked={config.tileDoubleClickToEdit ?? false}
             onChange={(checked) => setConfigValue("tileDoubleClickToEdit", checked)}
@@ -217,6 +226,29 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             label={t("settings.splitScrollSync", { defaultValue: "分栏同步滚动" })}
             checked={config.splitScrollSync ?? true}
             onChange={(checked) => setConfigValue("splitScrollSync", checked)}
+          />
+        </section>
+
+        <section className="space-y-2">
+          <label className="block text-[11px] font-body text-ink-faint">
+            {t("settings.imageDisplay.label", { defaultValue: "预览图片显示" })}
+          </label>
+          <SlidingButtonGroup
+            options={imageDisplayOptions}
+            value={config.imageDisplay ?? "show"}
+            onChange={(value: ImageDisplayMode) => setConfigValue("imageDisplay", value)}
+          />
+          <ToggleRow
+            label={t("settings.imageAutoCompress", {
+              defaultValue: "自动压缩大图（粘贴/拖入，窗口拖入除外）",
+            })}
+            checked={config.imageAutoCompress ?? true}
+            onChange={(checked) => setConfigValue("imageAutoCompress", checked)}
+          />
+          <ToggleRow
+            label={t("settings.reminderSound", { defaultValue: "提醒提示音" })}
+            checked={config.reminderSound ?? true}
+            onChange={(checked) => setConfigValue("reminderSound", checked)}
           />
         </section>
 

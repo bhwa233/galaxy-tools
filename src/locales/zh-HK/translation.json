@@ -60,6 +60,7 @@
     "copied": "已複製",
     "copy": "複製",
     "emptyHint": "預覽區會顯示目前便箋內容",
+    "imageLoad": "點擊載入",
     "alert": {
       "note": "備註",
       "tip": "提示",
@@ -164,9 +165,33 @@
     "delete": "刪除便箋",
     "export": "匯出 Markdown",
     "moveToCategory": "移至分類…",
+    "setReminder": "設置提醒…",
     "showOnDesktop": "貼到桌面"
   },
+  "reminder": {
+    "noteButton": "便箋提醒",
+    "saveFirstFailed": "儲存便箋失敗，暫時無法設定提醒",
+    "presets": {
+      "15m": "15 分鐘",
+      "30m": "30 分鐘",
+      "1h": "1 小時",
+      "3h": "3 小時",
+      "today-evening": "今天 18:00",
+      "tomorrow-morning": "明天 9:00"
+    },
+    "customMinutes": "自訂（分鐘）",
+    "apply": "確定",
+    "cancel": "取消提醒",
+    "setTaskReminder": "設置任務提醒",
+    "hasReminder": "已設提醒：{{time}}",
+    "remaining": {
+      "minutes": "{{count}} 分",
+      "hours": "{{count}} 小時"
+    }
+  },
   "notepad": {
+    "markdownEmptyHint": "切換到文字模式，開始記錄……",
+    "textMode": "文字",
     "button": {
       "clear": "清除"
     },
@@ -270,6 +295,14 @@
     "tileSaveReturnsToPin": "儲存後回到磁貼",
     "renderHtmlMarkdown": "允許 HTML 標籤渲染",
     "splitScrollSync": "分欄同步捲動",
+    "imageAutoCompress": "自動壓縮大圖（貼上/拖入，視窗拖入除外）",
+    "imageDisplay": {
+      "label": "預覽圖片顯示",
+      "show": "直接顯示",
+      "click": "點擊載入",
+      "hidden": "不顯示"
+    },
+    "reminderSound": "提醒提示音",
     "title": "應用程式設定",
     "update": {
       "advanced": "進階",

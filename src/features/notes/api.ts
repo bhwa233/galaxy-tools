@@ -1,6 +1,6 @@
 import { t, type TFunction } from "i18next";
 import { invoke } from "../../platform/desktop";
-import type { Note, NoteMetadata, SaveNoteRequest } from "./types";
+import type { Note, NoteMetadata, NoteEditorMode, SaveNoteRequest } from "./types";
 
 interface SerializedAppError {
   code?: unknown;
@@ -37,6 +37,10 @@ export function createNote(request: SaveNoteRequest): Promise<Note> {
 
 export function updateNote(id: string, request: SaveNoteRequest): Promise<Note> {
   return invoke("notes_update", { id, request });
+}
+
+export function setNoteEditorMode(id: string, mode: NoteEditorMode): Promise<NoteMetadata> {
+  return invoke("notes_set_editor_mode", { id, mode });
 }
 
 export function deleteNote(id: string): Promise<void> {

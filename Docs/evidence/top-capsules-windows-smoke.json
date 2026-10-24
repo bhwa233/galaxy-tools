@@ -1,0 +1,228 @@
+{
+  "ok": true,
+  "runtime": {
+    "packaged": false,
+    "electron": "45.0.0",
+    "platform": "win32"
+  },
+  "checks": {
+    "topCapsules": {
+      "horizontalRow": true,
+      "centeredDefault": true,
+      "sideAndTopMenu": true,
+      "reorder": true,
+      "wholeQueueMovesAcrossEdges": true,
+      "horizontalMasterDrag": true,
+      "crossDisplayTransfer": true,
+      "floatingAndRedock": true,
+      "nativeClickOpensNote": true,
+      "previewBelowWithoutFocus": true,
+      "previewGapAndExit": true,
+      "horizontalWheel": true,
+      "fixedMaster": true,
+      "collapseRetainsScroll": true,
+      "placementPersisted": true,
+      "coldRestoreObserved": true,
+      "coldVisibleQueue": true,
+      "coldPlacement": {
+        "key": "1293696392:top",
+        "offset": 200,
+        "collapsed": true,
+        "scroll": 120,
+        "centered": false
+      },
+      "contentPreserved": true
+    },
+    "noteModes": {
+      "defaultTextEditor": true,
+      "titleAtUpperLeft": true,
+      "titleInputLimitedAndSaved": true,
+      "sourceEditing": true,
+      "clipboardOnNewNote": true,
+      "relativeImagePath": true,
+      "imageWidthPreserved": true,
+      "modeSwitchPreservesSource": true,
+      "taskTogglePreservesSource": true,
+      "modeRememberedOnReopen": true,
+      "mainEditAndSplit": true,
+      "mainToPadSync": true
+    },
+    "noteReminders": {
+      "draftSavedOnce": true,
+      "autoSaveWithoutFooter": true,
+      "noteLevelPreset": true,
+      "presetReplacesReminder": true,
+      "mainAndPadSync": true,
+      "tileCancelSync": true,
+      "historicalTaskManaged": true,
+      "upperRightEntries": true,
+      "taskRowEntryRemoved": true,
+      "panelFitsWindow": true,
+      "bellToggles": true,
+      "escapeDismissal": true,
+      "outsideDismissal": true,
+      "tileClickDoesNotDrag": true,
+      "contentAndTimestampPreserved": true,
+      "rendererErrors": []
+    },
+    "restoredPinPreferences": 0,
+    "unifiedList": {
+      "contextMenuTarget": true,
+      "pinWithoutOpening": true,
+      "pinnedOrderInList": true,
+      "nativePinOnOpen": true,
+      "fullscreenAvoidanceObserved": false,
+      "pinListToPaper": true,
+      "pinPaperToList": true,
+      "pinPersisted": true,
+      "reusesWindow": true,
+      "noCopy": true,
+      "listToDesktop": true,
+      "desktopToList": true,
+      "dirtyInputPreserved": true
+    },
+    "ipc": {
+      "node": "undefined",
+      "bridge": true,
+      "note": {
+        "ok": true,
+        "value": {
+          "id": "3bd9edc3-4ffa-4687-b764-fbf2eebab17b",
+          "title": "Electron 中文验证",
+          "fileName": "3bd9edc3-4ffa-4687-b764-fbf2eebab17b_Electron_中文验证.md",
+          "category": "",
+          "createdAt": "2026-10-24T09:06:11.413Z",
+          "updatedAt": "2026-10-24T09:06:16.349Z",
+          "wordCount": 22,
+          "editorMode": "text",
+          "content": "# 测试\n- [ ] 保留中文\n**Markdown**\n"
+        }
+      },
+      "denial": {
+        "ok": false,
+        "error": {
+          "code": "permissionDenied",
+          "message": "请通过文件选择器或拖放授权此文件",
+          "details": {}
+        }
+      }
+    },
+    "moved": true,
+    "durableClose": true,
+    "rendererReleased": true,
+    "restored": true,
+    "sameWindowTile": true,
+    "sameWindowEditor": true,
+    "tileReturnViaContextMenuAndButton": true,
+    "saveFailurePreservesWindow": true,
+    "imageFetch": {
+      "status": 200,
+      "type": "image/png",
+      "size": 68
+    },
+    "image": 1,
+    "protocolDenied": 403,
+    "capsulePointerInput": {
+      "events": [
+        {
+          "type": "pointerdown",
+          "button": 0,
+          "detail": 0,
+          "id": "master:1293696392:right"
+        },
+        {
+          "type": "pointerup",
+          "button": 0,
+          "detail": 0,
+          "id": "master:1293696392:right"
+        },
+        {
+          "type": "click",
+          "button": 0,
+          "detail": 1,
+          "id": "master:1293696392:right"
+        }
+      ],
+      "errors": []
+    },
+    "previewDiagnostics": {
+      "cursor": {
+        "x": 3737,
+        "y": 585
+      },
+      "currentCursor": {
+        "x": 3737,
+        "y": 585
+      },
+      "item": {
+        "id": "3bd9edc3-4ffa-4687-b764-fbf2eebab17b",
+        "title": "Electron 中文验证",
+        "expanded": false,
+        "rect": {
+          "x": 0,
+          "y": 42,
+          "width": 160,
+          "height": 32
+        }
+      },
+      "queueBounds": {
+        "x": 3717,
+        "y": 527,
+        "width": 160,
+        "height": 160
+      },
+      "present": true,
+      "ready": true,
+      "visible": true,
+      "focusable": false,
+      "focused": false
+    },
+    "notePresenceTransitions": true,
+    "capsuleClose": {
+      "hidden": true,
+      "contentPreserved": true,
+      "pinPreserved": true,
+      "noAccidentalOpen": true,
+      "canReopen": true,
+      "titleReadable": true,
+      "closeOnRight": true
+    },
+    "capsules": {
+      "durableFold": true,
+      "editorReleased": true,
+      "sharedQueue": true,
+      "masterToggle": true,
+      "nativeClickOpensNote": true,
+      "floatingClickOpensNote": true,
+      "smallMovementStillClicks": true,
+      "cancelledDragDoesNotOpen": true,
+      "capabilityDenied": true,
+      "previewNoFocus": true,
+      "previewContent": true,
+      "expandedGeometry": true
+    },
+    "gpu": {
+      "crashCount": 0,
+      "features": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "enabled",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "disabled_off",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled",
+        "webgpu": "enabled",
+        "webnn": "disabled_off"
+      },
+      "startedFromUnc": false,
+      "workingDirectoryIsLocal": true,
+      "sandboxEnabled": true
+    },
+    "errors": []
+  }
+}

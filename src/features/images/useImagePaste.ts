@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { TFunction } from "i18next";
 import { saveImage } from "./api";
+import { compressImageFile } from "./compressImage";
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB
 
@@ -20,11 +21,17 @@ interface UseImagePasteOptions {
   markDirty: () => void;
   onEnsureNoteSaved: () => Promise<string | null>;
   disabled?: boolean;
+  autoCompress?: boolean;
   onError?: (message: string) => void;
   t?: TFunction;
 }
 
-async function processImageFile(file: File, noteId: string, t?: TFunction): Promise<string | null> {
+async function processImageFile(
+  file: File,
+  noteId: string,
+  t?: TFunction,
+  autoCompress?: boolean,
+): Promise<string | null> {
   if (file.size > MAX_IMAGE_SIZE) {
     throw new Error(
       t?.("errors.imageTooLarge", { defaultValue: "图片文件过大（上限 20 MB）" }) ??
@@ -35,8 +42,12 @@ async function processImageFile(file: File, noteId: string, t?: TFunction): Prom
   const ext = MIME_TO_EXT[file.type];
   if (!ext) return null;
 
-  const buffer = await file.arrayBuffer();
-  return saveImage(noteId, new Uint8Array(buffer), ext);
+  let bytes = new Uint8Array(await file.arrayBuffer());
+  if (autoCompress) {
+    const compressed = await compressImageFile(file);
+    if (compressed) bytes = compressed.bytes;
+  }
+  return saveImage(noteId, bytes, ext);
 }
 
 export function insertTextAtCursor(
@@ -72,6 +83,7 @@ export function useImagePaste({
   markDirty,
   onEnsureNoteSaved,
   disabled,
+  autoCompress,
   onError,
   t,
 }: UseImagePasteOptions) {
@@ -94,7 +106,7 @@ export function useImagePaste({
 
         const markdownLines: string[] = [];
         for (const file of files) {
-          const relativePath = await processImageFile(file, resolvedId, t);
+          const relativePath = await processImageFile(file, resolvedId, t, autoCompress);
           if (relativePath) {
             markdownLines.push(`![](${relativePath})`);
           }
@@ -114,7 +126,7 @@ export function useImagePaste({
         processingRef.current = false;
       }
     },
-    [noteId, textareaRef, setContent, markDirty, onEnsureNoteSaved, onError, t],
+    [noteId, textareaRef, setContent, markDirty, onEnsureNoteSaved, autoCompress, onError, t],
   );
 
   const handlePaste = useCallback(

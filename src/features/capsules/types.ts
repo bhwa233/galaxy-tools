@@ -1,10 +1,12 @@
+import type { ImageDisplayMode } from "../settings/types.js";
+
 export interface Rect {
   x: number;
   y: number;
   width: number;
   height: number;
 }
-export type Edge = "left" | "right";
+export type Edge = "left" | "right" | "top";
 export interface CapsulePlacement {
   kind: "docked" | "floating";
   displayId: string;
@@ -18,6 +20,7 @@ export interface CapsuleQueue {
   offset: number;
   collapsed: boolean;
   scroll: number;
+  centered?: boolean;
 }
 export interface CapsuleEntry {
   label: string;
@@ -31,6 +34,8 @@ export interface CapsuleItem {
   id: string;
   title: string;
   rect: Rect;
+  /** Visible portion relative to rect, used when scrolling past a fixed master capsule. */
+  clip?: Rect;
   master?: boolean;
   expanded?: boolean;
   count?: number;
@@ -44,4 +49,5 @@ export interface CapsuleSnapshot {
   note?: { id: string; title: string; content: string };
   imageBaseDir?: string;
   markdown?: boolean;
+  imageDisplay?: ImageDisplayMode;
 }

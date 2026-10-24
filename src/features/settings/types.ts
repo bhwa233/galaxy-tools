@@ -1,9 +1,10 @@
-export type ViewMode = "edit" | "split" | "preview";
+export type ViewMode = "edit" | "split";
 
 export type ThemeOption = "light" | "dark" | "system";
 
 export type TileColorMode = "system" | "custom";
 export type BackgroundFit = "cover" | "contain" | "repeat";
+export type ImageDisplayMode = "show" | "click" | "hidden";
 
 export interface AppConfig {
   locale: string;
@@ -25,9 +26,11 @@ export interface AppConfig {
   tileCtrlClose: boolean;
   tileDoubleClickToEdit: boolean;
   tileSaveReturnsToPin: boolean;
-  tileRenderMarkdown: boolean;
   renderHtmlMarkdown: boolean;
   splitScrollSync: boolean;
+  imageAutoCompress: boolean;
+  imageDisplay: ImageDisplayMode;
+  reminderSound: boolean;
   surfaceWidth?: number;
   surfaceHeight?: number;
   toggleVisibilityShortcut: string;

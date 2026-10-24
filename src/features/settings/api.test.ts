@@ -46,9 +46,11 @@ describe("settings api", () => {
       tileDoubleClickToEdit: false,
       tileSaveReturnsToPin: false,
       toggleVisibilityShortcut: "",
-      tileRenderMarkdown: false,
       renderHtmlMarkdown: false,
       splitScrollSync: true,
+      imageAutoCompress: true,
+      imageDisplay: "show",
+      reminderSound: true,
       openAtCursor: true,
     };
     mockedInvoke.mockResolvedValue(config);
@@ -80,9 +82,11 @@ describe("settings api", () => {
       tileDoubleClickToEdit: true,
       tileSaveReturnsToPin: true,
       toggleVisibilityShortcut: "",
-      tileRenderMarkdown: false,
       renderHtmlMarkdown: false,
       splitScrollSync: true,
+      imageAutoCompress: false,
+      imageDisplay: "click",
+      reminderSound: false,
       openAtCursor: true,
     };
     mockedInvoke.mockResolvedValue(config);
@@ -107,11 +111,11 @@ describe("settings api", () => {
     });
   });
 
-  test("normalizes supported view modes and falls back to split", () => {
+  test("normalizes removed preview and unknown view modes to visual editing", () => {
     expect(normalizeViewMode("edit")).toBe("edit");
     expect(normalizeViewMode("split")).toBe("split");
-    expect(normalizeViewMode("preview")).toBe("preview");
-    expect(normalizeViewMode("unknown")).toBe("split");
+    expect(normalizeViewMode("preview")).toBe("edit");
+    expect(normalizeViewMode("unknown")).toBe("edit");
   });
 
   test("chooses a data directory through the folder picker", async () => {

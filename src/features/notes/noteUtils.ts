@@ -1,5 +1,6 @@
 import { t, type TFunction } from "i18next";
 import type { Note, NoteMetadata } from "./types";
+import { DEFAULT_NOTE_EDITOR_MODE } from "./types";
 
 export function getDisplayTitle(
   note: Pick<NoteMetadata, "title" | "preview">,
@@ -36,6 +37,7 @@ export function metadataFromNote(note: Note): NoteMetadata {
     updatedAt: note.updatedAt,
     wordCount: note.wordCount,
     preview: buildPreview(note.content),
+    editorMode: note.editorMode ?? DEFAULT_NOTE_EDITOR_MODE,
   };
 }
 

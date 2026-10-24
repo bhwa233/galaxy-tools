@@ -60,6 +60,7 @@
     "copied": "Copied",
     "copy": "Copy",
     "emptyHint": "Preview of the current note",
+    "imageLoad": "Click to load",
     "alert": {
       "note": "Note",
       "tip": "Tip",
@@ -164,9 +165,33 @@
     "delete": "Delete Note",
     "export": "Export Markdown",
     "moveToCategory": "Move to category…",
+    "setReminder": "Set reminder…",
     "showOnDesktop": "Show on Desktop"
   },
+  "reminder": {
+    "noteButton": "Note reminder",
+    "saveFirstFailed": "Could not save the note to set a reminder",
+    "presets": {
+      "15m": "15 min",
+      "30m": "30 min",
+      "1h": "1 hour",
+      "3h": "3 hours",
+      "today-evening": "Today 18:00",
+      "tomorrow-morning": "Tomorrow 9:00"
+    },
+    "customMinutes": "Custom (minutes)",
+    "apply": "Apply",
+    "cancel": "Cancel reminder",
+    "setTaskReminder": "Set task reminder",
+    "hasReminder": "Reminder set: {{time}}",
+    "remaining": {
+      "minutes": "{{count}} min",
+      "hours": "{{count}} h"
+    }
+  },
   "notepad": {
+    "markdownEmptyHint": "Switch to Text mode to start writing…",
+    "textMode": "Text",
     "button": {
       "clear": "Clear"
     },
@@ -270,6 +295,14 @@
     "tileSaveReturnsToPin": "Return to tile after saving",
     "renderHtmlMarkdown": "Render HTML tags in Markdown",
     "splitScrollSync": "Split view scroll sync",
+    "imageAutoCompress": "Auto-compress large images (paste/drop, not window drops)",
+    "imageDisplay": {
+      "label": "Preview image display",
+      "show": "Show",
+      "click": "Click to load",
+      "hidden": "Hidden"
+    },
+    "reminderSound": "Reminder sound",
     "title": "Settings",
     "update": {
       "advanced": "Advanced",

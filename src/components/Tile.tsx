@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
+import type { ImageDisplayMode } from "../features/settings/types";
 
 export interface TileProps extends Omit<
   HTMLAttributes<HTMLDivElement>,
@@ -17,6 +18,7 @@ export interface TileProps extends Omit<
   fontSize?: number;
   renderMarkdown?: boolean;
   imageBaseDir?: string;
+  imageDisplay?: ImageDisplayMode;
   onContentChange?: (content: string) => void;
 }
 
@@ -78,6 +80,7 @@ export function Tile({
   fontSize = 14,
   renderMarkdown = false,
   imageBaseDir,
+  imageDisplay = "show",
   onContentChange,
   className = "",
   style,
@@ -112,7 +115,7 @@ export function Tile({
       className={`app-surface-frame relative border overflow-hidden select-none shadow-[0_1px_8px_rgba(26,26,24,0.04)] hover:shadow-[0_6px_24px_rgba(26,26,24,0.07)] ${className}`}
       style={mergedStyle}
     >
-      <div className="px-4 pt-4 pb-4 h-full overflow-y-auto scrollbar-hidden">
+      <div className="px-4 pt-11 pb-4 h-full overflow-y-auto scrollbar-hidden">
         {title && (
           <div
             className="font-display tracking-wide mb-3 leading-snug"
@@ -129,6 +132,7 @@ export function Tile({
                 fontSize={fontSize}
                 renderHtml={false}
                 imageBaseDir={imageBaseDir}
+                imageDisplay={imageDisplay}
                 onContentChange={onContentChange}
               />
             </div>

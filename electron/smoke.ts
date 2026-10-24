@@ -1,6 +1,13 @@
 import fs from "node:fs";
-import { verifyUnifiedNoteList, expectNotePresence } from "./smoke-note-list.js";
+import {
+  verifyUnifiedNoteList,
+  expectNotePresence,
+  ensureSourceEditor,
+} from "./smoke-note-list.js";
 import path from "node:path";
+import { verifyNoteModes } from "./smoke-note-modes.js";
+import { verifyNoteReminders } from "./smoke-note-reminders.js";
+import { verifyTopCapsules } from "./smoke-top-capsules.js";
 import { app, screen, type BrowserWindow } from "electron";
 import type { NoteLayoutState } from "./note-window-state.js";
 import type { NoteWindowSnapshot } from "../src/features/windows/noteWindowState.js";
@@ -9,6 +16,7 @@ import type { NoteStore } from "./store.js";
 
 export interface SmokeContext {
   output: string;
+  fullscreenRects: () => Electron.Rectangle[];
   gpuDiagnostics: () => {
     crashCount: number;
     features: Electron.GPUFeatureStatus;
@@ -31,15 +39,32 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
   const { store, windows, openNote, showMain } = context;
   const checks: Record<string, unknown> = {};
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function clickCapsule(win: BrowserWindow, selector: string, movement = 0) {
+    const point = await win.webContents.executeJavaScript(`(() => {
+      const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: Math.round(rect.x + 20), y: Math.round(rect.y + rect.height / 2) };
+    })()`);
+    win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
+    await wait(50);
+    if (movement) {
+      point.x += movement;
+      win.webContents.sendInputEvent({ type: "mouseMove", ...point });
+    }
+    win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
+    await wait(120);
+  }
   async function hydrated(win: BrowserWindow) {
     for (let i = 0; i < 100; i++) {
       if (win.isDestroyed()) throw new Error("Window destroyed during load");
       if (
         await win.webContents
-          .executeJavaScript("!!window.floralDesktop && !!document.querySelector('textarea')")
+          .executeJavaScript(
+            "!!window.floralDesktop && (!!document.querySelector('textarea') || !!document.querySelector('[data-editor-mode]'))",
+          )
           .catch(() => false)
       ) {
         await wait(500);
+        await ensureSourceEditor(win);
         return;
       }
       await wait(100);
@@ -49,6 +74,9 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
   try {
     const main = showMain();
     await hydrated(main);
+    checks.topCapsules = await verifyTopCapsules(context, main);
+    checks.noteModes = await verifyNoteModes(context, main);
+    checks.noteReminders = await verifyNoteReminders(context, main);
     const restoredPins = [...context.layouts.values()].filter(
       (entry) => entry.noteId && entry.topmost,
     );
@@ -166,7 +194,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       throw new Error("Tile edit button did not return to the note editor");
     checks.tileReturnViaContextMenuAndButton = true;
     // A real filesystem failure must keep the renderer and its dirty text alive.
-    const failureText = "保存失败时保留这段中文";
+    const failureText = "保存失败时保留这段中文\n";
     await reopened.webContents.executeJavaScript(`(() => {
       const area = document.querySelector('textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, ${JSON.stringify(failureText)});
@@ -234,6 +262,16 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     await wait(150);
     if (!queue.ready || !queue.win.isVisible()) throw new Error("Edge host did not render");
     const queueWin = queue.win;
+    const capsuleInputErrors: string[] = [];
+    queueWin.webContents.on("console-message", (details) => {
+      if (details.level === "error") capsuleInputErrors.push(details.message);
+    });
+    await queueWin.webContents.executeJavaScript(`(() => {
+      window.capsuleInputEvents = [];
+      for (const type of ['pointerdown','pointerup','pointercancel','gotpointercapture','lostpointercapture','click']) {
+        document.addEventListener(type,event=>window.capsuleInputEvents.push({type,button:event.button,detail:event.detail,id:event.target.closest('[data-capsule-id]')?.dataset.capsuleId}),true);
+      }
+    })()`);
     for (let i = 0; i < 2; i++) {
       const n = store.save({
         title: `队列验证 ${i + 1}`,
@@ -252,14 +290,50 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       "window.floralDesktop.invoke('notes_delete',{id:" + JSON.stringify(note.id) + "})",
     );
     if (denial.ok) throw new Error("Capsule host crossed its write capability boundary");
-    const clickMaster = () =>
-      queueWin.webContents.executeJavaScript("document.querySelector('.capsule-master').click()");
+    const clickMaster = () => clickCapsule(queueWin, ".capsule-master", 2);
     await clickMaster();
     await wait(120);
+    checks.capsulePointerInput = {
+      events: await queueWin.webContents.executeJavaScript("window.capsuleInputEvents"),
+      errors: capsuleInputErrors,
+    };
     if (queue.snapshot.items.length !== 1) throw new Error("Master did not collapse its queue");
     await clickMaster();
     await wait(120);
     if (queue.snapshot.items.length < 4) throw new Error("Master did not restore its queue");
+    // A drag that loses capture must not become a click, and must not leave a stuck gesture.
+    const dragTarget = `[data-capsule-id="${note.id}"]`;
+    const dragPoint = await queueWin.webContents.executeJavaScript(`(() => {
+      const r=document.querySelector(${JSON.stringify(dragTarget)}).getBoundingClientRect();
+      return {x:Math.round(r.x+20),y:Math.round(r.y+r.height/2)};
+    })()`);
+    queueWin.webContents.sendInputEvent({
+      type: "mouseDown",
+      button: "left",
+      clickCount: 1,
+      ...dragPoint,
+    });
+    queueWin.webContents.sendInputEvent({ type: "mouseMove", x: dragPoint.x + 12, y: dragPoint.y });
+    await wait(150);
+    if (!context.capsules.surfaces.has("drag"))
+      throw new Error("Pointer movement did not start a capsule drag");
+    await queueWin.webContents.executeJavaScript(
+      `document.querySelector(${JSON.stringify(dragTarget)}).dispatchEvent(new Event('lostpointercapture',{bubbles:true}))`,
+    );
+    queueWin.webContents.sendInputEvent({
+      type: "mouseUp",
+      button: "left",
+      clickCount: 1,
+      x: dragPoint.x + 12,
+      y: dragPoint.y,
+    });
+    await wait(150);
+    if (
+      windows.has(label) ||
+      !context.layouts.get(label)!.folded ||
+      context.capsules.surfaces.has("drag")
+    )
+      throw new Error("Cancelled capsule drag opened a note or left a drag window");
     // Move only the test window under the existing cursor, then exercise renderer hover IPC.
     // This proves the real preview/no-focus path, not physical mouse gestures or mixed-DPI dragging.
     let cursor = screen.getCursorScreenPoint();
@@ -299,9 +373,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       (await preview.win.capturePage()).toPNG(),
     );
     queueWin.setBounds(originalQueueBounds);
-    await queueWin.webContents.executeJavaScript(
-      "document.querySelector('[data-capsule-id=" + JSON.stringify(note.id) + "]').click()",
-    );
+    await clickCapsule(queueWin, `[data-capsule-id="${note.id}"]`);
     const restored = windows.get(label)!;
     await hydrated(restored);
     if (
@@ -374,11 +446,47 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       titleReadable: true,
       closeOnRight: true,
     };
+    const floatingNote = store.save({
+      title: "悬浮胶囊点击",
+      content: "悬浮展开后正文保持原样",
+      category: "",
+    });
+    const floatingLabel = openNote(floatingNote.id);
+    const floatingEditor = windows.get(floatingLabel)!;
+    await hydrated(floatingEditor);
+    const floatingBounds = floatingEditor.getBounds();
+    await context.foldAndRelease(floatingEditor);
+    const floatingLayout = context.layouts.get(floatingLabel)!;
+    floatingLayout.capsule = {
+      ...floatingLayout.capsule!,
+      kind: "floating",
+      x: floatingBounds.x,
+      y: floatingBounds.y,
+    };
+    context.capsules.refresh();
+    const floating = context.capsules.surfaces.get(`floating:${floatingNote.id}`)!;
+    for (let i = 0; !floating.ready && i < 60; i++) await wait(50);
+    if (!floating.ready) throw new Error("Floating capsule did not render");
+    await clickCapsule(floating.win, `[data-capsule-id="${floatingNote.id}"]`);
+    const floatingRestored = windows.get(floatingLabel);
+    if (!floatingRestored || floatingLayout.folded)
+      throw new Error("Native click did not open floating capsule");
+    await hydrated(floatingRestored);
+    if (
+      JSON.stringify(floatingRestored.getBounds()) !== JSON.stringify(floatingBounds) ||
+      store.get(floatingNote.id).content !== floatingNote.content
+    )
+      throw new Error("Floating capsule lost its expanded bounds or note content");
+    await context.hideAndRelease(floatingRestored);
     checks.capsules = {
       durableFold: true,
       editorReleased: true,
       sharedQueue: true,
       masterToggle: true,
+      nativeClickOpensNote: true,
+      floatingClickOpensNote: true,
+      smallMovementStillClicks: true,
+      cancelledDragDoesNotOpen: true,
       capabilityDenied: true,
       previewNoFocus: true,
       previewContent: true,

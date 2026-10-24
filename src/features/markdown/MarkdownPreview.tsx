@@ -13,8 +13,10 @@ import { convertFileSrc } from "../../platform/desktop";
 import type { Components, ExtraProps } from "react-markdown";
 import "katex/dist/katex.min.css";
 import remarkAlerts from "./remarkAlerts";
+import remarkImageSize, { normalizeImageWidth } from "./remarkImageSize";
 import rehypeTaskLists from "./rehypeTaskLists";
 import { resolveMarkdownImageSrc } from "./imageSrc";
+import type { ImageDisplayMode } from "../settings/types";
 
 function CodeBlock({ children, language }: { children: React.ReactNode; language?: string }) {
   const { t } = useTranslation();
@@ -71,14 +73,17 @@ interface MarkdownPreviewProps {
   fontSize?: number;
   renderHtml?: boolean;
   imageBaseDir?: string;
+  imageDisplay?: ImageDisplayMode;
   onContentChange?: (content: string) => void;
 }
 
-const TaskListContext = createContext<((offset: number, checked: boolean) => void) | undefined>(
-  undefined,
-);
+interface TaskListActions {
+  onToggle?: (offset: number, checked: boolean) => void;
+}
 
-const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts];
+const TaskListContext = createContext<TaskListActions | undefined>(undefined);
+
+const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts, remarkImageSize];
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "mark", "center", "font", "u", "abbr"],
@@ -90,6 +95,7 @@ const sanitizeSchema = {
       "className",
       "data-alert-type",
       "dataAlertType",
+      "data-width",
     ],
     font: ["color", "size", "face"],
     abbr: ["title"],
@@ -288,20 +294,73 @@ function TaskCheckbox({
   checked,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & ExtraProps) {
-  const onToggle = useContext(TaskListContext);
+  const { onToggle } = useContext(TaskListContext) ?? {};
   const offset = node?.properties.dataTaskOffset;
+  const taskText = node?.properties.dataTaskLabel?.toString();
   const interactive = typeof offset === "number" && Boolean(onToggle);
   return (
-    <input
-      {...props}
-      checked={checked ?? false}
-      disabled={!interactive}
-      aria-label={props["aria-label"] ?? node?.properties.dataTaskLabel?.toString()}
-      onChange={(event) => {
-        if (typeof offset === "number") onToggle?.(offset, event.target.checked);
-      }}
-      className="mr-1.5 accent-bamboo"
-    />
+    <>
+      <input
+        {...props}
+        checked={checked ?? false}
+        disabled={!interactive}
+        aria-label={props["aria-label"] ?? taskText}
+        onChange={(event) => {
+          if (typeof offset === "number") onToggle?.(offset, event.target.checked);
+        }}
+        className="mr-1.5 accent-bamboo"
+      />
+    </>
+  );
+}
+
+function imageNameFromSrc(src?: string): string {
+  const segment = src?.split("/").pop() ?? "";
+  return decodeURIComponent(segment.split("?")[0]);
+}
+
+// “点击加载”模式下的占位卡片；点击后替换为真实图片。
+function LazyImage({
+  src,
+  name,
+  alt,
+  width,
+}: {
+  src?: string;
+  name: string;
+  alt?: string;
+  width?: string;
+}) {
+  const { t } = useTranslation();
+  const [loaded, setLoaded] = useState(false);
+  if (loaded)
+    return (
+      <img
+        src={src}
+        alt={alt ?? ""}
+        loading="lazy"
+        style={width ? { width } : undefined}
+        className={`rounded my-2 mx-auto block${width ? "" : " w-[50%]"}`}
+      />
+    );
+  return (
+    <button
+      type="button"
+      onClick={() => setLoaded(true)}
+      title={name}
+      style={width ? { width } : undefined}
+      className={`my-2 mx-auto flex items-center justify-center gap-1.5 rounded border border-dashed border-paper-deep bg-paper-warm/40 px-2 py-3 text-xs text-ink-ghost hover:bg-paper-warm/70 transition-colors cursor-pointer${
+        width ? "" : " w-[50%]"
+      }`}
+    >
+      <svg viewBox="0 0 16 16" fill="currentColor" className="shrink-0 w-3.5 h-3.5">
+        <path d="M1.75 2h12.5c.414 0 .75.336.75.75v10.5a.75.75 0 0 1-.75.75H1.75a.75.75 0 0 1-.75-.75V2.75A.75.75 0 0 1 1.75 2ZM2.5 11.19V12h11v-4.5l-2.47 2.47a.75.75 0 0 1-1.06 0L7.5 7.5 4.03 10.97a.75.75 0 0 1-1.06 0l-.47-.47v.69ZM6 5.5a1 1 0 1 0-2 0 1 1 0 0 0 2 0Z" />
+      </svg>
+      <span className="truncate max-w-[60%]">{name}</span>
+      <span className="text-ink-faint/70 shrink-0">
+        {t("markdown.imageLoad", { defaultValue: "点击加载" })}
+      </span>
+    </button>
   );
 }
 
@@ -310,6 +369,7 @@ export function MarkdownPreview({
   fontSize = 14,
   renderHtml = false,
   imageBaseDir,
+  imageDisplay = "show",
   onContentChange,
 }: MarkdownPreviewProps) {
   const { t } = useTranslation();
@@ -317,32 +377,39 @@ export function MarkdownPreview({
     () => ({
       ...staticComponents,
       img: ({ src, alt, ...props }) => {
+        if (imageDisplay === "hidden") return null;
         const resolvedSrc = resolveMarkdownImageSrc(src, imageBaseDir, convertFileSrc);
+        const width = normalizeImageWidth((props as Record<string, unknown>)["data-width"]);
+        if (imageDisplay === "click")
+          return (
+            <LazyImage src={resolvedSrc} name={imageNameFromSrc(src)} alt={alt} width={width} />
+          );
         return (
           <img
+            {...props}
             src={resolvedSrc}
             alt={alt ?? ""}
             loading="lazy"
-            className="w-[50%] rounded my-2 mx-auto block"
-            {...props}
+            style={width ? { width } : undefined}
+            className={`rounded my-2 mx-auto block${width ? "" : " w-[50%]"}`}
           />
         );
       },
     }),
-    [imageBaseDir],
+    [imageBaseDir, imageDisplay],
   );
   return (
     <TaskListContext.Provider
-      value={
-        onContentChange
+      value={{
+        onToggle: onContentChange
           ? (offset, checked) => {
               if (!/^[ xX]$/.test(content[offset] ?? "")) return;
               onContentChange(
                 content.slice(0, offset) + (checked ? "x" : " ") + content.slice(offset + 1),
               );
             }
-          : undefined
-      }
+          : undefined,
+      }}
     >
       <div className="font-body markdown-selectable" style={{ fontSize: `${fontSize}px` }}>
         {content.trim() ? (

@@ -41,6 +41,7 @@ export async function verifyUnifiedNoteList(
       "document.querySelector('[data-note-action=desktop]').click()",
     );
   }
+  await ensureSourceEditor(main);
   const originalModifiedAt = context.store.get(note.id).updatedAt;
   await main.webContents.executeJavaScript(
     `document.querySelector(${JSON.stringify(selector)}).querySelector('[data-note-pin]').click()`,
@@ -75,9 +76,12 @@ export async function verifyUnifiedNoteList(
   const win = context.windows.get(label)!;
   await until(
     () =>
-      win.webContents.executeJavaScript("!!document.querySelector('textarea')").catch(() => false),
+      win.webContents
+        .executeJavaScript("!!document.querySelector('[data-editor-mode]')")
+        .catch(() => false),
     "Desktop editor did not hydrate",
   );
+  await ensureSourceEditor(win);
   await until(
     () =>
       win.webContents.executeJavaScript(
@@ -86,7 +90,24 @@ export async function verifyUnifiedNoteList(
     "Wrong note opened from list",
   );
   await expectNotePresence(main, note.id, "desktop");
-  await until(() => win.isAlwaysOnTop(), "Opening a pinned preference did not pin the OS window");
+  const fullscreenSuppressed = () => {
+    const b = win.getBounds();
+    return context
+      .fullscreenRects()
+      .some(
+        (r) =>
+          b.x < r.x + r.width &&
+          b.x + b.width > r.x &&
+          b.y < r.y + r.height &&
+          b.y + b.height > r.y,
+      );
+  };
+  // Fullscreen avoidance temporarily lowers the native window without changing its pin preference.
+  await until(
+    () => win.isAlwaysOnTop() === !fullscreenSuppressed(),
+    "Opening a pinned preference did not apply the expected native window level",
+  );
+  const fullscreenAvoidanceObserved = fullscreenSuppressed();
   await until(
     () =>
       win.webContents.executeJavaScript(
@@ -149,23 +170,23 @@ export async function verifyUnifiedNoteList(
       "Editor save did not reach shared Markdown file",
     );
   }
-  const listText = "列表保存：同一张便签 **同步**";
+  const listText = "列表保存：同一张便签 **同步**\n";
   await type(main, listText);
   await save(main, listText);
   await until(
     async () => (await value(win)) === listText,
     "List save did not update clean desktop",
   );
-  const desktopText = "桌面保存：回到同一个便签列表";
+  const desktopText = "桌面保存：回到同一个便签列表\n";
   await type(win, desktopText);
   await save(win, desktopText);
   await until(
     async () => (await value(main)) === desktopText,
     "Desktop save did not update list editor",
   );
-  const pendingText = "桌面尚未保存的输入必须保留";
+  const pendingText = "桌面尚未保存的输入必须保留\n";
   await type(win, pendingText);
-  const otherText = "列表保存时不得覆盖桌面的未保存输入";
+  const otherText = "列表保存时不得覆盖桌面的未保存输入\n";
   await type(main, otherText);
   await save(main, otherText);
   await wait(200);
@@ -182,6 +203,7 @@ export async function verifyUnifiedNoteList(
       pinWithoutOpening: true,
       pinnedOrderInList: true,
       nativePinOnOpen: true,
+      fullscreenAvoidanceObserved,
       pinListToPaper: true,
       pinPaperToList: true,
       pinPersisted: true,
@@ -210,4 +232,26 @@ export async function expectNotePresence(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`List state did not become ${presence} for ${noteId}`);
+}
+
+/** New notes default to Markdown preview; source editing is an explicit per-note choice. */
+export async function ensureSourceEditor(win: BrowserWindow): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const ready = await win.webContents
+      .executeJavaScript(`(() => {
+      const expectedId = new URLSearchParams(location.search).get('noteId');
+      const pad = document.querySelector('[data-surface-mode=pad]');
+      if (expectedId && pad && pad.getAttribute('data-note-id') !== expectedId) return false;
+      const toggle = document.querySelector('[data-note-editor-mode="text"]');
+      if (toggle && toggle.getAttribute('aria-pressed') !== 'true') {
+        toggle.click();
+        return false;
+      }
+      return !!document.querySelector('textarea');
+    })()`)
+      .catch(() => false);
+    if (ready) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Source editor did not become ready");
 }

@@ -20,6 +20,23 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 describe("Electron persistence boundary", () => {
+  test("persists each note's editing mode without rewriting its Markdown or touching another note", () => {
+    const { root, store } = fixture();
+    const source = "# 原文\n\n![](images/n/a.png){width=75%}\n";
+    const first = store.save({ title: "一", content: source, category: "" });
+    const second = store.save({ title: "二", content: "正文", category: "" });
+    expect(first.editorMode).toBe("text");
+    store.setEditorMode(first.id, "markdown");
+    expect(store.get(first.id).content).toBe(source);
+    expect(store.get(first.id).updatedAt).toBe(first.updatedAt);
+    expect(store.get(second.id).editorMode).toBe("text");
+    store.save({ title: "新标题", content: source + "编辑", category: "" }, first.id);
+    const restarted = new NoteStore(path.join(root, "config"), store.dataDir, async () => {});
+    expect(restarted.get(first.id).editorMode).toBe("markdown");
+    expect(restarted.get(first.id).content).toBe(source + "编辑");
+    expect(() => restarted.setEditorMode(first.id, "preview")).toThrow("便签模式不合法");
+    expect(restarted.config.defaultViewMode).toBe("edit");
+  });
   test("reads the existing floral disk format, retains note identity across rename, move and restart", () => {
     const { root, store } = fixture();
     const id = "2ac849c1-bad4-47c5-b55f-1f46b12cfe83",

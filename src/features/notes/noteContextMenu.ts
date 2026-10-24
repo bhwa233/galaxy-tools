@@ -1,7 +1,14 @@
 import { t, type TFunction } from "i18next";
 import type { NoteWindowState } from "../windows/noteWindowState";
 
-export type NoteContextMenuAction = "desktop" | "pin" | "hide" | "export" | "move" | "delete";
+export type NoteContextMenuAction =
+  | "desktop"
+  | "pin"
+  | "reminder"
+  | "hide"
+  | "export"
+  | "move"
+  | "delete";
 
 export interface NoteContextMenuItem {
   action: NoteContextMenuAction;
@@ -16,6 +23,7 @@ export function getNoteContextMenuItems(
   return [
     { action: "desktop", label: translate("noteMenu.showOnDesktop", { defaultValue: "贴到桌面" }) },
     { action: "pin", label: translate(state?.pinned ? "noteState.unpin" : "noteState.pin") },
+    { action: "reminder", label: translate("noteMenu.setReminder", { defaultValue: "设置提醒…" }) },
     ...(state?.presence === "desktop" || state?.presence === "capsule"
       ? [{ action: "hide" as const, label: translate("noteState.hide") }]
       : []),

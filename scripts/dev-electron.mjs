@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdirSync, copyFileSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const children = new Set();
 function run(file, args, env = {}) {
@@ -26,9 +25,7 @@ const compiler = run(process.execPath, [
 compiler.on("exit", async (code) => {
   children.delete(compiler);
   if (code) return stop(code);
-  mkdirSync("dist-electron/electron/assets", { recursive: true });
-  for (const name of ["icon.ico", "32x32.png"])
-    copyFileSync(`electron/assets/${name}`, `dist-electron/electron/assets/${name}`);
+  await import("./copy-electron-assets.mjs");
   const vite = run(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1"]);
   vite.on("exit", () => stop(1));
   for (let attempt = 0; attempt < 100; attempt++) {

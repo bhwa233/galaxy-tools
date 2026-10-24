@@ -10,13 +10,17 @@ import type {
 } from "../src/features/capsules/types.js";
 import {
   contains,
+  edgeDistance,
+  intersectRect,
   insertMembers,
   members,
   nearestEdge,
+  pillWidth,
   PILL_HEIGHT,
-  PILL_WIDTH,
   previewGeometry,
+  previewCorridor,
   queueGeometry,
+  queueInsertionIndex,
   queueKey,
   SLOT_PITCH,
 } from "./capsule-layout.js";
@@ -46,7 +50,6 @@ interface Drag {
   entries: CapsuleEntry[];
   start: Electron.Point;
   point: Electron.Point;
-  moved: boolean;
   origin: Rect;
   offset: number;
   timer: ReturnType<typeof setInterval>;
@@ -59,11 +62,13 @@ export class Capsules {
   private hover?: { id: string; anchor: Rect; edge: Edge; owner: number; due: number };
   private previewId?: string;
   private previewAnchor?: Rect;
+  private previewEdge?: Edge;
   private leaveSince = 0;
   private ticker: ReturnType<typeof setInterval>;
   private drag?: Drag;
   private suppressed: Rect[] = [];
   private hidden = false;
+  private titles = new Map<string, string>();
   constructor(private options: Options) {
     this.ticker = setInterval(() => this.tick(), 60);
     screen.on("display-added", this.displayChanged);
@@ -82,7 +87,13 @@ export class Capsules {
   private queue(key: string) {
     let value = this.queues.get(key);
     if (!value) {
-      value = { key, offset: 100, collapsed: false, scroll: 0 };
+      value = {
+        key,
+        offset: key.endsWith(":top") ? 0 : 100,
+        collapsed: false,
+        scroll: 0,
+        ...(key.endsWith(":top") ? { centered: true } : {}),
+      };
       this.queues.set(key, value);
     }
     return value;
@@ -96,6 +107,7 @@ export class Capsules {
           offset: q.offset,
           collapsed: !!q.collapsed,
           scroll: Number.isFinite(q.scroll) ? q.scroll : 0,
+          ...(typeof q.centered === "boolean" ? { centered: q.centered } : {}),
         });
   }
   async fold(entry: CapsuleEntry) {
@@ -150,6 +162,13 @@ export class Capsules {
     }
   }
   refresh() {
+    // Read metadata once per refresh; title lookup also runs inside drag animation frames.
+    this.titles = new Map(
+      this.options
+        .store()
+        .list()
+        .map((note) => [note.id, note.title || note.preview.slice(0, 30) || "无标题便签"]),
+    );
     const wanted = new Set<string>(),
       entries = [...this.options.entries.values()];
     const displays = screen.getAllDisplays();
@@ -161,12 +180,17 @@ export class Capsules {
         }
       }
     for (const display of displays)
-      for (const edge of ["left", "right"] as const) {
+      for (const edge of ["left", "right", "top"] as const) {
         const key = queueKey(String(display.id), edge),
           group = members(entries, key);
         if (!group.length) continue;
         const queue = this.queue(key),
-          geometry = queueGeometry(display.workArea, edge, queue, group.length);
+          geometry = queueGeometry(
+            display.workArea,
+            edge,
+            queue,
+            group.map((e) => pillWidth(this.title(e.noteId!))),
+          );
         queue.scroll = geometry.scroll;
         const items: CapsuleItem[] = [
           {
@@ -181,12 +205,27 @@ export class Capsules {
         if (!queue.collapsed)
           group.forEach((e, i) => {
             const rect = geometry.slot(i);
-            if (rect.y >= SLOT_PITCH && rect.y + rect.height <= geometry.bounds.height)
+            const visible = edge === "top" ? intersectRect(rect, geometry.viewport) : undefined;
+            if (
+              edge === "top"
+                ? Boolean(visible)
+                : rect.y >= SLOT_PITCH && rect.y + rect.height <= geometry.bounds.height
+            )
               items.push({
                 id: e.noteId!,
                 title: this.title(e.noteId!),
                 expanded: !e.folded,
                 rect,
+                ...(visible
+                  ? {
+                      clip: {
+                        x: visible.x - rect.x,
+                        y: visible.y - rect.y,
+                        width: visible.width,
+                        height: visible.height,
+                      },
+                    }
+                  : {}),
               });
           });
         const surfaceKey = `queue:${key}`;
@@ -196,11 +235,12 @@ export class Capsules {
     for (const entry of entries)
       if (entry.visible && entry.folded && entry.capsule?.kind === "floating" && entry.noteId) {
         const d = screen.getDisplayNearestPoint({ x: entry.capsule.x, y: entry.capsule.y }),
-          a = d.workArea;
+          a = d.workArea,
+          width = pillWidth(this.title(entry.noteId));
         const bounds = {
-          x: Math.round(Math.max(a.x, Math.min(a.x + a.width - PILL_WIDTH, entry.capsule.x))),
+          x: Math.round(Math.max(a.x, Math.min(a.x + a.width - width, entry.capsule.x))),
           y: Math.round(Math.max(a.y, Math.min(a.y + a.height - PILL_HEIGHT, entry.capsule.y))),
-          width: PILL_WIDTH,
+          width,
           height: PILL_HEIGHT,
         };
         entry.capsule.x = bounds.x;
@@ -213,7 +253,7 @@ export class Capsules {
             {
               id: entry.noteId,
               title: this.title(entry.noteId),
-              rect: { x: 0, y: 0, width: PILL_WIDTH, height: PILL_HEIGHT },
+              rect: { x: 0, y: 0, width, height: PILL_HEIGHT },
             },
           ],
         });
@@ -235,11 +275,7 @@ export class Capsules {
     this.applyZOrder();
   }
   private title(id: string) {
-    const note = this.options
-      .store()
-      .list()
-      .find((n) => n.id === id);
-    return note?.title || note?.preview?.slice(0, 30) || "无标题便签";
+    return this.titles.get(id) ?? "无标题便签";
   }
   private surface(key: string, bounds: Rect, snapshot: CapsuleSnapshot): Surface {
     let surface = this.surfaces.get(key);
@@ -274,14 +310,26 @@ export class Capsules {
       win.on("closed", () => {
         if (this.surfaces.get(key)?.win === win) this.surfaces.delete(key);
       });
-      void win.loadURL(`${this.options.url}?view=capsule`).catch(console.error);
+      void win.loadURL(`${this.options.url}?view=capsule`).catch((error) => {
+        if (!win.isDestroyed()) console.error(error);
+      });
     }
     surface.snapshot = snapshot;
     surface.win.setBounds(bounds);
     if (process.platform === "win32" || process.platform === "linux") {
       const shape =
         snapshot.kind === "queue"
-          ? snapshot.items.map((i) => i.rect)
+          ? snapshot.items.map((i) => {
+              const r = i.clip
+                ? { ...i.clip, x: i.rect.x + i.clip.x, y: i.rect.y + i.clip.y }
+                : i.rect;
+              return {
+                x: Math.floor(r.x),
+                y: Math.floor(r.y),
+                width: Math.ceil(r.x + r.width) - Math.floor(r.x),
+                height: Math.ceil(r.y + r.height) - Math.floor(r.y),
+              };
+            })
           : [{ x: 0, y: 0, width: bounds.width, height: bounds.height }];
       surface.win.setShape(shape);
     }
@@ -313,6 +361,7 @@ export class Capsules {
     this.hover = undefined;
     this.previewId = undefined;
     this.previewAnchor = undefined;
+    this.previewEdge = undefined;
     this.leaveSince = 0;
     this.surfaces.get("preview")?.win.hide();
   }
@@ -324,10 +373,12 @@ export class Capsules {
       items: [],
       note,
       imageBaseDir: this.options.store().dataDir,
-      markdown: this.options.store().config.tileRenderMarkdown,
+      markdown: note.editorMode === "markdown",
+      imageDisplay: this.options.store().config.imageDisplay,
     });
     this.previewId = id;
     this.previewAnchor = anchor;
+    this.previewEdge = edge;
     this.leaveSince = 0;
   }
   private tick() {
@@ -341,16 +392,10 @@ export class Capsules {
     }
     if (this.previewId) {
       const surface = this.surfaces.get("preview");
-      // A narrow horizontal corridor lets the cursor cross the six-DIP gap, without treating
-      // the entire transparent host as interactive or retaining a card after a real exit.
+      // Only the small gap between capsule and preview retains hover during the crossing.
       const a = this.previewAnchor!,
         b = surface!.win.getBounds();
-      const corridor = {
-        x: Math.min(a.x, b.x),
-        y: a.y - 4,
-        width: Math.max(a.x + a.width, b.x + b.width) - Math.min(a.x, b.x),
-        height: a.height + 8,
-      };
+      const corridor = previewCorridor(a, b, this.previewEdge!);
       if (contains(a, point, 2) || contains(b, point, 2) || contains(corridor, point))
         this.leaveSince = 0;
       else if (!this.leaveSince) this.leaveSince = now;
@@ -373,9 +418,13 @@ export class Capsules {
       entries,
       start: point,
       point,
-      moved: false,
       origin: surface.win.getBounds(),
-      offset: queue ? this.queue(queue).offset : 0,
+      offset: queue
+        ? surface.snapshot.edge === "top"
+          ? surface.win.getBounds().x -
+            screen.getDisplayMatching(surface.win.getBounds()).workArea.x
+          : this.queue(queue).offset
+        : 0,
       timer,
     };
     this.hidePreview();
@@ -385,18 +434,18 @@ export class Capsules {
     if (!drag) return;
     const point = screen.getCursorScreenPoint();
     drag.point = point;
-    if (!drag.moved && Math.hypot(point.x - drag.start.x, point.y - drag.start.y) < 6) return;
-    drag.moved = true;
+    const title = drag.queue ? `花笺 · ${drag.entries.length} 张` : this.title(drag.id),
+      width = pillWidth(title);
     this.surface(
       "drag",
-      { x: point.x - 20, y: point.y - 16, width: PILL_WIDTH, height: PILL_HEIGHT },
+      { x: point.x - 20, y: point.y - 16, width, height: PILL_HEIGHT },
       {
         kind: "drag",
         items: [
           {
             id: drag.id,
-            title: drag.queue ? `花笺 · ${drag.entries.length} 张` : this.title(drag.id),
-            rect: { x: 0, y: 0, width: PILL_WIDTH, height: PILL_HEIGHT },
+            title,
+            rect: { x: 0, y: 0, width, height: PILL_HEIGHT },
           },
         ],
       },
@@ -413,34 +462,35 @@ export class Capsules {
       this.refresh();
       return;
     }
-    if (!drag.moved) {
-      if (drag.queue) {
-        const q = this.queue(drag.queue);
-        q.collapsed = !q.collapsed;
-        this.options.save();
-        this.refresh();
-      } else this.open(drag.id);
-      return;
-    }
     const point = screen.getCursorScreenPoint(),
       display = screen.getDisplayNearestPoint(point),
       a = display.workArea;
     const edge = nearestEdge({ id: String(display.id), workArea: a }, point),
       key = queueKey(String(display.id), edge);
-    const near = Math.min(Math.abs(point.x - a.x), Math.abs(point.x - (a.x + a.width))) <= 72;
+    const near = edgeDistance(a, edge, point) <= 72;
     if (drag.queue) {
-      // A vertical master drag moves the anchor; pulling horizontally transfers the entire
-      // captured queue. Membership is rechecked before commit, so hidden/deleted notes stay put.
+      // Moving along the current edge adjusts the anchor. Pulling away transfers the queue.
       const actual = members(this.options.entries.values(), drag.queue);
       if (actual.length !== drag.entries.length || actual.some((e) => !drag.entries.includes(e))) {
         this.refresh();
         return;
       }
-      if (Math.abs(point.x - drag.start.x) < 60 && key === drag.queue) {
-        this.queue(drag.queue).offset = drag.offset + point.y - drag.start.y;
+      const source = drag.entries[0].capsule!;
+      const horizontal = source.edge === "top";
+      const perpendicular = horizontal ? point.y - drag.start.y : point.x - drag.start.x;
+      if (
+        String(display.id) === source.displayId &&
+        Math.abs(perpendicular) < 60 &&
+        edgeDistance(a, source.edge, point) <= 72
+      ) {
+        const current = this.queue(drag.queue);
+        current.offset =
+          drag.offset + (horizontal ? point.x - drag.start.x : point.y - drag.start.y);
+        if (horizontal) current.centered = false;
       } else {
         const target = this.queue(key);
-        target.offset = point.y - a.y;
+        target.offset = edge === "top" ? point.x - a.x - 20 : point.y - a.y - 16;
+        if (edge === "top") target.centered = false;
         target.collapsed = this.queue(drag.queue).collapsed;
         insertMembers(
           [...this.options.entries.values()],
@@ -457,10 +507,17 @@ export class Capsules {
         return;
       }
       if (near || !entry.folded) {
-        const group = members(this.options.entries.values(), key),
+        const group = members(this.options.entries.values(), key).filter((e) => e !== entry),
           q = this.queue(key),
-          g = queueGeometry(a, edge, q, group.length + 1);
-        const index = Math.round((point.y - g.bounds.y - SLOT_PITCH + g.scroll) / SLOT_PITCH);
+          g = queueGeometry(a, edge, q, [
+            ...group.map((e) => pillWidth(this.title(e.noteId!))),
+            pillWidth(this.title(entry.noteId!)),
+          ]);
+        const index = queueInsertionIndex(
+          group.map((_, i) => g.slot(i)),
+          { x: point.x - g.bounds.x, y: point.y - g.bounds.y },
+          edge,
+        );
         insertMembers([...this.options.entries.values()], [entry], String(display.id), edge, index);
       } else
         entry.capsule = {
@@ -526,6 +583,19 @@ export class Capsules {
         return this.options.store().config;
       case "capsule_state":
         return surface.snapshot;
+      case "capsule_activate": {
+        const item = surface.snapshot.items.find((entry) => entry.id === args.id);
+        if (!item || surface.snapshot.kind === "drag")
+          throw new AppError("permissionDenied", "不属于此窗口的胶囊");
+        this.hidePreview();
+        if (item.master && surface.snapshot.key) {
+          const queue = this.queue(surface.snapshot.key);
+          queue.collapsed = !queue.collapsed;
+          this.options.save();
+          this.refresh();
+        } else if (!item.master) this.open(item.id);
+        return;
+      }
       case "capsule_open": {
         const id = String(args.id);
         if (
@@ -541,7 +611,13 @@ export class Capsules {
         const item = surface.snapshot.items.find((i) => i.id === args.id && !i.master);
         if (!item) return;
         const b = win.getBounds(),
-          anchor = { ...item.rect, x: b.x + item.rect.x, y: b.y + item.rect.y };
+          anchor = item.clip
+            ? {
+                ...item.clip,
+                x: b.x + item.rect.x + item.clip.x,
+                y: b.y + item.rect.y + item.clip.y,
+              }
+            : { ...item.rect, x: b.x + item.rect.x, y: b.y + item.rect.y };
         if (!this.find(item.id)?.folded || this.previewId === item.id) return;
         this.hover = {
           id: item.id,
@@ -574,6 +650,7 @@ export class Capsules {
           q.scroll += Math.max(-120, Math.min(120, Number(args.delta) || 0));
           this.hidePreview();
           this.refresh();
+          this.options.save();
         }
         return;
       case "capsule_menu": {
@@ -588,6 +665,7 @@ export class Capsules {
               { type: "separator" },
               { label: "移到左侧", click: () => this.dock(item.id, "left") },
               { label: "移到右侧", click: () => this.dock(item.id, "right") },
+              { label: "移到顶部", click: () => this.dock(item.id, "top") },
             ]);
         menu.popup({ window: win });
         return;
@@ -599,7 +677,10 @@ export class Capsules {
   private dock(id: string, edge: Edge) {
     const e = this.find(id);
     if (!e) return;
-    const d = screen.getDisplayMatching(e.bounds);
+    const d = e.capsule
+      ? (screen.getAllDisplays().find((display) => String(display.id) === e.capsule!.displayId) ??
+        screen.getDisplayMatching(e.bounds))
+      : screen.getDisplayMatching(e.bounds);
     insertMembers(
       [...this.options.entries.values()],
       [e],

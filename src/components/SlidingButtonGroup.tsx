@@ -54,6 +54,8 @@ export function SlidingButtonGroup<T extends string>({
             else buttonsRef.current.delete(option.value);
           }}
           type="button"
+          data-value={option.value}
+          aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           className={`relative z-[1] flex-1 rounded-md text-[11px] transition-colors duration-200 cursor-pointer ${buttonClassName} ${
             value === option.value

@@ -1,3 +1,7 @@
+export type NoteEditorMode = "markdown" | "text";
+export const DEFAULT_NOTE_EDITOR_MODE: NoteEditorMode = "text";
+export const NOTE_TITLE_MAX_LENGTH = 12;
+
 export interface NoteMetadata {
   id: string;
   title: string;
@@ -7,6 +11,7 @@ export interface NoteMetadata {
   updatedAt: string;
   wordCount: number;
   preview: string;
+  editorMode?: NoteEditorMode;
 }
 
 export interface Note extends Omit<NoteMetadata, "preview"> {
@@ -14,6 +19,7 @@ export interface Note extends Omit<NoteMetadata, "preview"> {
 }
 
 export interface SaveNoteRequest {
+  editorMode?: NoteEditorMode;
   title: string;
   content: string;
   category: string;
