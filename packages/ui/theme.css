@@ -1,0 +1,45 @@
+/* Theme protocol 1.x. Plain CSS works with React, other frameworks and DOM. */
+:root {
+  --spark233-accent: #2d5a3d;
+  --spark233-accent-hover: #3a7a52;
+  --spark233-accent-soft: #e8f0eb;
+  --spark233-accent-selected: #d4e8da;
+  --background: #ffffff;
+  --foreground: #1a1a18;
+  --card: #ffffff;
+  --card-foreground: #1a1a18;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a18;
+  --primary: var(--spark233-accent);
+  --primary-foreground: #ffffff;
+  --secondary: #f0ebe0;
+  --secondary-foreground: #3d3d38;
+  --muted: #f0ebe0;
+  --muted-foreground: #60665f;
+  --accent: var(--spark233-accent-soft);
+  --accent-foreground: var(--spark233-accent);
+  --destructive: #b91c1c;
+  --border: #e8e1d3;
+  --input: var(--border);
+  --ring: var(--spark233-accent);
+  --radius: 0.625rem;
+}
+:root[data-theme="dark"] {
+  --spark233-accent: #4faa70;
+  --spark233-accent-hover: #5fc085;
+  --spark233-accent-soft: #1c2e22;
+  --spark233-accent-selected: #243a2c;
+  --background: #1a1917;
+  --foreground: #e5e1da;
+  --card: #1a1917;
+  --card-foreground: #e5e1da;
+  --popover: #1a1917;
+  --popover-foreground: #e5e1da;
+  --primary-foreground: #102016;
+  --secondary: #2c2a27;
+  --secondary-foreground: #b5b1a8;
+  --muted: #2c2a27;
+  --muted-foreground: #abb2aa;
+  --destructive: #ef9a9a;
+  --border: #3c3935;
+}

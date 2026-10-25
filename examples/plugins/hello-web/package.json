@@ -1,0 +1,48 @@
+{
+  "name": "@spark233/example-hello-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent, prebuilt example for the restricted spark233 browser SDK",
+  "license": "MIT",
+  "files": [
+    "index.html",
+    "app.css",
+    "app.js",
+    "sdk.js",
+    "README.md"
+  ],
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "hello-web",
+    "displayName": "Hello Web",
+    "api": "^1.0.0",
+    "host": ">=1.2.0 <2",
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
+    "architectures": [
+      "x64",
+      "arm64"
+    ],
+    "activation": "on-command",
+    "entry": "index.html",
+    "capabilities": [
+      "storage"
+    ],
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open Hello Web",
+        "keywords": [
+          "hello",
+          "web"
+        ]
+      }
+    ],
+    "ui": {
+      "theme": "^1.0.0"
+    }
+  }
+}

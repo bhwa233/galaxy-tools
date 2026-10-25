@@ -5,8 +5,8 @@
     "feedback": "反馈问题",
     "github": "GitHub",
     "license": "许可证",
-    "productName": "花笺",
-    "summary": "轻量、优雅、现代化的本地便签工具",
+    "productName": "spark233",
+    "summary": "模块化桌面启动器与本地工具集",
     "tipPrefix": "您知道吗：",
     "title": "关于",
     "version": "版本：v{{version}}"
@@ -46,7 +46,7 @@
     "categoryNameInvalidChars": "分类名不能包含特殊字符",
     "categoryNotFound": "分类「{{category}}」不存在",
     "desktopConfig": "桌面配置更新失败",
-    "duplicateShortcut": "显示/隐藏窗口快捷键不能与呼出小窗快捷键重复",
+    "duplicateShortcut": "显示/隐藏快捷键不能与启动器快捷键相同",
     "imagePasteFailed": "图片粘贴失败",
     "imageTooLarge": "图片文件过大（上限 20 MB）",
     "noPool": "便签窗口池尚未初始化",
@@ -228,6 +228,12 @@
     }
   },
   "settings": {
+    "panelTitle": "设置",
+    "groups": {
+      "label": "设置分组",
+      "app": "应用",
+      "notes": "便签"
+    },
     "autoSave": {
       "externalFile": "外部文件自动保存",
       "note": "自动保存便签",
@@ -249,12 +255,11 @@
     "locale": {
       "enUS": "English",
       "label": "语言",
-      "zhCN": "简体中文",
-      "zhHK": "繁體中文"
+      "zhCN": "简体中文"
     },
     "dataDir": "数据目录",
     "openAtCursor": "快捷键打开时跟随鼠标位置",
-    "quickNoteShortcut": "快捷记录快捷键",
+    "launcherShortcut": "启动器快捷键",
     "rememberSurfaceSize": "记住小窗尺寸",
     "tabIndentSize": "Tab 缩进宽度",
     "selectFolder": "选择文件夹",
@@ -273,10 +278,10 @@
         "system": "快捷键 {{shortcut}} 与系统快捷键冲突",
         "unknown": "检测完成，但释放临时快捷键失败"
       },
-      "forQuickNote": "用于打开快捷记录小窗",
       "needsModifier": "快捷键需要包含 Ctrl、Option/Alt 或 Command/Meta",
       "notSet": "未设置",
-      "pressHint": "按下快捷键；按 Delete 清空。"
+      "pressHint": "按下快捷键；按 Delete 清空。",
+      "forCommandAction": "用于已分配的命令操作"
     },
     "theme": {
       "dark": "深色",
@@ -303,6 +308,15 @@
       "hidden": "不显示"
     },
     "reminderSound": "提醒提示音",
+    "mcp": {
+      "label": "AI 接口（MCP）",
+      "enable": "启用 MCP 服务（--mcp 供 AI 客户端接入）",
+      "read": "只读",
+      "append": "追加写入",
+      "full": "完全控制",
+      "copy": "复制客户端配置",
+      "copyDone": "已复制"
+    },
     "title": "应用设置",
     "update": {
       "advanced": "高级",
@@ -453,7 +467,9 @@
         "label": "下载源",
         "mirrorChyan": "Mirror酱"
       },
-      "title": "更新"
+      "title": "更新",
+      "hostInstallHint": "主程序通过新版 spark233 安装包升级。",
+      "registryPluginHint": "从 npm 安装的插件会自动检查，更新需要你确认安装。"
     },
     "visibilityShortcut": "显示/隐藏窗口快捷键",
     "background": {
@@ -485,5 +501,232 @@
     "hidden": "已隐藏",
     "unopened": "未贴桌面",
     "hide": "隐藏到托盘"
+  },
+  "launcher": {
+    "recentlyUsed": "最近使用",
+    "frequentlyUsed": "常用",
+    "backup": "备份",
+    "clearContext": "清除内容",
+    "plugins": "插件",
+    "settings": "设置",
+    "hide": "隐藏启动器",
+    "welcome": {
+      "title": "欢迎使用 spark233",
+      "description": "从这里呼出命令、进入插件模式。便签、搜索和其他能力由各自插件提供。",
+      "keys": "输入关键词查找入口，↑ ↓ 选择，Enter 执行；选中模式后继续输入，Esc 返回。插件可在管理页独立启停。",
+      "complete": "完成引导，开始使用"
+    },
+    "error": "暂时无法完成操作",
+    "retry": "重试",
+    "starting": "插件正在准备中",
+    "startingHint": "准备完成后可执行命令，也可以先检查插件状态。",
+    "searchLabel": "搜索命令与插件",
+    "back": "返回全部入口",
+    "input": "查询",
+    "modePlaceholder": "在 {{title}} 中搜索…",
+    "placeholder": "输入应用、命令或插件关键词…",
+    "searching": "正在查询…",
+    "empty": "没有匹配的入口，试试其他关键词或检查插件是否启用。",
+    "results": "入口与本地结果",
+    "enterMode": "进入模式",
+    "navigation": "↑ ↓ 选择 · Enter 执行 · Esc 返回或隐藏",
+    "modeHint": "关键词 + Tab 进入模式",
+    "settingsDescription": "修改应用设置并保存到宿主。",
+    "savingSettings": "正在保存设置",
+    "loadingSettings": "正在读取设置",
+    "migrate": {
+      "title": "迁移数据目录",
+      "description": "确认将现有便签数据迁移到所选位置。迁移期间请等待完成。",
+      "confirm": "确认迁移"
+    },
+    "cancel": "取消"
+  },
+  "ocr": {
+    "results": "取字结果",
+    "back": "返回启动器",
+    "all": "全部文字",
+    "copy": "复制所选文字",
+    "lookup": "查词",
+    "ai": "AI 翻译",
+    "saveNote": "保存便签",
+    "selection": "原图与文字选区",
+    "textLabel": "识别文字，可编辑或框选部分文字"
+  },
+  "translation": {
+    "title": "词典与翻译",
+    "close": "返回启动器",
+    "error": "操作未完成",
+    "dictionary": "离线词典",
+    "dictionaryHint": "基础 77 万词条，支持词形与短语。查词不发起网络请求。",
+    "word": "单词或短语",
+    "offline": "离线",
+    "inflections": "词形变化",
+    "localEmpty": "输入单词开始查词",
+    "localEmptyHint": "没有本地释义时，仍可主动选择下面的 AI 翻译。",
+    "lookup": "本地查词",
+    "ai": "AI 翻译",
+    "aiHint": "仅点击翻译后联网。默认中文译为英文，其他语言译为简体中文。",
+    "sourceText": "原文",
+    "textPlaceholder": "粘贴要翻译的内容…",
+    "needConfig": "先在下面保存兼容服务地址和模型；本地词典仍可使用。",
+    "cached": "缓存结果",
+    "cancelled": "已取消，保留当前文本",
+    "waiting": "正在等待服务响应…",
+    "notCached": "结果已返回，但本次未能保存缓存。",
+    "translate": "按默认方向翻译",
+    "toChinese": "改译为简体中文",
+    "toEnglish": "改译为英文",
+    "cancel": "取消请求",
+    "config": "翻译服务配置",
+    "configHint": "只保留一个生效配置。密钥保存在插件私有目录，不进入查询结果或界面回显。",
+    "endpoint": "兼容服务地址",
+    "endpointHint": "使用 HTTPS；本机 localhost / 127.0.0.1 可使用 HTTP。",
+    "model": "模型名",
+    "key": "API 密钥",
+    "keySaved": "已保存",
+    "keyHint": "留空保留已保存密钥。本机免密服务可以不填。",
+    "clearKey": "清除已保存密钥",
+    "saveConfig": "保存配置"
+  },
+  "backup": {
+    "title": "备份与恢复",
+    "description": "一起保存设置、便签正文与附件、插件版本和启停状态，以及剪贴板等插件数据。恢复前会验证全部文件并保留当前数据副本。",
+    "create": "创建备份",
+    "inspect": "选择备份并验证",
+    "inspecting": "正在核对备份清单和文件……",
+    "restoring": "正在恢复，请等待完成……",
+    "creating": "正在保存并创建一致快照……",
+    "error": "操作未完成",
+    "confirmTitle": "确认恢复此备份",
+    "fileCount": "{{count}} 个文件",
+    "plugins": "将恢复的插件",
+    "enabled": "启用",
+    "disabled": "停用",
+    "confirmDescription": "确认后将恢复以上插件版本、已授予的能力和数据。当前数据会另行保留，未保存的便签会先请求保存；保存未完成时会取消恢复。",
+    "confirm": "确认恢复",
+    "cancelSelection": "取消选择",
+    "selectionChanged": "备份在预览后发生变化，请重新选择并验证后再恢复。",
+    "success": "操作完成",
+    "snapshotPath": "备份：{{path}}",
+    "recoveryPath": "当前数据保护副本：{{path}}",
+    "fileCount_one": "{{count}} 个文件",
+    "fileCount_other": "{{count}} 个文件"
+  },
+  "plugins": {
+    "actionUnavailable": "目标动作不可用，请在插件管理中启用或恢复对应插件。",
+    "catalog": {
+      "title": "官方离线插件目录",
+      "description": "随安装包提供的七个官方插件，无需联网即可安装或重装。选择后仍需确认安装和申请能力。",
+      "prepare": "准备安装",
+      "preparing": "正在准备官方离线插件",
+      "installed": "已安装",
+      "currentVersion": "当前安装：{{version}}"
+    },
+    "updateSource": "自动更新来源",
+    "status": {
+      "error": "需要处理",
+      "disabled": "已停用",
+      "active": "运行中",
+      "preparing": "正在保存",
+      "prepared": "已保存，等待停止",
+      "releasing": "正在停止",
+      "released": "已停止",
+      "enabled": "已启用"
+    },
+    "title": "插件管理",
+    "description": "导入插件后确认安装；更新只提示，由你决定何时安装。",
+    "error": "操作未完成",
+    "errorHint": "展开详细信息查看原因，再重试相关操作。",
+    "errorDetails": "查看详细信息",
+    "commandRunning": "插件命令正在运行",
+    "working": "正在处理，请稍候。",
+    "commandRunningHint": "你仍可以停用插件；宿主会先请求保存并取消任务。",
+    "add": {
+      "title": "添加插件",
+      "description": "支持本地 .tgz、预构建开发目录和 npm 包。只有符合 spark233 清单的插件才能安装。"
+    },
+    "importing": "正在导入插件包",
+    "importingDirectory": "正在准备开发目录",
+    "importDirectory": "导入开发目录",
+    "directoryPackage": "开发目录快照",
+    "import": "导入本地 .tgz",
+    "preparing": "正在准备安装预览",
+    "packageName": "npm 包名",
+    "registry": "Registry（可选）",
+    "registryHint": "留空使用 npm 官方源，其他源需 HTTPS。",
+    "channel": "更新通道（可选）",
+    "channelHint": "留空使用 latest 稳定通道。",
+    "prepare": "准备安装预览",
+    "pending": "待确认安装",
+    "localPackage": "本地包",
+    "registryPackage": "Registry 包",
+    "source": "来源",
+    "capabilities": "申请能力",
+    "noCapabilities": "未申请宿主能力",
+    "manifest": "查看完整清单与校验信息",
+    "native": {
+      "title": "此插件可运行 Node 或原生代码",
+      "description": "这类代码拥有当前用户的完整系统权限，可直接访问文件、网络及其他用户可访问的资源，不受网页能力清单限制。进程隔离不是权限沙箱，请只安装你信任的来源。",
+      "confirm": "我信任此来源，并允许运行 Node / 原生代码"
+    },
+    "installing": "正在安装并验证插件",
+    "confirmInstall": "确认安装",
+    "canceling": "正在取消待确认安装",
+    "cancel": "取消安装",
+    "installed": "已安装插件",
+    "checking": "正在检查插件更新",
+    "checkUpdates": "检查更新",
+    "lastChecked": "上次检查",
+    "loading": "正在读取插件状态",
+    "empty": {
+      "title": "尚未安装插件",
+      "description": "从本地包或明确的 npm 来源添加插件，确认后即可使用。"
+    },
+    "dependencies": "必需依赖",
+    "listSeparator": "、",
+    "optionalDependencies": "可选依赖",
+    "updateAvailable": "有可用更新",
+    "updateHint": "准备更新后，请核对新版本的来源和能力，再确认安装。",
+    "commands": "可用命令",
+    "open": "打开",
+    "switching": "正在更改插件状态",
+    "disable": "停用",
+    "enable": "启用",
+    "preparingUpdate": "正在准备更新预览",
+    "prepareUpdate": "准备更新",
+    "uninstall": "卸载",
+    "uninstallTitle": "卸载插件",
+    "uninstallDescription": "插件将停止运行并移除。默认保留插件数据，以便之后重新安装。",
+    "deleteData": "同时删除此插件的数据",
+    "deleteDataHint": "勾选后会永久删除插件私有数据，无法撤销。",
+    "keep": "取消",
+    "uninstalling": "正在卸载插件",
+    "confirmUninstall": "确认卸载",
+    "capability": {
+      "storage": "插件私有存储",
+      "windows": "插件窗口",
+      "shortcuts": "全局快捷键",
+      "notifications": "系统通知",
+      "network": "网络访问",
+      "files": {
+        "read": "读取授权文件",
+        "write": "写入授权文件"
+      },
+      "clipboard": {
+        "read": "读取剪贴板",
+        "write": "写入剪贴板",
+        "watch": "监听剪贴板"
+      },
+      "native": {
+        "process": "运行原生程序"
+      },
+      "node": {
+        "backend": "运行 Node 后台"
+      },
+      "search": {
+        "index": "搜索索引"
+      },
+      "commands": "调用其他插件的公开命令"
+    }
   }
 }

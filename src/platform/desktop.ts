@@ -12,12 +12,12 @@ interface DesktopBridge {
 }
 declare global {
   interface Window {
-    floralDesktop?: DesktopBridge;
+    spark233Desktop?: DesktopBridge;
   }
 }
 function bridge(): DesktopBridge {
-  if (!window.floralDesktop) throw new Error("请使用 Electron 桌面入口启动花笺");
-  return window.floralDesktop;
+  if (!window.spark233Desktop) throw new Error("请使用 Electron 桌面入口启动spark233");
+  return window.spark233Desktop;
 }
 export async function invoke<T>(
   command: string,
@@ -69,7 +69,7 @@ export function writeText(text: string): Promise<void> {
   return invoke("clipboard_write", { text });
 }
 export function convertFileSrc(path: string): string {
-  return `floral://asset/${encodeURIComponent(path)}`;
+  return `spark233://asset/${encodeURIComponent(path)}`;
 }
 export class PhysicalPosition {
   constructor(

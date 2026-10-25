@@ -11,6 +11,12 @@ obj/
 *.nupkg
 **/[Pp]ackages/*
 !**/[Pp]ackages/build/
+!/packages/sdk/
+!/packages/sdk/**
+!/packages/ui/
+!/packages/ui/**
+!/packages/official/
+!/packages/official/**
 
 ## Build results
 [Dd]ebug/
@@ -65,10 +71,17 @@ src-tauri/icons/macOS
 temp/
 /tmp/
 nul
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 Docs/windows-install-chain-code-review.md
 
 # Electron build/runtime outputs
 dist-electron/
 release-electron/
 .electron-smoke/
+
+dist-plugins/
+dist-host/
+packages/official/*/native/
+packages/official/translation/data/*.sqlite
+packages/official/clipboard/backend.mjs
+packages/ui/dist/

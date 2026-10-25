@@ -38,7 +38,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
   }
   async function list(): Promise<ReminderItem[]> {
     const result = await main.webContents.executeJavaScript(
-      "window.floralDesktop.invoke('reminders_list')",
+      "window.spark233Desktop.invoke('reminders_list')",
     );
     if (!result.ok) throw new Error("Could not list reminders");
     return result.value;
@@ -78,7 +78,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
     await until(
       win,
       `(async () => {
-      const result = await window.floralDesktop.invoke('notes_get', {id:${JSON.stringify(id)}});
+      const result = await window.spark233Desktop.invoke('notes_get', {id:${JSON.stringify(id)}});
       return result.ok && result.value.content === ${JSON.stringify(source)};
     })()`,
       "Reminder note was not automatically saved",
@@ -91,7 +91,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
     );
     const original = context.store.get(id);
     await main.webContents.executeJavaScript(
-      `window.floralDesktop.invoke('open_note_in_editor',{noteId:${JSON.stringify(id)}})`,
+      `window.spark233Desktop.invoke('open_note_in_editor',{noteId:${JSON.stringify(id)}})`,
     );
     await until(
       main,
@@ -161,7 +161,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
       throw new Error("Cancelled reminder remains stored");
     // Preserve and manage reminders created by the previous task-row UI.
     const legacy = await main.webContents.executeJavaScript(
-      `window.floralDesktop.invoke('reminders_set',{noteId:${JSON.stringify(id)},taskText:'核对提醒',fireAt:new Date(Date.now()+3600000).toISOString()})`,
+      `window.spark233Desktop.invoke('reminders_set',{noteId:${JSON.stringify(id)},taskText:'核对提醒',fireAt:new Date(Date.now()+3600000).toISOString()})`,
     );
     if (!legacy.ok) throw new Error("Could not seed historical task reminder");
     await until(

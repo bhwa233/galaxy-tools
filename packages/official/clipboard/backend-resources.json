@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "inputs": [
+    {
+      "path": "packages/official/clipboard/backend.ts",
+      "sha256": "9328d1abae3569d9f7b36bca34bfe504c89ce724a5ca9548e50a304eac981bd5"
+    },
+    {
+      "path": "electron/plugins/official/clipboard-history.ts",
+      "sha256": "9162dc6bf9d7314734b7375f6d04d4a8e9eea58677af902f4fc8cf7488a34d81"
+    },
+    {
+      "path": "electron/persistence.ts",
+      "sha256": "968b941acddb76ce8cbb6964c2e3f1c9562bcdae1c9550e63322e8ade449bc00"
+    }
+  ],
+  "file": {
+    "name": "backend.mjs",
+    "bytes": 211292,
+    "sha256": "5605c6e49d487e48ae71f5879d19a1970cebcd89ace1dcdd8520b7c9b56b0963"
+  }
+}

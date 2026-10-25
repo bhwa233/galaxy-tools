@@ -51,6 +51,8 @@ describe("settings api", () => {
       imageAutoCompress: true,
       imageDisplay: "show",
       reminderSound: true,
+      mcpEnabled: false,
+      mcpPermission: "read",
       openAtCursor: true,
     };
     mockedInvoke.mockResolvedValue(config);
@@ -87,6 +89,8 @@ describe("settings api", () => {
       imageAutoCompress: false,
       imageDisplay: "click",
       reminderSound: false,
+      mcpEnabled: true,
+      mcpPermission: "full",
       openAtCursor: true,
     };
     mockedInvoke.mockResolvedValue(config);

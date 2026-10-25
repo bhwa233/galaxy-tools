@@ -1,0 +1,22 @@
+{
+  "name": "@spark233/sdk",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Plugin contracts and browser client for spark233",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "name": "@spark233/plugin-notes",
+  "version": "0.1.1",
+  "license": "MIT",
+  "files": [
+    "legal/**",
+    "backend.mjs",
+    "renderer/**"
+  ],
+  "type": "module",
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.notes",
+    "displayName": "便签",
+    "api": "^1.0.0",
+    "host": ">=1.2.0 <2",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64",
+      "arm64"
+    ],
+    "activation": "on-startup",
+    "capabilities": [
+      "node.backend",
+      "storage",
+      "windows",
+      "notifications"
+    ],
+    "backend": {
+      "entry": "backend.mjs"
+    },
+    "dataVersion": 1,
+    "commands": [
+      {
+        "id": "data",
+        "title": "Notes data engine",
+        "internal": true
+      },
+      {
+        "id": "desktop-note",
+        "title": "贴到桌面",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Show on desktop"
+          }
+        }
+      },
+      {
+        "id": "open-note",
+        "title": "打开便签",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Open note"
+          }
+        }
+      },
+      {
+        "id": "open",
+        "title": "便签管理",
+        "keywords": [
+          "便签",
+          "notes",
+          "bq"
+        ],
+        "aliases": [
+          "bianqian"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Manage notes"
+          }
+        }
+      },
+      {
+        "id": "new",
+        "title": "新建便签",
+        "keywords": [
+          "新建便签",
+          "new note",
+          "xjbq"
+        ],
+        "inputs": [
+          "text",
+          "image"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "New note"
+          }
+        }
+      },
+      {
+        "id": "search",
+        "title": "搜索便签",
+        "keywords": [
+          "搜便签",
+          "note",
+          "sbq"
+        ],
+        "mode": "notes",
+        "search": "mode",
+        "translations": {
+          "en-US": {
+            "title": "Search notes"
+          }
+        }
+      }
+    ],
+    "modes": [
+      {
+        "id": "notes",
+        "title": "便签",
+        "placeholder": "搜索便签标题和正文",
+        "translations": {
+          "en-US": {
+            "title": "Notes",
+            "placeholder": "Search note titles and content"
+          }
+        }
+      }
+    ],
+    "translations": {
+      "en-US": {
+        "displayName": "Notes"
+      }
+    },
+    "entry": "renderer/index.html",
+    "ui": {
+      "theme": "^1.0.0"
+    }
+  }
+}

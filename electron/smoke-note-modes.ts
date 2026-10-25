@@ -92,7 +92,7 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   if (
     !original.startsWith(source) ||
     !original.includes("{width=75%}") ||
-    original.includes("floral://")
+    original.includes("spark233://")
   )
     throw new Error("Source or relative image reference was changed while saving");
   await switchMode(win, "markdown");
@@ -135,7 +135,7 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   await until(reopened, screenshotReady, "Reopening lost the image preview");
   if (context.store.get(id).content !== checked) throw new Error("Fold/reopen altered the source");
   await main.webContents.executeJavaScript(
-    `window.floralDesktop.invoke('open_note_in_editor',{noteId:${JSON.stringify(id)}})`,
+    `window.spark233Desktop.invoke('open_note_in_editor',{noteId:${JSON.stringify(id)}})`,
   );
   await until(
     main,

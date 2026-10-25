@@ -1,0 +1,97 @@
+{
+  "name": "@spark233/plugin-screenshot",
+  "version": "0.1.1",
+  "description": "spark233 native screenshot and optional OCR transfer",
+  "license": "MIT",
+  "files": [
+    "native/**",
+    "legal/**",
+    "build.mjs",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.screenshot",
+    "displayName": "截图",
+    "api": "^1.1.0",
+    "host": ">=1.2.0 <2",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-command",
+    "capabilities": [
+      "native.process",
+      "storage",
+      "windows"
+    ],
+    "native": {
+      "capture": {
+        "path": "native/win32-x64/ScreenCapture.exe",
+        "args": []
+      }
+    },
+    "commands": [
+      {
+        "id": "capture",
+        "title": "截图",
+        "keywords": [
+          "截图",
+          "screenshot",
+          "jt"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Take screenshot"
+          }
+        }
+      },
+      {
+        "id": "ocr",
+        "title": "截图取字",
+        "requiresPlugins": [
+          "spark233.ocr"
+        ],
+        "keywords": [
+          "截图取字",
+          "ocr",
+          "文字识别"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Capture and recognize text"
+          }
+        }
+      },
+      {
+        "id": "cancel",
+        "title": "取消当前截图",
+        "keywords": [
+          "取消截图"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Cancel screenshot"
+          }
+        }
+      }
+    ],
+    "dependencies": {},
+    "optionalDependencies": {
+      "spark233.ocr": "^0.1.0"
+    },
+    "dataVersion": 1,
+    "translations": {
+      "en-US": {
+        "displayName": "Screenshot"
+      }
+    }
+  }
+}

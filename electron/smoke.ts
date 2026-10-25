@@ -29,6 +29,8 @@ export interface SmokeContext {
   layouts: Map<string, NoteLayoutState>;
   openNote: (id?: string, view?: "notepad" | "tile") => string;
   showMain: () => BrowserWindow;
+  showLauncher: () => Promise<BrowserWindow>;
+  pauseForBackup: () => Promise<() => void>;
   hideAndRelease: (win: BrowserWindow) => Promise<void>;
   foldAndRelease: (win: BrowserWindow) => Promise<void>;
   capsules: Capsules;
@@ -59,7 +61,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       if (
         await win.webContents
           .executeJavaScript(
-            "!!window.floralDesktop && (!!document.querySelector('textarea') || !!document.querySelector('[data-editor-mode]'))",
+            "!!window.spark233Desktop && (!!document.querySelector('textarea') || !!document.querySelector('[data-editor-mode]'))",
           )
           .catch(() => false)
       ) {
@@ -71,7 +73,113 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     }
     throw new Error("Renderer did not hydrate");
   }
+  // A completed backup restored commands but left its rejected query banner.
+  // Exercise the real renderer and maintenance gate, including action errors.
+  async function verifyLauncherMaintenance() {
+    const launcher = await context.showLauncher();
+    const settledCommands = `document.querySelector('[data-slot="command-list"]')?.getAttribute('aria-busy') === 'false' && !!document.querySelector('[data-slot="command-item"]')`;
+    const untilRenderer = async (predicate: string, failure: string) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (await launcher.webContents.executeJavaScript(predicate).catch(() => false)) return;
+        await wait(50);
+      }
+      throw new Error(failure);
+    };
+    await untilRenderer(settledCommands, "Launcher commands did not settle before maintenance");
+    const maintenance: Record<string, unknown> = {};
+    checks.launcherMaintenance = maintenance;
+    let resume: (() => void) | undefined;
+    try {
+      resume = await context.pauseForBackup();
+      const reads = await launcher.webContents.executeJavaScript(`(async () => ({
+          state: await window.spark233Desktop.invoke('launcher_state'),
+          query: await window.spark233Desktop.invoke('launcher_query', {query:'',sessionId:crypto.randomUUID()})
+        }))()`);
+      maintenance.stateReadAllowed = reads.state.ok;
+      maintenance.queryRejected = !reads.query.ok && reads.query.error.code === "maintenance";
+      if (!maintenance.stateReadAllowed || !maintenance.queryRejected)
+        throw new Error("Maintenance must allow state reads and reject launcher queries");
+      const errorVisible = `Array.from(document.querySelectorAll('[role="alert"] [data-slot="alert-description"]')).some(node => node.textContent === ${JSON.stringify(reads.query.error.message)})`;
+      context.emit("plugins-changed", undefined, launcher);
+      await untilRenderer(
+        errorVisible,
+        "Maintenance query rejection was not shown by the renderer",
+      );
+      maintenance.errorShown = true;
+      resume();
+      resume = undefined;
+      context.emit("plugins-changed", undefined, launcher);
+      await untilRenderer(settledCommands, "Launcher commands did not recover after maintenance");
+      maintenance.commandsRecovered = true;
+      maintenance.afterRecovery = await launcher.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[role="alert"] [data-slot="alert-description"]')).map(node => node.textContent)`,
+      );
+      await untilRenderer(
+        `!(${errorVisible})`,
+        "Recovered launcher retained its maintenance read error",
+      );
+      maintenance.transientErrorCleared = true;
+      const modeCommand = reads.state.value.commands.find(
+        (command: { pluginId: string; id: string; mode?: string }) =>
+          command.pluginId === "spark233.notes" && command.id === "search" && command.mode,
+      );
+      if (!modeCommand)
+        throw new Error("Official notes search mode is required for the action regression");
+      resume = await context.pauseForBackup();
+      const clicked = await launcher.webContents.executeJavaScript(`(() => {
+          const item = Array.from(document.querySelectorAll('[data-slot="command-item"]')).find(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}));
+          if (!item) return false;
+          item.click();
+          return true;
+        })()`);
+      if (!clicked) throw new Error("Notes mode action was not available in the real launcher");
+      await untilRenderer(
+        errorVisible,
+        "Maintenance action rejection was not shown by the renderer",
+      );
+      maintenance.actionErrorShown = true;
+      resume();
+      resume = undefined;
+      context.emit("plugins-changed", undefined, launcher);
+      await untilRenderer(
+        settledCommands,
+        "Notes query did not recover after the rejected mode action",
+      );
+      maintenance.businessErrorPreserved =
+        await launcher.webContents.executeJavaScript(errorVisible);
+      if (!maintenance.businessErrorPreserved)
+        throw new Error("Successful background reads erased a business action error");
+    } finally {
+      resume?.();
+    }
+  }
   try {
+    if (process.argv.includes("--smoke-launcher-maintenance")) {
+      await verifyLauncherMaintenance();
+      fs.mkdirSync(path.dirname(context.output), { recursive: true });
+      fs.writeFileSync(
+        context.output,
+        JSON.stringify(
+          {
+            ok: true,
+            runtime: { packaged: app.isPackaged, electron: process.versions.electron },
+            checks,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    checks.initialNoteCount = store.list().length;
+    // The launcher no longer manufactures a blank note on first startup.
+    // Existing editor regressions still need an explicit controlled document.
+    if (!store.list().length)
+      store.save({
+        title: "Smoke editor fixture",
+        content: "# Controlled smoke document\n",
+        category: "",
+      });
     const main = showMain();
     await hydrated(main);
     checks.topCapsules = await verifyTopCapsules(context, main);
@@ -81,7 +189,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       (entry) => entry.noteId && entry.topmost,
     );
     const initial = (await main.webContents.executeJavaScript(
-      "window.floralDesktop.invoke('note_window_states')",
+      "window.spark233Desktop.invoke('note_window_states')",
     )) as { ok: boolean; value: NoteWindowSnapshot };
     if (!initial.ok) throw new Error("Failed to read restored pin state");
     for (const entry of restoredPins) {
@@ -102,7 +210,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
         category: "",
       }).id;
     await main.webContents.executeJavaScript(
-      "window.floralDesktop.invoke('note_set_pinned',{noteId:" +
+      "window.spark233Desktop.invoke('note_set_pinned',{noteId:" +
         JSON.stringify(pinOnlyId) +
         ",pinned:true})",
     );
@@ -123,9 +231,9 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     const { label, win } = unified;
     await hydrated(win);
     const ipc = await win.webContents.executeJavaScript(`(async () => {
-      const result = await window.floralDesktop.invoke('notes_get', { id: ${JSON.stringify(note.id)} });
-      const denial = await window.floralDesktop.invoke('read_external_file', { path: ${JSON.stringify(path.join(store.configDir, "config.json"))} });
-      return { node: typeof require, bridge: !!window.floralDesktop, note: result, denial };
+      const result = await window.spark233Desktop.invoke('notes_get', { id: ${JSON.stringify(note.id)} });
+      const denial = await window.spark233Desktop.invoke('read_external_file', { path: ${JSON.stringify(path.join(store.configDir, "config.json"))} });
+      return { node: typeof require, bridge: !!window.spark233Desktop, note: result, denial };
     })()`);
     if (
       !ipc.note.ok ||
@@ -158,7 +266,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     );
     if (!checks.restored) throw new Error("Reopen lost content");
     await reopened.webContents.executeJavaScript(
-      `window.floralDesktop.invoke("toggle_tile_window", { noteId: ${JSON.stringify(note.id)} })`,
+      `window.spark233Desktop.invoke("toggle_tile_window", { noteId: ${JSON.stringify(note.id)} })`,
     );
     await wait(350);
     checks.sameWindowTile = await reopened.webContents.executeJavaScript(
@@ -183,7 +291,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     if (!checks.sameWindowTile || !checks.sameWindowEditor)
       throw new Error("Existing note window did not switch display/edit mode");
     await reopened.webContents.executeJavaScript(
-      `window.floralDesktop.invoke("toggle_tile_window", { noteId: ${JSON.stringify(note.id)} })`,
+      `window.spark233Desktop.invoke("toggle_tile_window", { noteId: ${JSON.stringify(note.id)} })`,
     );
     await wait(200);
     await reopened.webContents.executeJavaScript(
@@ -231,13 +339,13 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       "png",
     );
     checks.imageFetch = await reopened.webContents.executeJavaScript(
-      `fetch('floral://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.dataDir, relativeImage))})).then(async r => ({ status: r.status, type: r.headers.get('content-type'), size: (await r.arrayBuffer()).byteLength }))`,
+      `fetch('spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.dataDir, relativeImage))})).then(async r => ({ status: r.status, type: r.headers.get('content-type'), size: (await r.arrayBuffer()).byteLength }))`,
     );
     checks.image = await reopened.webContents.executeJavaScript(
-      `(async () => { const img = new Image(); img.src = 'floral://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.dataDir, relativeImage))}); await img.decode(); return img.naturalWidth; })()`,
+      `(async () => { const img = new Image(); img.src = 'spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.dataDir, relativeImage))}); await img.decode(); return img.naturalWidth; })()`,
     );
     checks.protocolDenied = await reopened.webContents.executeJavaScript(
-      `fetch('floral://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.configDir, "config.json"))})).then(r => r.status)`,
+      `fetch('spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.configDir, "config.json"))})).then(r => r.status)`,
     );
     if (checks.image !== 1 || checks.protocolDenied !== 403)
       throw new Error("Asset protocol boundary failed");
@@ -287,7 +395,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     if (queue.win !== queueWin || queue.snapshot.items.filter((i) => !i.master).length < 3)
       throw new Error("Collapsed notes did not share one edge host");
     const denial = await queueWin.webContents.executeJavaScript(
-      "window.floralDesktop.invoke('notes_delete',{id:" + JSON.stringify(note.id) + "})",
+      "window.spark233Desktop.invoke('notes_delete',{id:" + JSON.stringify(note.id) + "})",
     );
     if (denial.ok) throw new Error("Capsule host crossed its write capability boundary");
     const clickMaster = () => clickCapsule(queueWin, ".capsule-master", 2);
@@ -346,7 +454,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       cursor = screen.getCursorScreenPoint();
       queueWin.setPosition(cursor.x - item.rect.x - 20, cursor.y - item.rect.y - 16);
       await queueWin.webContents.executeJavaScript(
-        "window.floralDesktop.invoke('capsule_hover',{id:" + JSON.stringify(note.id) + "})",
+        "window.spark233Desktop.invoke('capsule_hover',{id:" + JSON.stringify(note.id) + "})",
       );
       await wait(350);
       preview = context.capsules.surfaces.get("preview");
@@ -499,6 +607,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       (gpu.crashCount !== 0 || gpu.features.gpu_compositing !== "enabled" || !gpu.sandboxEnabled)
     )
       throw new Error(`Hardware GPU/sandbox check failed: ${JSON.stringify(gpu)}`);
+    await verifyLauncherMaintenance();
     checks.errors = errors;
     fs.mkdirSync(path.dirname(context.output), { recursive: true });
     fs.writeFileSync(

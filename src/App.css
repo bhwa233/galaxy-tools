@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "../packages/ui/theme.css";
+@import "../packages/ui/semantic.css";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @font-face {
   font-family: "HarmonyOS Sans SC";
@@ -24,10 +30,10 @@
   --color-ink-soft: #3d3d38;
   --color-ink-faint: #8a8a80;
   --color-ink-ghost: #b8b8ae;
-  --color-bamboo: #2d5a3d;
-  --color-bamboo-light: #3a7a52;
-  --color-bamboo-mist: #e8f0eb;
-  --color-bamboo-glow: #d4e8da;
+  --color-bamboo: var(--spark233-accent);
+  --color-bamboo-light: var(--spark233-accent-hover);
+  --color-bamboo-mist: var(--spark233-accent-soft);
+  --color-bamboo-glow: var(--spark233-accent-selected);
   --color-stone: #6b6b62;
   --color-cloud: #ffffff;
   --color-shadow: rgba(26, 26, 24, 0.06);
@@ -48,6 +54,33 @@
   color-scheme: light;
   --app-window-radius: 14px;
   --app-surface-radius: 14px;
+  --background: var(--color-cloud);
+  --foreground: var(--color-ink);
+  --card: var(--color-cloud);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-cloud);
+  --popover-foreground: var(--color-ink);
+  --primary: var(--color-bamboo);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-paper-warm);
+  --secondary-foreground: var(--color-ink-soft);
+  --muted: var(--color-paper-warm);
+  --muted-foreground: #60665f;
+  --accent: var(--color-bamboo-mist);
+  --accent-foreground: var(--color-bamboo);
+  --destructive: #b91c1c;
+  --border: var(--color-paper-deep);
+  --input: var(--color-paper-deep);
+  --ring: var(--color-bamboo);
+  --radius: 0.625rem;
+  --sidebar: var(--color-paper);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 }
 
 :root[data-theme="dark"] {
@@ -59,10 +92,6 @@
   --color-ink-soft: #b5b1a8;
   --color-ink-faint: #928f87;
   --color-ink-ghost: #706d67;
-  --color-bamboo: #4faa70;
-  --color-bamboo-light: #5fc085;
-  --color-bamboo-mist: #1c2e22;
-  --color-bamboo-glow: #243a2c;
   --color-stone: #8a8880;
   --color-cloud: #1a1917;
   --color-shadow: rgba(0, 0, 0, 0.3);
@@ -646,7 +675,7 @@ li.task-flash {
 :root[data-theme="dark"] .katex .mop {
   color: var(--color-ink-soft);
 }
-.katex .katex-html .newline {
+.katex .katex-html .katex-newline {
   height: 0.5em;
 }
 .katex .katex-error {
@@ -777,4 +806,38 @@ li.task-flash {
 .electron-title-drag [role="button"] {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-body);
+}
+
+:root[data-theme="dark"] {
+  --primary-foreground: #102016;
+  --muted-foreground: #abb2aa;
+  --destructive: #ef9a9a;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

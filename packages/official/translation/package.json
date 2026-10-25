@@ -1,0 +1,138 @@
+{
+  "name": "@spark233/plugin-translation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline ECDICT base dictionary and explicit OpenAI-compatible translation",
+  "license": "MIT",
+  "files": [
+    "legal/**",
+    "renderer/**",
+    "backend.mjs",
+    "dictionary.mjs",
+    "provider.mjs",
+    "data/**",
+    "README.md"
+  ],
+  "type": "module",
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.translation",
+    "displayName": "词典与翻译",
+    "api": "^1.0.0",
+    "host": ">=1.0.0",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-command",
+    "backend": {
+      "entry": "backend.mjs"
+    },
+    "capabilities": [
+      "node.backend",
+      "network",
+      "storage",
+      "windows"
+    ],
+    "commands": [
+      {
+        "id": "search",
+        "search": "word",
+        "title": "本地词典",
+        "keywords": [
+          "词典",
+          "查词",
+          "dict"
+        ],
+        "mode": "dictionary",
+        "translations": {
+          "en-US": {
+            "title": "Local dictionary"
+          }
+        }
+      },
+      {
+        "id": "detail",
+        "title": "查看词条",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "View dictionary entry"
+          }
+        }
+      },
+      {
+        "id": "translate",
+        "title": "AI 翻译",
+        "keywords": [
+          "翻译",
+          "translate",
+          "fy"
+        ],
+        "inputs": [
+          "text"
+        ],
+        "match": "text",
+        "translations": {
+          "en-US": {
+            "title": "AI translation"
+          }
+        }
+      },
+      {
+        "id": "configure",
+        "title": "配置翻译服务",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Configure translation service"
+          }
+        }
+      },
+      {
+        "id": "cancel",
+        "title": "取消翻译",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Cancel translation"
+          }
+        }
+      },
+      {
+        "id": "status",
+        "title": "翻译服务状态",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Translation service status"
+          }
+        }
+      }
+    ],
+    "modes": [
+      {
+        "id": "dictionary",
+        "title": "本地词典",
+        "placeholder": "输入单词、词形或短语…",
+        "translations": {
+          "en-US": {
+            "title": "Local dictionary",
+            "placeholder": "Enter a word, inflection, or phrase…"
+          }
+        }
+      }
+    ],
+    "translations": {
+      "en-US": {
+        "displayName": "Dictionary and translation"
+      }
+    },
+    "entry": "renderer/index.html",
+    "ui": {
+      "theme": "^1.0.0"
+    }
+  }
+}

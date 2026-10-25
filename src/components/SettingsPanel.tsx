@@ -3,10 +3,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
+import { PluginManagementDialog } from "../features/plugins/PluginManagementDialog";
+import { ApplicationsDialog } from "../features/applications/ApplicationsDialog";
+import { Button } from "./ui/button";
+import { Field, FieldGroup, FieldLabel } from "./ui/field";
+import type { PluginManagementState } from "../features/plugins/types";
 import type {
   AppConfig,
   BackgroundFit,
   ImageDisplayMode,
+  McpPermission,
   ThemeOption,
   TileColorMode,
   ViewMode,
@@ -30,12 +36,62 @@ interface SettingsPanelProps {
   onChange: (config: AppConfig) => void;
   onMigrateDataDir: () => void;
   onClose: () => void;
+  initialGroup?: "app" | "notes";
 }
 
-export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: SettingsPanelProps) {
+export function SettingsPanel({
+  config,
+  onChange,
+  onMigrateDataDir,
+  onClose,
+  initialGroup = "app",
+}: SettingsPanelProps) {
   const { t } = useTranslation();
+  const { t: applicationsText } = useTranslation("applications");
+  const [group, setGroup] = useState<"app" | "notes">(initialGroup);
+  const groupOptions = useMemo<Array<{ value: "app" | "notes"; label: string }>>(
+    () => [
+      { value: "app", label: t("settings.groups.app") },
+      { value: "notes", label: t("settings.groups.notes") },
+    ],
+    [t],
+  );
+  const [mcpCopied, setMcpCopied] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [applicationsOpen, setApplicationsOpen] = useState(false);
+  const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; title: string }>>([]);
+  useEffect(() => {
+    let disposed = false;
+    void invoke<PluginManagementState>("plugins_list")
+      .then((state) => {
+        if (!disposed)
+          setPluginCommands(
+            state.plugins.flatMap((plugin) =>
+              plugin.commands.map((command) => ({
+                id: `${plugin.pluginId}:${command.id}`,
+                title: `${plugin.displayName} · ${command.title}`,
+              })),
+            ),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, []);
   const setConfigValue = <Key extends keyof AppConfig>(key: Key, value: AppConfig[Key]) => {
     onChange({ ...config, [key]: value });
+  };
+  const copyMcpConfig = async () => {
+    try {
+      const launch = await invoke<{ command: string; args: string[] }>("app_mcp_command");
+      const snippet = JSON.stringify({ mcpServers: { spark233: launch } }, null, 2);
+      await invoke("clipboard_write", { text: snippet });
+      setMcpCopied(true);
+      setTimeout(() => setMcpCopied(false), 1500);
+    } catch {
+      /* 剪贴板失败时静默，用户可从 Docs/mcp.md 手动复制 */
+    }
   };
   const tileColorModes = useMemo<Array<{ value: TileColorMode; label: string }>>(
     () => [
@@ -101,12 +157,20 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
     ],
     [t],
   );
+  const mcpPermissions = useMemo<Array<{ value: McpPermission; label: string }>>(
+    () => [
+      { value: "read", label: t("settings.mcp.read", { defaultValue: "只读" }) },
+      { value: "append", label: t("settings.mcp.append", { defaultValue: "追加写入" }) },
+      { value: "full", label: t("settings.mcp.full", { defaultValue: "完全控制" }) },
+    ],
+    [t],
+  );
 
   return (
     <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
       <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/25">
         <h2 className="text-[13px] font-display font-medium text-ink-soft">
-          {t("settings.title", { defaultValue: "应用设置" })}
+          {t("settings.panelTitle", { defaultValue: "设置" })}
         </h2>
         <button
           type="button"
@@ -128,388 +192,473 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5">
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.theme.label", { defaultValue: "主题" })}
-          </label>
-          <SlidingButtonGroup
-            options={themeOptions}
-            value={config.theme}
-            onChange={(v: ThemeOption) => {
-              setConfigValue("theme", v);
-              applyTheme(v);
-              watchSystemTheme(v);
-            }}
-          />
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.dataDir", { defaultValue: "数据目录" })}
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={config.dataDir}
-              readOnly
-              className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-faint truncate"
-            />
-            <button
-              type="button"
-              onClick={onMigrateDataDir}
-              className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
-            >
-              {t("settings.selectFolder", { defaultValue: "选择文件夹" })}
-            </button>
-          </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.locale.label", { defaultValue: "语言" })}
-          </label>
-          <SlidingButtonGroup
-            options={localeOptions}
-            value={config.locale}
-            onChange={(value) => setConfigValue("locale", value)}
-          />
-        </section>
-
-        <section className="space-y-2">
-          <ToggleRow
-            label={t("settings.closeToTray", { defaultValue: "关闭到托盘" })}
-            checked={config.closeToTray}
-            onChange={(checked) => setConfigValue("closeToTray", checked)}
-          />
-          <ToggleRow
-            label={t("settings.autostart", { defaultValue: "开机自启" })}
-            checked={config.autostart}
-            onChange={(checked) => setConfigValue("autostart", checked)}
-          />
-          <ToggleRow
-            label={t("settings.autoSave.note", { defaultValue: "自动保存便签" })}
-            checked={config.noteAutoSave}
-            onChange={(checked) => setConfigValue("noteAutoSave", checked)}
-          />
-          <ToggleRow
-            label={t("settings.autoSave.surface", { defaultValue: "小窗便签自动保存" })}
-            checked={config.noteSurfaceAutoSave}
-            onChange={(checked) => setConfigValue("noteSurfaceAutoSave", checked)}
-          />
-          <ToggleRow
-            label={t("settings.autoSave.externalFile", { defaultValue: "外部文件自动保存" })}
-            checked={config.externalFileAutoSave}
-            onChange={(checked) => setConfigValue("externalFileAutoSave", checked)}
-          />
-          <ToggleRow
-            label={t("settings.rememberSurfaceSize", { defaultValue: "记住小窗尺寸" })}
-            checked={config.rememberSurfaceSize}
-            onChange={(checked) => setConfigValue("rememberSurfaceSize", checked)}
-          />
-          <ToggleRow
-            label={t("settings.tileDoubleClickToEdit", { defaultValue: "双击磁贴进入编辑" })}
-            checked={config.tileDoubleClickToEdit ?? false}
-            onChange={(checked) => setConfigValue("tileDoubleClickToEdit", checked)}
-          />
-          <ToggleRow
-            label={t("settings.tileSaveReturnsToPin", { defaultValue: "保存后回到磁贴" })}
-            checked={config.tileSaveReturnsToPin ?? false}
-            onChange={(checked) => setConfigValue("tileSaveReturnsToPin", checked)}
-          />
-          <ToggleRow
-            label={t("settings.renderHtmlMarkdown", { defaultValue: "允许 HTML 标签渲染" })}
-            checked={config.renderHtmlMarkdown}
-            onChange={(checked) => setConfigValue("renderHtmlMarkdown", checked)}
-          />
-          <ToggleRow
-            label={t("settings.splitScrollSync", { defaultValue: "分栏同步滚动" })}
-            checked={config.splitScrollSync ?? true}
-            onChange={(checked) => setConfigValue("splitScrollSync", checked)}
-          />
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.imageDisplay.label", { defaultValue: "预览图片显示" })}
-          </label>
-          <SlidingButtonGroup
-            options={imageDisplayOptions}
-            value={config.imageDisplay ?? "show"}
-            onChange={(value: ImageDisplayMode) => setConfigValue("imageDisplay", value)}
-          />
-          <ToggleRow
-            label={t("settings.imageAutoCompress", {
-              defaultValue: "自动压缩大图（粘贴/拖入，窗口拖入除外）",
-            })}
-            checked={config.imageAutoCompress ?? true}
-            onChange={(checked) => setConfigValue("imageAutoCompress", checked)}
-          />
-          <ToggleRow
-            label={t("settings.reminderSound", { defaultValue: "提醒提示音" })}
-            checked={config.reminderSound ?? true}
-            onChange={(checked) => setConfigValue("reminderSound", checked)}
-          />
-        </section>
-
-        {/* 快捷键功能设置区域，与上方常规设置分开 */}
-        <section className="space-y-2">
-          <ToggleRow
-            label={t("settings.tileCtrlClose", { defaultValue: "Ctrl+右键快速关闭磁贴" })}
-            checked={config.tileCtrlClose}
-            onChange={(checked) => setConfigValue("tileCtrlClose", checked)}
-          />
-          <ToggleRow
-            label={t("settings.openAtCursor", { defaultValue: "快捷键打开时跟随鼠标位置" })}
-            checked={config.openAtCursor ?? true}
-            onChange={(checked) => setConfigValue("openAtCursor", checked)}
-          />
-          <div className="space-y-1.5">
-            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
-              {t("settings.quickNoteShortcut", { defaultValue: "快捷记录快捷键" })}
-            </label>
-            <ShortcutRecorder
-              value={config.globalShortcut}
-              onChange={(v) => setConfigValue("globalShortcut", v)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
-              {t("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" })}
-            </label>
-            <ShortcutRecorder
-              value={config.toggleVisibilityShortcut}
-              onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
-            />
-          </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.fontSize.editor", { defaultValue: "编辑器字号" })}
-          </label>
-          <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-            <input
-              type="range"
-              min={8}
-              max={30}
-              step={1}
-              value={config.fontSize ?? 14}
-              onChange={(event) => setConfigValue("fontSize", Number(event.target.value))}
-              className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-            />
-            <span className="text-[12px] font-mono text-ink-soft tabular-nums w-8 text-right">
-              {config.fontSize ?? 14}px
-            </span>
-          </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.fontSize.surface", { defaultValue: "小窗/磁贴字号" })}
-          </label>
-          <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-            <input
-              type="range"
-              min={8}
-              max={30}
-              step={1}
-              value={config.surfaceFontSize ?? 14}
-              onChange={(event) => setConfigValue("surfaceFontSize", Number(event.target.value))}
-              className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-            />
-            <span className="text-[12px] font-mono text-ink-soft tabular-nums w-8 text-right">
-              {config.surfaceFontSize ?? 14}px
-            </span>
-          </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.tabIndentSize", { defaultValue: "Tab 缩进宽��" })}
-          </label>
-          <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-            <input
-              type="range"
-              min={1}
-              max={8}
-              step={1}
-              value={config.tabIndentSize ?? 2}
-              onChange={(event) => setConfigValue("tabIndentSize", Number(event.target.value))}
-              className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-            />
-            <span className="text-[12px] font-mono text-ink-soft tabular-nums w-10 text-right">
-              {config.tabIndentSize ?? 2}
-            </span>
-          </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.tileColor.label", { defaultValue: "磁贴颜色" })}
-          </label>
-          <SlidingButtonGroup
-            options={tileColorModes}
-            value={config.tileColorMode}
-            onChange={(v: TileColorMode) => setConfigValue("tileColorMode", v)}
-          />
-          {config.tileColorMode === "custom" && (
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={normalizeTileColor(config.tileColor)}
-                onChange={(event) => setConfigValue("tileColor", event.target.value)}
-                className="w-10 h-8 rounded-lg border border-paper-deep/40 bg-paper-warm/70 cursor-pointer"
-              />
-              <input
-                type="text"
-                value={config.tileColor}
-                onChange={(event) => setConfigValue("tileColor", event.target.value)}
-                placeholder="#f6f3ec"
-                spellCheck={false}
-                className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => setConfigValue("tileColor", DEFAULT_TILE_COLOR)}
-                className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer whitespace-nowrap"
-              >
-                {t("common.default", { defaultValue: "默认" })}
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.background.label", { defaultValue: "背景图片" })}
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={
-                (config.backgroundImagePath &&
-                  (localStorage.getItem("backgroundImageName") ||
-                    config.backgroundImagePath.split(/[/\\]/).pop())) ||
-                t("settings.background.default", { defaultValue: "默认背景" })
-              }
-              readOnly
-              className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-faint truncate"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                void chooseBackgroundImage().then(async (path) => {
-                  if (!path) return;
-                  const originalName = path.split(/[/\\]/).pop() ?? "";
-                  const saved = await invoke<string>("copy_background_image", {
-                    sourcePath: path,
-                  });
-                  localStorage.setItem("backgroundImageName", originalName);
-                  setConfigValue("backgroundImagePath", saved);
-                });
-              }}
-              className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
-            >
-              {t("settings.background.choose", { defaultValue: "选择" })}
-            </button>
-            {config.backgroundImagePath && (
-              <button
-                type="button"
-                onClick={() => {
-                  localStorage.removeItem("backgroundImageName");
-                  setConfigValue("backgroundImagePath", "");
-                }}
-                className="h-8 px-3 rounded-lg border border-red-400/40 text-[11px] text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer"
-              >
-                {t("settings.background.clear", { defaultValue: "清除" })}
-              </button>
-            )}
-          </div>
-          <SlidingButtonGroup
-            options={backgroundFits}
-            value={config.backgroundFit ?? "cover"}
-            onChange={(value: BackgroundFit) => setConfigValue("backgroundFit", value)}
-          />
-          <RangeRow
-            label={t("settings.background.dim", { defaultValue: "遮罩" })}
-            value={config.backgroundDim ?? 0.25}
-            min={0}
-            max={1}
-            step={0.01}
-            format={(value) => `${Math.round(value * 100)}%`}
-            onChange={(value) => setConfigValue("backgroundDim", value)}
-          />
-          <RangeRow
-            label={t("settings.background.scale", { defaultValue: "缩放" })}
-            value={config.backgroundScale ?? 1}
-            min={0.5}
-            max={2}
-            step={0.05}
-            format={(value) => `${Math.round(value * 100)}%`}
-            onChange={(value) => setConfigValue("backgroundScale", value)}
-          />
-          <RangeRow
-            label={t("settings.background.positionX", { defaultValue: "横向" })}
-            value={config.backgroundPositionX ?? 50}
-            min={0}
-            max={100}
-            step={1}
-            format={(value) => `${value}%`}
-            onChange={(value) => setConfigValue("backgroundPositionX", value)}
-          />
-          <RangeRow
-            label={t("settings.background.positionY", { defaultValue: "纵向" })}
-            value={config.backgroundPositionY ?? 50}
-            min={0}
-            max={100}
-            step={1}
-            format={(value) => `${value}%`}
-            onChange={(value) => setConfigValue("backgroundPositionY", value)}
-          />
-          <RangeRow
-            label={t("settings.background.blur", { defaultValue: "模糊" })}
-            value={config.backgroundBlur ?? 0}
-            min={0}
-            max={20}
-            step={1}
-            format={(value) => `${value}px`}
-            onChange={(value) => setConfigValue("backgroundBlur", value)}
-          />
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.defaultView.label", { defaultValue: "默认视图" })}
-          </label>
-          <SlidingButtonGroup
-            options={viewModes}
-            value={config.defaultViewMode}
-            onChange={(v) => setConfigValue("defaultViewMode", v)}
-          />
-        </section>
-
-        <UpdateSettingsSection mode="settingsOnly" />
-
-        <section className="pt-2 border-t border-paper-deep/25">
-          <p className="text-[10px] leading-relaxed text-ink-ghost/75">
-            <span>
-              {t("settings.fontNotice", {
-                defaultValue:
-                  "Uses HarmonyOS Sans SC font. Copyright 2021 Huawei Device Co., Ltd. Licensed under HarmonyOS Sans Fonts License Agreement.",
-              })}
-            </span>{" "}
-            <a
-              href={HARMONY_FONT_LICENSE_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2 hover:text-ink-faint"
-            >
-              HarmonyOS Sans Fonts License Agreement
-            </a>
-          </p>
-        </section>
+      <div
+        role="group"
+        aria-label={t("settings.groups.label")}
+        className="shrink-0 border-b border-paper-deep/25 px-4 py-3"
+      >
+        <SlidingButtonGroup options={groupOptions} value={group} onChange={setGroup} />
       </div>
+      <div
+        key={group}
+        role="region"
+        aria-label={t(group === "app" ? "settings.groups.app" : "settings.groups.notes")}
+        className="flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5"
+      >
+        {group === "app" ? (
+          <>
+            <section className="flex flex-col gap-2">
+              <Button variant="outline" onClick={() => setPluginsOpen(true)}>
+                {t("plugins.title", { defaultValue: "插件管理" })}
+              </Button>
+              <Button variant="outline" onClick={() => setApplicationsOpen(true)}>
+                {applicationsText("title")}
+              </Button>
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.theme.label", { defaultValue: "主题" })}
+              </label>
+              <SlidingButtonGroup
+                options={themeOptions}
+                value={config.theme}
+                onChange={(v: ThemeOption) => {
+                  setConfigValue("theme", v);
+                  applyTheme(v);
+                  watchSystemTheme(v);
+                }}
+              />
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.locale.label", { defaultValue: "语言" })}
+              </label>
+              <SlidingButtonGroup
+                options={localeOptions}
+                value={config.locale}
+                onChange={(value) => setConfigValue("locale", value)}
+              />
+            </section>
+
+            <section className="space-y-2">
+              <ToggleRow
+                label={t("settings.closeToTray", { defaultValue: "关闭到托盘" })}
+                checked={config.closeToTray}
+                onChange={(checked) => setConfigValue("closeToTray", checked)}
+              />
+              <ToggleRow
+                label={t("settings.autostart", { defaultValue: "开机自启" })}
+                checked={config.autostart}
+                onChange={(checked) => setConfigValue("autostart", checked)}
+              />
+            </section>
+
+            <section className="space-y-2">
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+                  {t("settings.launcherShortcut", { defaultValue: "启动器快捷键" })}
+                </label>
+                <ShortcutRecorder
+                  value={config.globalShortcut}
+                  onChange={(v) => setConfigValue("globalShortcut", v)}
+                />
+              </div>
+              {pluginCommands.length > 0 && (
+                <FieldGroup>
+                  {pluginCommands.map((command) => (
+                    <Field key={command.id}>
+                      <FieldLabel>{command.title}</FieldLabel>
+                      <ShortcutRecorder
+                        value={config.commandShortcuts?.[command.id] ?? ""}
+                        onChange={(value) =>
+                          setConfigValue("commandShortcuts", {
+                            ...config.commandShortcuts,
+                            [command.id]: value,
+                          })
+                        }
+                      />
+                    </Field>
+                  ))}
+                </FieldGroup>
+              )}
+            </section>
+
+            <UpdateSettingsSection mode="settingsOnly" />
+          </>
+        ) : (
+          <>
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.dataDir", { defaultValue: "数据目录" })}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={config.dataDir}
+                  readOnly
+                  className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-faint truncate"
+                />
+                <button
+                  type="button"
+                  onClick={onMigrateDataDir}
+                  className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                >
+                  {t("settings.selectFolder", { defaultValue: "选择文件夹" })}
+                </button>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <ToggleRow
+                label={t("settings.autoSave.note", { defaultValue: "自动保存便签" })}
+                checked={config.noteAutoSave}
+                onChange={(checked) => setConfigValue("noteAutoSave", checked)}
+              />
+              <ToggleRow
+                label={t("settings.autoSave.surface", { defaultValue: "小窗便签自动保存" })}
+                checked={config.noteSurfaceAutoSave}
+                onChange={(checked) => setConfigValue("noteSurfaceAutoSave", checked)}
+              />
+              <ToggleRow
+                label={t("settings.autoSave.externalFile", { defaultValue: "外部文件自动保存" })}
+                checked={config.externalFileAutoSave}
+                onChange={(checked) => setConfigValue("externalFileAutoSave", checked)}
+              />
+              <ToggleRow
+                label={t("settings.rememberSurfaceSize", { defaultValue: "记住小窗尺寸" })}
+                checked={config.rememberSurfaceSize}
+                onChange={(checked) => setConfigValue("rememberSurfaceSize", checked)}
+              />
+              <ToggleRow
+                label={t("settings.tileDoubleClickToEdit", { defaultValue: "双击磁贴进入编辑" })}
+                checked={config.tileDoubleClickToEdit ?? false}
+                onChange={(checked) => setConfigValue("tileDoubleClickToEdit", checked)}
+              />
+              <ToggleRow
+                label={t("settings.tileSaveReturnsToPin", { defaultValue: "保存后回到磁贴" })}
+                checked={config.tileSaveReturnsToPin ?? false}
+                onChange={(checked) => setConfigValue("tileSaveReturnsToPin", checked)}
+              />
+              <ToggleRow
+                label={t("settings.renderHtmlMarkdown", { defaultValue: "允许 HTML 标签渲染" })}
+                checked={config.renderHtmlMarkdown}
+                onChange={(checked) => setConfigValue("renderHtmlMarkdown", checked)}
+              />
+              <ToggleRow
+                label={t("settings.splitScrollSync", { defaultValue: "分栏同步滚动" })}
+                checked={config.splitScrollSync ?? true}
+                onChange={(checked) => setConfigValue("splitScrollSync", checked)}
+              />
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.imageDisplay.label", { defaultValue: "预览图片显示" })}
+              </label>
+              <SlidingButtonGroup
+                options={imageDisplayOptions}
+                value={config.imageDisplay ?? "show"}
+                onChange={(value: ImageDisplayMode) => setConfigValue("imageDisplay", value)}
+              />
+              <ToggleRow
+                label={t("settings.imageAutoCompress", {
+                  defaultValue: "自动压缩大图（粘贴/拖入，窗口拖入除外）",
+                })}
+                checked={config.imageAutoCompress ?? true}
+                onChange={(checked) => setConfigValue("imageAutoCompress", checked)}
+              />
+              <ToggleRow
+                label={t("settings.reminderSound", { defaultValue: "提醒提示音" })}
+                checked={config.reminderSound ?? true}
+                onChange={(checked) => setConfigValue("reminderSound", checked)}
+              />
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.mcp.label", { defaultValue: "AI 接口（MCP）" })}
+              </label>
+              <ToggleRow
+                label={t("settings.mcp.enable", {
+                  defaultValue: "启用 MCP 服务（--mcp 供 AI 客户端接入）",
+                })}
+                checked={config.mcpEnabled ?? false}
+                onChange={(checked) => setConfigValue("mcpEnabled", checked)}
+              />
+              {config.mcpEnabled && (
+                <>
+                  <SlidingButtonGroup
+                    options={mcpPermissions}
+                    value={config.mcpPermission ?? "read"}
+                    onChange={(value: McpPermission) => setConfigValue("mcpPermission", value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void copyMcpConfig()}
+                    className="w-full h-8 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                  >
+                    {mcpCopied
+                      ? t("settings.mcp.copyDone", { defaultValue: "已复制" })
+                      : t("settings.mcp.copy", { defaultValue: "复制客户端配置" })}
+                  </button>
+                </>
+              )}
+            </section>
+
+            <section className="space-y-2">
+              <ToggleRow
+                label={t("settings.tileCtrlClose", { defaultValue: "Ctrl+右键快速关闭磁贴" })}
+                checked={config.tileCtrlClose}
+                onChange={(checked) => setConfigValue("tileCtrlClose", checked)}
+              />
+              <ToggleRow
+                label={t("settings.openAtCursor", { defaultValue: "快捷键打开时跟随鼠标位置" })}
+                checked={config.openAtCursor ?? true}
+                onChange={(checked) => setConfigValue("openAtCursor", checked)}
+              />
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+                  {t("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" })}
+                </label>
+                <ShortcutRecorder
+                  value={config.toggleVisibilityShortcut}
+                  onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
+                />
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.fontSize.editor", { defaultValue: "编辑器字号" })}
+              </label>
+              <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
+                <input
+                  type="range"
+                  min={8}
+                  max={30}
+                  step={1}
+                  value={config.fontSize ?? 14}
+                  onChange={(event) => setConfigValue("fontSize", Number(event.target.value))}
+                  className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                />
+                <span className="text-[12px] font-mono text-ink-soft tabular-nums w-8 text-right">
+                  {config.fontSize ?? 14}px
+                </span>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.fontSize.surface", { defaultValue: "小窗/磁贴字号" })}
+              </label>
+              <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
+                <input
+                  type="range"
+                  min={8}
+                  max={30}
+                  step={1}
+                  value={config.surfaceFontSize ?? 14}
+                  onChange={(event) =>
+                    setConfigValue("surfaceFontSize", Number(event.target.value))
+                  }
+                  className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                />
+                <span className="text-[12px] font-mono text-ink-soft tabular-nums w-8 text-right">
+                  {config.surfaceFontSize ?? 14}px
+                </span>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.tabIndentSize", { defaultValue: "Tab 缩进宽��" })}
+              </label>
+              <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
+                <input
+                  type="range"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={config.tabIndentSize ?? 2}
+                  onChange={(event) => setConfigValue("tabIndentSize", Number(event.target.value))}
+                  className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                />
+                <span className="text-[12px] font-mono text-ink-soft tabular-nums w-10 text-right">
+                  {config.tabIndentSize ?? 2}
+                </span>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.tileColor.label", { defaultValue: "磁贴颜色" })}
+              </label>
+              <SlidingButtonGroup
+                options={tileColorModes}
+                value={config.tileColorMode}
+                onChange={(v: TileColorMode) => setConfigValue("tileColorMode", v)}
+              />
+              {config.tileColorMode === "custom" && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={normalizeTileColor(config.tileColor)}
+                    onChange={(event) => setConfigValue("tileColor", event.target.value)}
+                    className="w-10 h-8 rounded-lg border border-paper-deep/40 bg-paper-warm/70 cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={config.tileColor}
+                    onChange={(event) => setConfigValue("tileColor", event.target.value)}
+                    placeholder="#f6f3ec"
+                    spellCheck={false}
+                    className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setConfigValue("tileColor", DEFAULT_TILE_COLOR)}
+                    className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    {t("common.default", { defaultValue: "默认" })}
+                  </button>
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.background.label", { defaultValue: "背景图片" })}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={
+                    (config.backgroundImagePath &&
+                      (localStorage.getItem("backgroundImageName") ||
+                        config.backgroundImagePath.split(/[/\\]/).pop())) ||
+                    t("settings.background.default", { defaultValue: "默认背景" })
+                  }
+                  readOnly
+                  className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-faint truncate"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void chooseBackgroundImage().then(async (path) => {
+                      if (!path) return;
+                      const originalName = path.split(/[/\\]/).pop() ?? "";
+                      const saved = await invoke<string>("copy_background_image", {
+                        sourcePath: path,
+                      });
+                      localStorage.setItem("backgroundImageName", originalName);
+                      setConfigValue("backgroundImagePath", saved);
+                    });
+                  }}
+                  className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                >
+                  {t("settings.background.choose", { defaultValue: "选择" })}
+                </button>
+                {config.backgroundImagePath && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.removeItem("backgroundImageName");
+                      setConfigValue("backgroundImagePath", "");
+                    }}
+                    className="h-8 px-3 rounded-lg border border-red-400/40 text-[11px] text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer"
+                  >
+                    {t("settings.background.clear", { defaultValue: "清除" })}
+                  </button>
+                )}
+              </div>
+              <SlidingButtonGroup
+                options={backgroundFits}
+                value={config.backgroundFit ?? "cover"}
+                onChange={(value: BackgroundFit) => setConfigValue("backgroundFit", value)}
+              />
+              <RangeRow
+                label={t("settings.background.dim", { defaultValue: "遮罩" })}
+                value={config.backgroundDim ?? 0.25}
+                min={0}
+                max={1}
+                step={0.01}
+                format={(value) => `${Math.round(value * 100)}%`}
+                onChange={(value) => setConfigValue("backgroundDim", value)}
+              />
+              <RangeRow
+                label={t("settings.background.scale", { defaultValue: "缩放" })}
+                value={config.backgroundScale ?? 1}
+                min={0.5}
+                max={2}
+                step={0.05}
+                format={(value) => `${Math.round(value * 100)}%`}
+                onChange={(value) => setConfigValue("backgroundScale", value)}
+              />
+              <RangeRow
+                label={t("settings.background.positionX", { defaultValue: "横向" })}
+                value={config.backgroundPositionX ?? 50}
+                min={0}
+                max={100}
+                step={1}
+                format={(value) => `${value}%`}
+                onChange={(value) => setConfigValue("backgroundPositionX", value)}
+              />
+              <RangeRow
+                label={t("settings.background.positionY", { defaultValue: "纵向" })}
+                value={config.backgroundPositionY ?? 50}
+                min={0}
+                max={100}
+                step={1}
+                format={(value) => `${value}%`}
+                onChange={(value) => setConfigValue("backgroundPositionY", value)}
+              />
+              <RangeRow
+                label={t("settings.background.blur", { defaultValue: "模糊" })}
+                value={config.backgroundBlur ?? 0}
+                min={0}
+                max={20}
+                step={1}
+                format={(value) => `${value}px`}
+                onChange={(value) => setConfigValue("backgroundBlur", value)}
+              />
+            </section>
+
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.defaultView.label", { defaultValue: "默认视图" })}
+              </label>
+              <SlidingButtonGroup
+                options={viewModes}
+                value={config.defaultViewMode}
+                onChange={(v) => setConfigValue("defaultViewMode", v)}
+              />
+            </section>
+
+            <section className="pt-2 border-t border-paper-deep/25">
+              <p className="text-[10px] leading-relaxed text-ink-ghost/75">
+                <span>
+                  {t("settings.fontNotice", {
+                    defaultValue:
+                      "Uses HarmonyOS Sans SC font. Copyright 2021 Huawei Device Co., Ltd. Licensed under HarmonyOS Sans Fonts License Agreement.",
+                  })}
+                </span>{" "}
+                <a
+                  href={HARMONY_FONT_LICENSE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-ink-faint"
+                >
+                  HarmonyOS Sans Fonts License Agreement
+                </a>
+              </p>
+            </section>
+          </>
+        )}
+      </div>
+      <PluginManagementDialog open={pluginsOpen} onOpenChange={setPluginsOpen} />
+      <ApplicationsDialog open={applicationsOpen} onOpenChange={setApplicationsOpen} />
     </aside>
   );
 }
@@ -588,7 +737,7 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
     "idle",
   );
   const [checkMsg, setCheckMsg] = useState<ShortcutMsg>({
-    key: "settings.shortcut.forQuickNote",
+    key: "settings.shortcut.forCommandAction",
   });
   const shortcutCheckRequestId = useRef(0);
   const isMounted = useRef(true);

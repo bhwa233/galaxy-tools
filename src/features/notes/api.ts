@@ -116,7 +116,7 @@ function parseAppError(error: unknown): {
 
 function shortcutFieldLabel(field: string | undefined, translate: TFunction): string | null {
   if (field === "globalShortcut") {
-    return translate("settings.quickNoteShortcut", { defaultValue: "呼出小窗快捷键" });
+    return translate("settings.launcherShortcut", { defaultValue: "启动器快捷键" });
   }
 
   if (field === "toggleVisibilityShortcut") {

@@ -5,8 +5,8 @@
     "feedback": "Feedback",
     "github": "GitHub",
     "license": "License",
-    "productName": "花笺",
-    "summary": "A lightweight, elegant, modern local note-taking tool",
+    "productName": "spark233",
+    "summary": "A modular desktop launcher with local tools",
     "tipPrefix": "Tip:",
     "title": "About",
     "version": "Version: v{{version}}"
@@ -46,7 +46,7 @@
     "categoryNameInvalidChars": "Category name cannot contain special characters",
     "categoryNotFound": "Category \"{{category}}\" not found",
     "desktopConfig": "Failed to update desktop configuration",
-    "duplicateShortcut": "Show/Hide shortcut cannot be the same as Quick Note shortcut",
+    "duplicateShortcut": "Show/Hide shortcut cannot be the same as the launcher shortcut",
     "imagePasteFailed": "Image paste failed",
     "imageTooLarge": "Image file too large (max 20 MB)",
     "noPool": "Notepad window pool not yet initialized",
@@ -228,6 +228,12 @@
     }
   },
   "settings": {
+    "panelTitle": "Settings",
+    "groups": {
+      "label": "Settings groups",
+      "app": "Application",
+      "notes": "Notes"
+    },
     "autoSave": {
       "externalFile": "Auto-save external files",
       "note": "Auto-save notes",
@@ -249,12 +255,11 @@
     "locale": {
       "enUS": "English",
       "label": "Language",
-      "zhCN": "简体中文",
-      "zhHK": "繁體中文"
+      "zhCN": "简体中文"
     },
     "dataDir": "Data directory",
     "openAtCursor": "Open near cursor with shortcut",
-    "quickNoteShortcut": "Quick Note shortcut",
+    "launcherShortcut": "Launcher shortcut",
     "rememberSurfaceSize": "Remember surface size",
     "tabIndentSize": "Tab indent width",
     "selectFolder": "Select Folder",
@@ -273,10 +278,10 @@
         "system": "Shortcut {{shortcut}} conflicts with a system shortcut",
         "unknown": "Check completed, but failed to release temporary shortcut"
       },
-      "forQuickNote": "Opens the Quick Note window",
       "needsModifier": "Shortcut must include Ctrl, Option/Alt, or Command/Meta",
       "notSet": "Not set",
-      "pressHint": "Press shortcut...; press Delete to clear."
+      "pressHint": "Press shortcut...; press Delete to clear.",
+      "forCommandAction": "Runs the assigned command action"
     },
     "theme": {
       "dark": "Dark",
@@ -303,6 +308,15 @@
       "hidden": "Hidden"
     },
     "reminderSound": "Reminder sound",
+    "mcp": {
+      "label": "AI interface (MCP)",
+      "enable": "Enable MCP service (--mcp for AI clients)",
+      "read": "Read-only",
+      "append": "Append writes",
+      "full": "Full control",
+      "copy": "Copy client config",
+      "copyDone": "Copied"
+    },
     "title": "Settings",
     "update": {
       "advanced": "Advanced",
@@ -453,7 +467,9 @@
         "label": "Download source",
         "mirrorChyan": "MirrorChyan"
       },
-      "title": "Updates"
+      "title": "Updates",
+      "hostInstallHint": "Upgrade spark233 with a new installer.",
+      "registryPluginHint": "Plugins installed from npm are checked automatically. Updates require your confirmation."
     },
     "visibilityShortcut": "Show/Hide window shortcut",
     "background": {
@@ -485,5 +501,232 @@
     "hidden": "Hidden",
     "unopened": "Not on Desktop",
     "hide": "Hide to Tray"
+  },
+  "launcher": {
+    "recentlyUsed": "Recently used",
+    "frequentlyUsed": "Frequent",
+    "plugins": "Plugins",
+    "settings": "Settings",
+    "hide": "Hide launcher",
+    "backup": "Backup",
+    "clearContext": "Clear content",
+    "welcome": {
+      "title": "Welcome to spark233",
+      "description": "Find commands and enter plugin workspaces here. Notes, search, and other tools are provided by their plugins.",
+      "keys": "Type a keyword, choose with ↑ ↓, and press Enter. Keep typing inside a mode, or press Esc to return. Enable or disable each plugin in plugin management.",
+      "complete": "Finish setup and get started"
+    },
+    "error": "Unable to complete this action",
+    "retry": "Retry",
+    "starting": "Preparing plugins",
+    "startingHint": "Commands will be available when preparation finishes. You can check plugin status now.",
+    "searchLabel": "Search commands and plugins",
+    "back": "Back to all commands",
+    "input": "search",
+    "modePlaceholder": "Search in {{title}}…",
+    "placeholder": "Search applications, commands, or plugin keywords…",
+    "searching": "Searching…",
+    "empty": "No matching commands. Try another keyword or check whether the plugin is enabled.",
+    "results": "Commands and local results",
+    "enterMode": "Enter mode",
+    "navigation": "↑ ↓ Select · Enter Run · Esc Back or hide",
+    "modeHint": "Keyword + Tab to enter a mode",
+    "settingsDescription": "Change application preferences and save them to spark233.",
+    "savingSettings": "Saving preferences",
+    "loadingSettings": "Loading preferences",
+    "migrate": {
+      "title": "Move data directory",
+      "description": "Move the existing note data to the selected location. Please wait until the move finishes.",
+      "confirm": "Confirm move"
+    },
+    "cancel": "Cancel"
+  },
+  "ocr": {
+    "results": "Recognized text",
+    "back": "Back to launcher",
+    "all": "All text",
+    "copy": "Copy selected text",
+    "lookup": "Look up",
+    "ai": "AI translation",
+    "saveNote": "Save as note",
+    "selection": "Original image and text selections",
+    "textLabel": "Recognized text — edit or select part of the text"
+  },
+  "backup": {
+    "title": "Backup and restore",
+    "description": "Save preferences, note text and attachments, plugin versions and enabled states, and plugin data such as clipboard history together. Restore verifies every file and preserves a copy of the current data.",
+    "create": "Create backup",
+    "inspect": "Choose and verify backup",
+    "inspecting": "Verifying the backup manifest and files…",
+    "restoring": "Restoring. Please wait until the operation finishes…",
+    "creating": "Saving data and creating a consistent snapshot…",
+    "error": "Operation did not complete",
+    "confirmTitle": "Restore this backup",
+    "fileCount": "{{count}} files",
+    "plugins": "Plugins to restore",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "confirmDescription": "Restore these plugin versions, granted capabilities, and data. Current data will be preserved separately. Open notes are asked to save first; restore is cancelled if saving cannot finish.",
+    "confirm": "Confirm restore",
+    "cancelSelection": "Clear selection",
+    "selectionChanged": "This backup changed after preview. Select it again and verify it before restoring.",
+    "success": "Operation complete",
+    "snapshotPath": "Backup: {{path}}",
+    "recoveryPath": "Preserved current data: {{path}}",
+    "fileCount_one": "{{count}} file",
+    "fileCount_other": "{{count}} files"
+  },
+  "translation": {
+    "title": "Dictionary and translation",
+    "close": "Back to launcher",
+    "error": "Operation did not complete",
+    "dictionary": "Offline dictionary",
+    "dictionaryHint": "About 770,000 base entries, with inflections and phrases. Looking up a word never sends a network request.",
+    "word": "Word or phrase",
+    "offline": "Offline",
+    "inflections": "Inflections",
+    "localEmpty": "Enter a word to look it up",
+    "localEmptyHint": "If there is no local definition, you can explicitly use AI translation below.",
+    "lookup": "Look up locally",
+    "ai": "AI translation",
+    "aiHint": "Connects only when you click Translate. Chinese defaults to English; other languages default to Simplified Chinese.",
+    "sourceText": "Source text",
+    "textPlaceholder": "Paste text to translate…",
+    "needConfig": "Save a compatible service address and model below first. The local dictionary is still available.",
+    "cached": "Cached result",
+    "cancelled": "Cancelled; current text preserved",
+    "waiting": "Waiting for the service response…",
+    "notCached": "The result was received, but its cache could not be saved.",
+    "translate": "Translate with default direction",
+    "toChinese": "Translate to Simplified Chinese instead",
+    "toEnglish": "Translate to English instead",
+    "cancel": "Cancel request",
+    "config": "Translation service configuration",
+    "configHint": "One configuration is active at a time. The key is stored in the plugin’s private directory and is never included in query results or shown again.",
+    "endpoint": "Compatible service address",
+    "endpointHint": "Use HTTPS. Local localhost / 127.0.0.1 services may use HTTP.",
+    "model": "Model name",
+    "key": "API key",
+    "keySaved": "Saved",
+    "keyHint": "Leave blank to keep the saved key. A local service without authentication may leave this empty.",
+    "clearKey": "Clear saved key",
+    "saveConfig": "Save configuration"
+  },
+  "plugins": {
+    "actionUnavailable": "This action is unavailable. Enable or recover the corresponding plugin in plugin management.",
+    "catalog": {
+      "title": "Official offline plugin catalog",
+      "description": "The seven official plugins included with this installer. Install or reinstall offline, then review the installation and requested capabilities.",
+      "prepare": "Prepare installation",
+      "preparing": "Preparing official offline plugin",
+      "installed": "Installed",
+      "currentVersion": "Currently installed: {{version}}"
+    },
+    "updateSource": "Automatic update source",
+    "status": {
+      "error": "Needs attention",
+      "disabled": "Disabled",
+      "active": "Running",
+      "enabled": "Enabled",
+      "preparing": "Saving",
+      "prepared": "Saved; waiting to stop",
+      "releasing": "Stopping",
+      "released": "Stopped"
+    },
+    "title": "Plugin management",
+    "description": "Review imported plugins before installation. Updates are checked automatically; you choose when to install them.",
+    "error": "Operation did not complete",
+    "errorHint": "Expand the details to see the cause, then retry the affected action.",
+    "errorDetails": "View details",
+    "commandRunning": "Plugin command is running",
+    "working": "Working. Please wait.",
+    "commandRunningHint": "You can still disable the plugin. The host will ask it to save and cancel its tasks first.",
+    "add": {
+      "title": "Add plugin",
+      "description": "Import a local .tgz, a prebuilt development directory, or an npm package. Packages must contain a valid spark233 plugin manifest."
+    },
+    "importing": "Importing plugin package",
+    "importingDirectory": "Preparing development directory",
+    "importDirectory": "Import development directory",
+    "directoryPackage": "Development directory snapshot",
+    "import": "Import local .tgz",
+    "preparing": "Preparing installation preview",
+    "packageName": "npm package name",
+    "registry": "Registry (optional)",
+    "registryHint": "Leave blank for the official npm registry. Other registries must use HTTPS.",
+    "channel": "Update channel (optional)",
+    "channelHint": "Leave blank to use the latest stable channel.",
+    "prepare": "Prepare installation preview",
+    "pending": "Awaiting installation confirmation",
+    "localPackage": "Local package",
+    "registryPackage": "Registry package",
+    "source": "Source",
+    "capabilities": "Requested capabilities",
+    "noCapabilities": "No host capabilities requested",
+    "manifest": "View full manifest and integrity information",
+    "native": {
+      "title": "This plugin can run Node or native code",
+      "description": "This code has your user account’s full system access, including files and networks. Web capability restrictions do not constrain Node or native code. Install it only if you trust its source.",
+      "confirm": "I trust this source and allow Node / native execution"
+    },
+    "installing": "Installing and validating plugin",
+    "confirmInstall": "Confirm installation",
+    "canceling": "Cancelling pending installation",
+    "cancel": "Cancel installation",
+    "installed": "Installed plugins",
+    "checking": "Checking for plugin updates",
+    "checkUpdates": "Check for updates",
+    "lastChecked": "Last checked",
+    "loading": "Loading plugin status",
+    "empty": {
+      "title": "No plugins installed",
+      "description": "Add a local package or a specific npm source, then confirm installation to use it."
+    },
+    "dependencies": "Required dependencies",
+    "optionalDependencies": "Optional dependencies",
+    "updateAvailable": "Update available",
+    "updateHint": "Prepare the update, then review its source and capabilities before confirming installation.",
+    "commands": "Available commands",
+    "open": "Open",
+    "switching": "Changing plugin state",
+    "disable": "Disable",
+    "enable": "Enable",
+    "preparingUpdate": "Preparing update preview",
+    "prepareUpdate": "Prepare update",
+    "uninstall": "Uninstall",
+    "uninstallTitle": "Uninstall plugin",
+    "uninstallDescription": "The plugin will stop and be removed. Its data is kept by default so it can be reinstalled later.",
+    "deleteData": "Also delete this plugin’s data",
+    "deleteDataHint": "Deletes the plugin’s private data permanently. This cannot be undone.",
+    "keep": "Cancel",
+    "uninstalling": "Uninstalling plugin",
+    "confirmUninstall": "Confirm uninstall",
+    "listSeparator": ", ",
+    "capability": {
+      "storage": "Private plugin storage",
+      "windows": "Plugin windows",
+      "shortcuts": "Global shortcuts",
+      "notifications": "System notifications",
+      "network": "Network access",
+      "files": {
+        "read": "Read authorized files",
+        "write": "Write authorized files"
+      },
+      "clipboard": {
+        "read": "Read clipboard",
+        "write": "Write clipboard",
+        "watch": "Watch clipboard"
+      },
+      "native": {
+        "process": "Run native processes"
+      },
+      "node": {
+        "backend": "Run Node backend"
+      },
+      "search": {
+        "index": "Search indexing"
+      },
+      "commands": "Run other plugins’ public commands"
+    }
   }
 }

@@ -1,4 +1,4 @@
-export const SUPPORTED_LOCALES = ["zh-CN", "en-US", "zh-HK"] as const;
+export const SUPPORTED_LOCALES = ["zh-CN", "en-US"] as const;
 
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
@@ -11,7 +11,6 @@ export interface LocaleOption {
 export const LOCALE_OPTIONS = [
   { value: "zh-CN", labelKey: "settings.locale.zhCN", defaultLabel: "简体中文" },
   { value: "en-US", labelKey: "settings.locale.enUS", defaultLabel: "English" },
-  { value: "zh-HK", labelKey: "settings.locale.zhHK", defaultLabel: "繁體中文" },
 ] as const satisfies readonly LocaleOption[];
 
 export const DEFAULT_LOCALE: SupportedLocale = "zh-CN";
@@ -25,10 +24,6 @@ const LOCALE_ALIASES: Record<string, SupportedLocale> = {
   "zh-cn": "zh-CN",
   "zh-hans": "zh-CN",
   "zh-sg": "zh-CN",
-  "zh-hant": "zh-HK",
-  "zh-hk": "zh-HK",
-  "zh-mo": "zh-HK",
-  "zh-tw": "zh-HK",
 };
 
 function canonicalizeLocale(locale: string): string {

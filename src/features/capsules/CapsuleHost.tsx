@@ -142,7 +142,7 @@ export function CapsuleHost() {
             className={`capsule-pill ${item.master ? "capsule-master" : item.expanded ? "capsule-expanded" : ""}`}
             aria-label={
               item.master
-                ? `花笺，${item.count} 张便签，${item.collapsed ? "展开" : "收起"}队列`
+                ? `spark233，${item.count} 张便签，${item.collapsed ? "展开" : "收起"}队列`
                 : item.title
             }
             aria-expanded={item.master ? !item.collapsed : undefined}

@@ -1,0 +1,133 @@
+{
+  "name": "@spark233/plugin-applications",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows Start menu and registered application search for spark233",
+  "license": "(MIT AND Apache-2.0)",
+  "files": [
+    "backend.mjs",
+    "pinyin.mjs",
+    "README.md",
+    "native/**",
+    "licenses/**"
+  ],
+  "type": "module",
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.applications",
+    "displayName": "应用搜索",
+    "api": "^1.0.0",
+    "host": ">=1.0.0",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-command",
+    "backend": {
+      "entry": "backend.mjs"
+    },
+    "capabilities": [
+      "node.backend",
+      "windows",
+      "native.process"
+    ],
+    "native": {
+      "pinyin": {
+        "path": "native/win32-x64/spark233.ApplicationMatcher.exe",
+        "args": []
+      }
+    },
+    "commands": [
+      {
+        "id": "refresh",
+        "title": "刷新应用列表",
+        "keywords": [
+          "刷新应用",
+          "refresh apps"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Refresh applications"
+          }
+        }
+      },
+      {
+        "id": "reveal",
+        "title": "打开应用位置",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Show application location"
+          }
+        }
+      },
+      {
+        "id": "copy-path",
+        "title": "复制应用路径",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Copy application path or ID"
+          }
+        }
+      },
+      {
+        "id": "settings",
+        "title": "自定义应用入口",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Custom applications"
+          }
+        }
+      },
+      {
+        "id": "search",
+        "title": "搜索应用",
+        "keywords": [
+          "应用",
+          "程序",
+          "app",
+          "apps"
+        ],
+        "mode": "apps",
+        "search": "default",
+        "translations": {
+          "en-US": {
+            "title": "Search applications"
+          }
+        }
+      },
+      {
+        "id": "launch",
+        "title": "启动已索引应用",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Launch indexed application"
+          }
+        }
+      }
+    ],
+    "modes": [
+      {
+        "id": "apps",
+        "title": "应用搜索",
+        "placeholder": "输入应用名称…",
+        "translations": {
+          "en-US": {
+            "title": "Applications",
+            "placeholder": "Enter an application name…"
+          }
+        }
+      }
+    ],
+    "translations": {
+      "en-US": {
+        "displayName": "Applications"
+      }
+    }
+  }
+}

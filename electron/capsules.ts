@@ -24,19 +24,23 @@ import {
   queueKey,
   SLOT_PITCH,
 } from "./capsule-layout.js";
-import type { NoteStore } from "./store.js";
-import { AppError } from "./store.js";
+import type { NotesDataClient } from "./plugins/official/notes-data-client.js";
+import type { AppConfig } from "../src/features/settings/types.js";
+import { AppError } from "./persistence.js";
 import { externalUrl } from "./security.js";
 interface Options {
   here: string;
   url: string;
   entries: Map<string, CapsuleEntry>;
-  store: () => NoteStore;
-  save: () => void;
-  open: (id: string) => void;
+  notes: () => Pick<NotesDataClient, "list" | "get">;
+  getConfig: () => AppConfig;
+  dataRoot: () => string;
+  save: () => void | Promise<void>;
+  open: (id: string) => void | Promise<void>;
   hide: (id: string) => Promise<void>;
   changed: () => void;
-  globalMenu: () => Electron.Menu;
+  globalMenu: () => Electron.Menu | Promise<Electron.Menu>;
+  onRendererCrash?: (error: Error) => void;
 }
 interface Surface {
   win: BrowserWindow;
@@ -68,7 +72,18 @@ export class Capsules {
   private drag?: Drag;
   private suppressed: Rect[] = [];
   private hidden = false;
+  private enabled = true;
   private titles = new Map<string, string>();
+  private refreshGeneration = 0;
+  private previewGeneration = 0;
+  private label(chinese: string, english: string): string {
+    return this.options.getConfig().locale.startsWith("en") ? english : chinese;
+  }
+  private save(): Promise<void> {
+    const operation = Promise.resolve().then(() => this.options.save());
+    void operation.catch(console.error);
+    return operation;
+  }
   constructor(private options: Options) {
     this.ticker = setInterval(() => this.tick(), 60);
     screen.on("display-added", this.displayChanged);
@@ -76,10 +91,11 @@ export class Capsules {
     screen.on("display-metrics-changed", this.displayChanged);
   }
   private displayChanged = () => {
+    if (!this.enabled) return;
     this.cancelDrag();
     this.hidePreview();
     this.refresh();
-    this.options.save();
+    this.save();
   };
   owns(win: BrowserWindow) {
     return [...this.surfaces.values()].some((s) => s.win === win);
@@ -111,6 +127,7 @@ export class Capsules {
         });
   }
   async fold(entry: CapsuleEntry) {
+    if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
     const before = {
       folded: entry.folded,
       visible: entry.visible,
@@ -141,7 +158,7 @@ export class Capsules {
         if (peers.some((e) => e.capsule!.order === entry.capsule!.order))
           entry.capsule.order = Math.max(-1, ...peers.map((e) => e.capsule!.order)) + 1;
       }
-      this.refresh();
+      await this.refresh();
       const key =
         entry.capsule.kind === "docked"
           ? `queue:${queueKey(entry.capsule.displayId, entry.capsule.edge)}`
@@ -149,26 +166,44 @@ export class Capsules {
       const surface = this.surfaces.get(key);
       for (let i = 0; surface && !surface.ready && i < 60; i++)
         await new Promise((resolve) => setTimeout(resolve, 50));
-      if (!surface?.ready || surface.win.isDestroyed())
+      if (!this.enabled || !surface?.ready || surface.win.isDestroyed())
         throw new AppError("capsuleUnavailable", "胶囊窗口未就绪，已保留便签窗口");
       await surface.win.webContents.executeJavaScript(
         "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
       );
-      this.options.save();
+      if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
+      await this.save();
     } catch (error) {
       Object.assign(entry, before);
       this.refresh();
       throw error;
     }
   }
-  refresh() {
-    // Read metadata once per refresh; title lookup also runs inside drag animation frames.
-    this.titles = new Map(
-      this.options
-        .store()
-        .list()
-        .map((note) => [note.id, note.title || note.preview.slice(0, 30) || "无标题便签"]),
-    );
+  refresh(): Promise<void> {
+    if (!this.enabled) return Promise.resolve();
+    const generation = ++this.refreshGeneration;
+    // Native geometry never waits for storage. Only presentation summaries are
+    // cached, and a retired owner cannot publish a late asynchronous response.
+    this.render();
+    const operation = Promise.resolve()
+      .then(() => this.options.notes().list())
+      .then((notes) => {
+        if (!this.enabled || generation !== this.refreshGeneration) return;
+        this.titles = new Map(
+          notes.map((note) => [
+            note.id,
+            note.title || note.preview.slice(0, 30) || this.label("无标题便签", "Untitled note"),
+          ]),
+        );
+        this.render();
+      });
+    void operation.catch((error) => {
+      if (this.enabled && generation === this.refreshGeneration) console.error(error);
+    });
+    return operation;
+  }
+  private render() {
+    if (!this.enabled) return;
     const wanted = new Set<string>(),
       entries = [...this.options.entries.values()];
     const displays = screen.getAllDisplays();
@@ -195,7 +230,7 @@ export class Capsules {
         const items: CapsuleItem[] = [
           {
             id: `master:${key}`,
-            title: "花笺",
+            title: "spark233",
             master: true,
             count: group.length,
             collapsed: queue.collapsed,
@@ -278,11 +313,12 @@ export class Capsules {
     return this.titles.get(id) ?? "无标题便签";
   }
   private surface(key: string, bounds: Rect, snapshot: CapsuleSnapshot): Surface {
+    if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
     let surface = this.surfaces.get(key);
     if (!surface) {
       const win = new BrowserWindow({
         ...bounds,
-        title: "花笺胶囊",
+        title: this.label("spark233 胶囊", "spark233 capsules"),
         frame: false,
         transparent: true,
         show: false,
@@ -298,11 +334,16 @@ export class Capsules {
           sandbox: true,
           webSecurity: true,
           backgroundThrottling: true,
-          additionalArguments: [`--floral-label=capsule:${key}`],
+          additionalArguments: [`--spark233-label=capsule:${key}`],
         },
       });
       surface = { win, snapshot, ready: false };
       this.surfaces.set(key, surface);
+      win.webContents.on("render-process-gone", (_event, details) => {
+        this.options.onRendererCrash?.(
+          new Error(`Notes capsule renderer exited: ${details.reason} (${details.exitCode})`),
+        );
+      });
       win.setMenu(null);
       win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       win.webContents.on("will-navigate", (e) => e.preventDefault());
@@ -340,24 +381,33 @@ export class Capsules {
     return surface;
   }
   private send(surface: Surface) {
-    surface.win.webContents.send("floral:event:capsule-state", surface.snapshot);
+    if (!this.enabled || surface.win.isDestroyed()) return;
+    surface.win.webContents.send("spark233:event:capsule-state", surface.snapshot);
   }
   private find(id: string) {
     return [...this.options.entries.values()].find((e) => e.noteId === id);
   }
-  private open(id: string) {
-    const e = this.find(id);
-    if (!e) return;
-    this.hidePreview();
-    e.folded = false;
-    this.options.open(id);
-    this.refresh();
+  private open(id: string): Promise<void> {
+    const operation = (async () => {
+      if (!this.enabled) return;
+      const e = this.find(id);
+      if (!e) return;
+      this.hidePreview();
+      await this.options.open(id);
+      if (!this.enabled || this.find(id) !== e) return;
+      e.folded = false;
+      await this.refresh();
+    })();
+    void operation.catch(console.error);
+    return operation;
   }
   private hide(id: string) {
+    if (!this.enabled) return;
     this.hidePreview();
     void this.options.hide(id).catch(console.error);
   }
   private hidePreview() {
+    this.previewGeneration += 1;
     this.hover = undefined;
     this.previewId = undefined;
     this.previewAnchor = undefined;
@@ -365,16 +415,27 @@ export class Capsules {
     this.leaveSince = 0;
     this.surfaces.get("preview")?.win.hide();
   }
-  private showPreview(id: string, anchor: Rect, edge: Edge) {
-    const note = this.options.store().get(id),
-      display = screen.getDisplayMatching(anchor);
+  private async showPreview(id: string, anchor: Rect, edge: Edge) {
+    if (!this.enabled) return;
+    const generation = ++this.previewGeneration;
+    const note = await this.options.notes().get(id);
+    if (
+      !this.enabled ||
+      this.hidden ||
+      this.drag ||
+      generation !== this.previewGeneration ||
+      !contains(anchor, screen.getCursorScreenPoint(), 2) ||
+      !this.find(id)?.folded
+    )
+      return;
+    const display = screen.getDisplayMatching(anchor);
     this.surface("preview", previewGeometry(display.workArea, anchor, edge), {
       kind: "preview",
       items: [],
       note,
-      imageBaseDir: this.options.store().dataDir,
+      imageBaseDir: this.options.dataRoot(),
       markdown: note.editorMode === "markdown",
-      imageDisplay: this.options.store().config.imageDisplay,
+      imageDisplay: this.options.getConfig().imageDisplay,
     });
     this.previewId = id;
     this.previewAnchor = anchor;
@@ -382,13 +443,14 @@ export class Capsules {
     this.leaveSince = 0;
   }
   private tick() {
-    if (this.hidden || this.drag) return;
+    if (!this.enabled || this.hidden || this.drag) return;
     const point = screen.getCursorScreenPoint(),
       now = Date.now();
     if (this.hover && now >= this.hover.due) {
       const h = this.hover;
       this.hover = undefined;
-      if (contains(h.anchor, point, 2)) this.showPreview(h.id, h.anchor, h.edge);
+      if (contains(h.anchor, point, 2))
+        void this.showPreview(h.id, h.anchor, h.edge).catch(console.error);
     }
     if (this.previewId) {
       const surface = this.surfaces.get("preview");
@@ -430,11 +492,12 @@ export class Capsules {
     this.hidePreview();
   }
   private moveDrag() {
+    if (!this.enabled) return;
     const drag = this.drag;
     if (!drag) return;
     const point = screen.getCursorScreenPoint();
     drag.point = point;
-    const title = drag.queue ? `花笺 · ${drag.entries.length} 张` : this.title(drag.id),
+    const title = drag.queue ? `spark233 · ${drag.entries.length} 张` : this.title(drag.id),
       width = pillWidth(title);
     this.surface(
       "drag",
@@ -528,14 +591,29 @@ export class Capsules {
           y: point.y - 16,
         };
     }
-    this.options.save();
+    this.save();
     this.refresh();
   }
   private cancelDrag() {
     this.endDrag(true);
   }
   isHidden() {
-    return this.hidden;
+    return !this.enabled || this.hidden;
+  }
+  setEnabled(enabled: boolean) {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.refreshGeneration += 1;
+    if (!enabled) {
+      this.titles.clear();
+      // Saving belongs to the notes runtime's prepareStop. Keep the durable
+      // layout and queue records intact while removing every live surface.
+      this.cancelDrag();
+      this.hidePreview();
+      for (const surface of this.surfaces.values()) surface.win.destroy();
+      this.surfaces.clear();
+    } else this.refresh();
+    this.options.changed();
   }
   setHidden(hidden: boolean) {
     this.hidden = hidden;
@@ -550,12 +628,14 @@ export class Capsules {
     this.applyZOrder();
   }
   private applyZOrder() {
+    if (!this.enabled) return;
     for (const s of this.surfaces.values()) {
       const bounds = s.win.getBounds(),
         blocked = this.suppressed.some((r) =>
           contains(r, { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }),
         );
-      s.win.setAlwaysOnTop(!blocked);
+      // Avoid the default Windows restack behind a lowered primary taskbar.
+      s.win.setAlwaysOnTop(!blocked, process.platform === "win32" ? "pop-up-menu" : "floating");
     }
   }
   async handle(
@@ -563,6 +643,7 @@ export class Capsules {
     command: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
+    if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
     const surface = [...this.surfaces.values()].find((s) => s.win === win);
     if (!surface) throw new AppError("permissionDenied", "未知胶囊窗口");
     switch (command) {
@@ -580,7 +661,7 @@ export class Capsules {
         await shell.openExternal(externalUrl(args.url));
         return;
       case "config_get":
-        return this.options.store().config;
+        return this.options.getConfig();
       case "capsule_state":
         return surface.snapshot;
       case "capsule_activate": {
@@ -591,9 +672,9 @@ export class Capsules {
         if (item.master && surface.snapshot.key) {
           const queue = this.queue(surface.snapshot.key);
           queue.collapsed = !queue.collapsed;
-          this.options.save();
+          this.save();
           this.refresh();
-        } else if (!item.master) this.open(item.id);
+        } else if (!item.master) await this.open(item.id);
         return;
       }
       case "capsule_open": {
@@ -603,7 +684,7 @@ export class Capsules {
           !surface.snapshot.items.some((i) => i.id === id && !i.master)
         )
           throw new AppError("permissionDenied", "不属于此窗口的便签");
-        this.open(id);
+        await this.open(id);
         return;
       }
       case "capsule_hover": {
@@ -650,7 +731,7 @@ export class Capsules {
           q.scroll += Math.max(-120, Math.min(120, Number(args.delta) || 0));
           this.hidePreview();
           this.refresh();
-          this.options.save();
+          this.save();
         }
         return;
       case "capsule_menu": {
@@ -658,16 +739,25 @@ export class Capsules {
         const item = surface.snapshot.items.find((i) => i.id === args.id);
         if (!item) return;
         const menu = item.master
-          ? this.options.globalMenu()
+          ? await this.options.globalMenu()
           : Menu.buildFromTemplate([
-              { label: "展开便签", click: () => this.open(item.id) },
-              { label: "隐藏到托盘", click: () => this.hide(item.id) },
+              { label: this.label("展开便签", "Open note"), click: () => this.open(item.id) },
+              { label: this.label("隐藏到托盘", "Hide to tray"), click: () => this.hide(item.id) },
               { type: "separator" },
-              { label: "移到左侧", click: () => this.dock(item.id, "left") },
-              { label: "移到右侧", click: () => this.dock(item.id, "right") },
-              { label: "移到顶部", click: () => this.dock(item.id, "top") },
+              {
+                label: this.label("移到左侧", "Move to left edge"),
+                click: () => this.dock(item.id, "left"),
+              },
+              {
+                label: this.label("移到右侧", "Move to right edge"),
+                click: () => this.dock(item.id, "right"),
+              },
+              {
+                label: this.label("移到顶部", "Move to top edge"),
+                click: () => this.dock(item.id, "top"),
+              },
             ]);
-        menu.popup({ window: win });
+        if (this.enabled && !win.isDestroyed() && this.owns(win)) menu.popup({ window: win });
         return;
       }
       default:
@@ -675,6 +765,7 @@ export class Capsules {
     }
   }
   private dock(id: string, edge: Edge) {
+    if (!this.enabled) return;
     const e = this.find(id);
     if (!e) return;
     const d = e.capsule
@@ -688,10 +779,13 @@ export class Capsules {
       edge,
       Number.MAX_SAFE_INTEGER,
     );
-    this.options.save();
+    this.save();
     this.refresh();
   }
   dispose() {
+    this.enabled = false;
+    this.refreshGeneration += 1;
+    this.previewGeneration += 1;
     clearInterval(this.ticker);
     if (this.drag) {
       clearInterval(this.drag.timer);

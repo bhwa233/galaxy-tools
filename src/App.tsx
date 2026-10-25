@@ -2,6 +2,7 @@ import { CapsuleHost } from "./features/capsules/CapsuleHost";
 import { useEffect } from "react";
 import "./App.css";
 import { ContextMenuProvider } from "./components/ContextMenu";
+import { Launcher } from "./features/launcher/Launcher";
 import { MainWindow } from "./components/MainWindow";
 import { NotePad } from "./components/NotePad";
 import { TileShowcase } from "./components/TileShowcase";
@@ -12,14 +13,40 @@ import { applyTheme, watchSystemTheme } from "./features/settings/theme";
 import type { AppConfig, ThemeOption } from "./features/settings/types";
 import { getInitialRoute } from "./features/windows/windowRoutes";
 import { syncLanguage } from "./locales";
-import { invoke, listen } from "./platform/desktop";
+import {
+  invoke,
+  listen,
+  reportClosePreparation,
+  type ClosePrepareRequest,
+} from "./platform/desktop";
+import { prepareHostWindow } from "./features/windows/hostPreparation";
 
 function App() {
   const route = getInitialRoute();
   const activeView = route.view;
   useEffect(() => {
-    void invoke("desktop_ready").catch(console.error);
-  }, []);
+    const subscription =
+      activeView === "launcher"
+        ? listen<ClosePrepareRequest>("desktop:prepare-close", (event) => {
+            void prepareHostWindow()
+              .then(
+                () => reportClosePreparation(event.payload.requestId, "launcher", "ready"),
+                (error) =>
+                  reportClosePreparation(
+                    event.payload.requestId,
+                    "launcher",
+                    "failed",
+                    String(error),
+                  ),
+              )
+              .catch(console.error);
+          })
+        : Promise.resolve(() => {});
+    void subscription.then(() => invoke("desktop_ready")).catch(console.error);
+    return () => {
+      void subscription.then((stop) => stop()).catch(() => {});
+    };
+  }, [activeView]);
 
   useEffect(() => {
     let cleanup = () => {};
@@ -87,7 +114,9 @@ function App() {
   return (
     <ContextMenuProvider>
       <div className="app-window-shell h-screen font-body text-ink overflow-hidden">
-        {activeView === "main" ? (
+        {activeView === "launcher" ? (
+          <Launcher />
+        ) : activeView === "main" ? (
           <MainWindow />
         ) : activeView === "notepad" ? (
           <NotePad initialNoteId={route.noteId} />

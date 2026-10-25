@@ -19,14 +19,14 @@ vi.mock("../generated/contributors.json", () => ({
 }));
 
 describe("AboutPanel", () => {
-  test("renders app identity and update section placeholder", () => {
+  test("renders app identity and update policy", () => {
     const markup = renderToStaticMarkup(<AboutPanel onClose={vi.fn()} />);
 
     expect(markup).toContain("关于");
-    expect(markup).toContain("花笺");
-    expect(markup).toContain("轻量、优雅、现代化的本地便签工具");
+    expect(markup).toContain("spark233");
+    expect(markup).toContain("模块化桌面启动器与本地工具集");
     expect(markup).toContain("更新");
-    expect(markup).toContain("Electron");
+    expect(markup).toContain("确认安装");
     expect(markup).not.toContain("检查更新");
     expect(markup).not.toContain("自动检查更新");
   });

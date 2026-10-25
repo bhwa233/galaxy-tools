@@ -1,0 +1,87 @@
+{
+  "name": "@spark233/plugin-ocr",
+  "version": "0.1.0",
+  "description": "spark233 offline ImageReader OCR with embedded models",
+  "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
+  "files": [
+    "renderer/**",
+    "native/**",
+    "legal/**",
+    "build.mjs",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.ocr",
+    "displayName": "图片取字",
+    "api": "^1.0.0",
+    "host": ">=1.2.0 <2",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-command",
+    "capabilities": [
+      "native.process",
+      "storage",
+      "files.read",
+      "windows"
+    ],
+    "native": {
+      "ocr": {
+        "path": "native/win32-x64/ImageReader.exe",
+        "args": []
+      }
+    },
+    "commands": [
+      {
+        "id": "ocr",
+        "title": "识别图片文字",
+        "keywords": [
+          "图片取字",
+          "ocr"
+        ],
+        "inputs": [
+          "image"
+        ],
+        "match": "image",
+        "translations": {
+          "en-US": {
+            "title": "Recognize image text"
+          }
+        }
+      },
+      {
+        "id": "cancel",
+        "title": "取消文字识别",
+        "keywords": [
+          "取消识别"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Cancel text recognition"
+          }
+        }
+      }
+    ],
+    "dependencies": {},
+    "optionalDependencies": {},
+    "dataVersion": 1,
+    "translations": {
+      "en-US": {
+        "displayName": "Image text recognition"
+      }
+    },
+    "entry": "renderer/index.html",
+    "ui": {
+      "theme": "^1.0.0"
+    }
+  }
+}

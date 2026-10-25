@@ -33,6 +33,7 @@ export interface RemindersOptions {
   getNote: (id: string) => { id: string; title: string };
   notify: (notification: ReminderNotification) => void;
   onChanged: () => void;
+  getLocale?: () => string;
 }
 
 export class Reminders {
@@ -142,16 +143,21 @@ export class Reminders {
       if (now - Date.parse(item.fireAt) > OVERDUE_DROP_MS) continue; // 超过一天的过期提醒静默丢弃
       let noteTitle: string;
       try {
-        noteTitle = this.options.getNote(item.noteId).title || "无标题便签";
+        noteTitle =
+          this.options.getNote(item.noteId).title ||
+          (this.options.getLocale?.().startsWith("en") ? "Untitled note" : "无标题便签");
       } catch {
         this.cancelForNote(item.noteId); // 便签已删除，级联清掉其余提醒
         continue;
       }
       const overdue = reminderIsOverdue(item, now);
+      const english = this.options.getLocale?.().startsWith("en");
       this.options.notify({
         item,
         noteTitle,
-        body: `${item.taskText ? `任务：${item.taskText}` : "提醒时间到了"}${overdue ? "（已过期）" : ""}`,
+        body: english
+          ? `${item.taskText ? `Task: ${item.taskText}` : "Your reminder is due"}${overdue ? " (overdue)" : ""}`
+          : `${item.taskText ? `任务：${item.taskText}` : "提醒时间到了"}${overdue ? "（已过期）" : ""}`,
         overdue,
       });
     }

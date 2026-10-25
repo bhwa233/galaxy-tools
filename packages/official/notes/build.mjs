@@ -1,0 +1,11 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "vite";
+import fs from "node:fs";
+const root = fileURLToPath(new URL("./", import.meta.url));
+await build({ configFile: false, publicDir: false, ssr: { noExternal: true }, build: {
+  target: "node24", ssr: path.join(root, "backend.ts"), outDir: root, emptyOutDir: false, minify: false,
+  rolldownOptions: { external: id => id.startsWith("node:"), output: { entryFileNames: "backend.mjs" } },
+} });
+fs.mkdirSync(path.join(root, "legal"), { recursive: true });
+fs.copyFileSync(fileURLToPath(new URL("../../../node_modules/zod/LICENSE", import.meta.url)), path.join(root, "legal/zod-LICENSE.txt"));

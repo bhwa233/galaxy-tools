@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/skywind3000/ECDICT",
+  "commit": "ab22ad36302cafc6349a050e2b60894855208055",
+  "license": "MIT",
+  "files": {
+    "ecdict.csv": {
+      "bytes": 66009548,
+      "sha256": "d1ecbdf9ee2b920afb6f430ca6b6bb9f559588cf0dff86e04bd255f9390843cc"
+    },
+    "LICENSE": {
+      "bytes": 1063,
+      "sha256": "f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f"
+    }
+  }
+}

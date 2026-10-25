@@ -1,0 +1,180 @@
+{
+  "name": "@spark233/plugin-search",
+  "version": "0.1.0",
+  "description": "Pulse powered NTFS filename and Instant text search for spark233",
+  "license": "Apache-2.0",
+  "files": [
+    "native/**",
+    "licenses/**",
+    "README.md"
+  ],
+  "type": "module",
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.search",
+    "displayName": "文件搜索",
+    "api": "^1.0.0",
+    "host": ">=1.2.0 <2",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-command",
+    "capabilities": [
+      "native.process",
+      "files.read",
+      "search.index"
+    ],
+    "native": {
+      "search": {
+        "path": "native/spark233.Search.exe"
+      }
+    },
+    "dataVersion": 1,
+    "commands": [
+      {
+        "id": "service",
+        "title": "索引服务管理",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Index service management"
+          }
+        }
+      },
+      {
+        "id": "reveal",
+        "title": "打开文件位置",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Show file location"
+          }
+        }
+      },
+      {
+        "id": "copy-path",
+        "title": "复制文件路径",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Copy file path"
+          }
+        }
+      },
+      {
+        "id": "preview",
+        "title": "预览命中行",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Preview matching line"
+          }
+        }
+      },
+      {
+        "id": "search",
+        "title": "搜索文件",
+        "keywords": [
+          "文件",
+          "file",
+          "wj"
+        ],
+        "mode": "files",
+        "translations": {
+          "en-US": {
+            "title": "Search files"
+          }
+        }
+      },
+      {
+        "id": "content",
+        "title": "搜索文件内容",
+        "keywords": [
+          "正文",
+          "content",
+          "nr"
+        ],
+        "mode": "content",
+        "translations": {
+          "en-US": {
+            "title": "Search file contents"
+          }
+        }
+      },
+      {
+        "id": "open",
+        "title": "打开搜索结果",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Open search result"
+          }
+        }
+      },
+      {
+        "id": "next-page",
+        "title": "下一页",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Next page"
+          }
+        }
+      },
+      {
+        "id": "settings",
+        "title": "文件搜索范围",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "File search scope"
+          }
+        }
+      },
+      {
+        "id": "install-service",
+        "title": "安装文件搜索服务",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Install file search service"
+          }
+        }
+      }
+    ],
+    "modes": [
+      {
+        "id": "files",
+        "directoryFilter": true,
+        "title": "文件",
+        "placeholder": "按文件名、路径或拼音搜索",
+        "translations": {
+          "en-US": {
+            "title": "Files",
+            "placeholder": "Search names, paths, or pinyin"
+          }
+        }
+      },
+      {
+        "id": "content",
+        "directoryFilter": true,
+        "title": "文件内容",
+        "placeholder": "搜索文本、Markdown 和代码文件内容",
+        "translations": {
+          "en-US": {
+            "title": "File contents",
+            "placeholder": "Search text, Markdown, and code files"
+          }
+        }
+      }
+    ],
+    "translations": {
+      "en-US": {
+        "displayName": "File search"
+      }
+    }
+  }
+}

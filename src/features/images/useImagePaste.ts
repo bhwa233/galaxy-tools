@@ -42,7 +42,7 @@ async function processImageFile(
   const ext = MIME_TO_EXT[file.type];
   if (!ext) return null;
 
-  let bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes: Uint8Array = new Uint8Array(await file.arrayBuffer());
   if (autoCompress) {
     const compressed = await compressImageFile(file);
     if (compressed) bytes = compressed.bytes;

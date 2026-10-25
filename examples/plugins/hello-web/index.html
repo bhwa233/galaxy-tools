@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hello Web · spark233</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">spark233 · 独立 Web 插件</p>
+      <h1>Hello Web</h1>
+      <p>这页来自单独安装的插件包。输入内容保存到该插件自己的数据目录。</p>
+      <label for="message">给下一次打开留一句话</label>
+      <input id="message" maxlength="160" autocomplete="off" placeholder="你好，spark233" />
+      <div class="actions">
+        <button id="save" type="button">保存</button>
+        <button id="close" type="button" class="secondary">保存并关闭页面</button>
+      </div>
+      <p id="status" role="status" aria-live="polite">正在连接宿主…</p>
+      <dl>
+        <div>
+          <dt>插件身份</dt>
+          <dd id="owner">—</dd>
+        </div>
+        <div>
+          <dt>实例</dt>
+          <dd id="instance">—</dd>
+        </div>
+        <div>
+          <dt>主题</dt>
+          <dd id="theme">—</dd>
+        </div>
+        <div>
+          <dt>本次输入</dt>
+          <dd id="activation">—</dd>
+        </div>
+      </dl>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

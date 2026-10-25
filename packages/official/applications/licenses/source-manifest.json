@@ -1,0 +1,44 @@
+{
+  "protocol": 1,
+  "repository": "https://github.com/jimmgreen/pulse",
+  "commit": "c4fe01ed82fe091f495f531972a854aa32caac2b",
+  "ibMatcherRevision": "70673969ca837e6eb6caf4e2d22d494a707a5846",
+  "inputs": [
+    {
+      "path": "src/index/filename_pinyin.cpp",
+      "sha256": "9364e3c2e87ec326074a3648aee612c4a06200140591e4d291ab6f4943db557b"
+    },
+    {
+      "path": "src/index/filename_pinyin.h",
+      "sha256": "dc432104336f8c64df01611aa64a5e5e881d39d66edf74c1b0fbe8a20e2a81aa"
+    },
+    {
+      "path": "src/index/index_query.cpp",
+      "sha256": "dfe3a2c121a37c0bb54568302dbb11f6db2827f293b71560ecc6aeffd06bb08c"
+    },
+    {
+      "path": "src/index/index_query.h",
+      "sha256": "c54a280a6c463ff078ae90e3a83f0e79787808151f42ab304c1789a00c5d27eb"
+    },
+    {
+      "path": "src/index/search_kinds.cpp",
+      "sha256": "e8d9687ca6bce87e74b280b122f5c4be9cdc8d4c86b4361e07e658aa3b397184"
+    },
+    {
+      "path": "src/index/search_kinds.h",
+      "sha256": "701490215aa87b284e6496bd6c22594325e4a6d121de0de7c8b142d797e50445"
+    },
+    {
+      "path": "third_party/ib-pinyin-cpp/ascii_data.inc",
+      "sha256": "2010cd757762a08e36c7363b8b2bcf9c0451eef46c6818b675f0b67f6bde8a41"
+    },
+    {
+      "path": "src/common/json_utils.h",
+      "sha256": "51552853e3e6f38df7d3cff0e2c5fe63ca6ab6529fddc22473f17549578c66f8"
+    },
+    {
+      "path": "src/common/config_json.h",
+      "sha256": "e23c08a767530bd1cccd5e376d7fae33eeaaf991c0714a0760a83e0a9ea47d76"
+    }
+  ]
+}

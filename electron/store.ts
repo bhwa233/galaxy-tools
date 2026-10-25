@@ -1,5 +1,6 @@
 /* eslint-disable no-control-regex -- Windows filename controls must be rejected and sanitized. */
 import fs from "node:fs";
+import { HostConfigStore } from "./host-config.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_NOTE_EDITOR_MODE } from "../src/features/notes/types.js";
@@ -11,54 +12,8 @@ import type {
   SaveNoteRequest,
 } from "../src/features/notes/types.js";
 
-export class AppError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public details: Record<string, string> = {},
-  ) {
-    super(message);
-  }
-}
-export function atomicWrite(file: string, value: string | Uint8Array): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${randomUUID()}.tmp`;
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(temp, "wx", 0o600);
-    fs.writeFileSync(fd, value);
-    fs.fsyncSync(fd);
-    fs.closeSync(fd);
-    fd = undefined;
-    fs.renameSync(temp, file);
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-    if (fs.existsSync(temp)) fs.unlinkSync(temp);
-  }
-}
-export function readJson<T>(file: string): T {
-  return JSON.parse(fs.readFileSync(file, "utf8")) as T;
-}
-export function inside(root: string, file: string): boolean {
-  const relative = path.relative(root, file);
-  return (
-    relative === "" ||
-    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  );
-}
-// Resolve existing ancestors too: lexical prefix checks alone permit symlink/junction escapes.
-export function canonical(file: string): string {
-  const absolute = path.resolve(file);
-  if (fs.existsSync(absolute)) return fs.realpathSync(absolute);
-  const parent = path.dirname(absolute);
-  return parent === absolute ? absolute : path.join(canonical(parent), path.basename(absolute));
-}
-export function confined(root: string, ...parts: string[]): string {
-  const file = path.resolve(root, ...parts);
-  if (!inside(path.resolve(root), file) || !inside(canonical(root), canonical(file)))
-    throw new AppError("unsafePath", "路径超出授权目录");
-  return file;
-}
+import { AppError, atomicWrite, readJson, inside, canonical, confined } from "./persistence.js";
+export { AppError, atomicWrite, readJson, inside, canonical, confined } from "./persistence.js";
 function component(value: unknown, allowEmpty = false): string {
   if (
     typeof value !== "string" ||
@@ -103,93 +58,30 @@ function fileName(id: string, title: string): string {
     .replace(/[. ]+$/g, "");
   return `${component(id)}${stem ? `_${stem}` : ""}.md`;
 }
-export function defaultConfig(dataDir: string): AppConfig {
-  return {
-    locale: "zh-CN",
-    dataDir,
-    globalShortcut: "Ctrl+Shift+N",
-    closeToTray: true,
-    autostart: false,
-    defaultViewMode: "edit",
-    noteAutoSave: true,
-    noteSurfaceAutoSave: true,
-    tileColor: "#f6f3ec",
-    tileColorMode: "system",
-    theme: "system",
-    fontSize: 14,
-    surfaceFontSize: 14,
-    tabIndentSize: 2,
-    externalFileAutoSave: true,
-    rememberSurfaceSize: true,
-    tileCtrlClose: true,
-    tileDoubleClickToEdit: false,
-    tileSaveReturnsToPin: false,
-    renderHtmlMarkdown: false,
-    splitScrollSync: true,
-    imageAutoCompress: true,
-    imageDisplay: "show",
-    reminderSound: true,
-    toggleVisibilityShortcut: "",
-    openAtCursor: true,
-    backgroundImagePath: "",
-    backgroundFit: "cover",
-    backgroundDim: 0.25,
-    backgroundBlur: 0,
-    backgroundScale: 1,
-    backgroundPositionX: 50,
-    backgroundPositionY: 50,
-  };
-}
+export { defaultConfig } from "./host-config.js";
 export class NoteStore {
   dataDir: string;
-  config: AppConfig;
+  readonly hostConfig: Pick<HostConfigStore, "value" | "save">;
+  get config(): AppConfig {
+    return this.hostConfig.value;
+  }
   constructor(
     public configDir: string,
     defaultDataDir: string,
     private recycle: (file: string) => Promise<void>,
+    hostConfig?: Pick<HostConfigStore, "value" | "save">,
+    options: { initialize?: boolean } = {},
   ) {
-    let saved: Partial<AppConfig> & { notesDir?: string } = {};
-    const configPath = path.join(configDir, "config.json");
-    if (fs.existsSync(configPath)) saved = readJson(configPath); // Never silently replace a corrupt config.
-    const legacy = saved.notesDir
-      ? path.basename(saved.notesDir) === "notes"
-        ? path.dirname(saved.notesDir)
-        : saved.notesDir
-      : undefined;
-    this.dataDir = path.resolve(
-      process.env.FLORAL_NOTEPAPER_DATA_DIR || saved.dataDir || legacy || defaultDataDir,
-    );
-    this.config = { ...defaultConfig(this.dataDir), ...saved, dataDir: this.dataDir };
-    this.config.defaultViewMode = this.config.defaultViewMode === "split" ? "split" : "edit";
-    this.ensure();
+    this.hostConfig = hostConfig ?? new HostConfigStore(configDir, defaultDataDir);
+    this.dataDir = this.hostConfig.value.dataDir;
+    if (options.initialize !== false) this.ensure();
   }
   ensure(): void {
     fs.mkdirSync(confined(this.dataDir, "notes"), { recursive: true });
     fs.mkdirSync(this.configDir, { recursive: true });
   }
   saveConfig(config: AppConfig): AppConfig {
-    if (
-      !config ||
-      typeof config !== "object" ||
-      !["system", "light", "dark"].includes(config.theme) ||
-      !["system", "custom"].includes(config.tileColorMode) ||
-      !["show", "click", "hidden"].includes(config.imageDisplay) ||
-      typeof config.globalShortcut !== "string" ||
-      typeof config.toggleVisibilityShortcut !== "string" ||
-      typeof config.autostart !== "boolean" ||
-      typeof config.closeToTray !== "boolean"
-    )
-      throw new AppError("invalidPayload", "设置格式不合法");
-    const value = {
-      ...this.config,
-      ...config,
-      dataDir: this.dataDir,
-      defaultViewMode: config.defaultViewMode === "split" ? "split" : "edit",
-      tabIndentSize: Math.max(1, Math.min(8, Number(config.tabIndentSize) || 2)),
-    };
-    atomicWrite(path.join(this.configDir, "config.json"), JSON.stringify(value, null, 2));
-    this.config = value;
-    return value;
+    return this.hostConfig.save({ ...config, dataDir: this.dataDir });
   }
   notePath(meta: Pick<NoteMetadata, "fileName" | "category">): string {
     return confined(
@@ -410,7 +302,7 @@ export class NoteStore {
     return removed;
   }
   migrate(newDir: string): AppConfig {
-    const dest = canonical(path.join(path.resolve(newDir), "floral")),
+    const dest = canonical(path.join(path.resolve(newDir), "spark233")),
       source = canonical(this.dataDir);
     if (inside(source, dest) || inside(dest, source) || dest === path.parse(dest).root)
       throw new AppError("unsafePath", "新旧目录不能互相包含");

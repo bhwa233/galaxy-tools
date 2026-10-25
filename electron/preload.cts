@@ -1,17 +1,19 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 // No ipcRenderer, Node objects, filesystem or arbitrary channel access crosses this boundary.
-contextBridge.exposeInMainWorld("floralDesktop", {
-  label: process.argv.find((arg) => arg.startsWith("--floral-label="))?.slice(15) ?? "main",
-  invoke: (command: string, args?: unknown) => ipcRenderer.invoke("floral:invoke", command, args),
-  emit: (name: string, payload?: unknown) => ipcRenderer.invoke("floral:emit", name, payload),
+const labelPrefix = "--spark233-label=";
+contextBridge.exposeInMainWorld("spark233Desktop", {
+  label:
+    process.argv.find((arg) => arg.startsWith(labelPrefix))?.slice(labelPrefix.length) ?? "main",
+  invoke: (command: string, args?: unknown) => ipcRenderer.invoke("spark233:invoke", command, args),
+  emit: (name: string, payload?: unknown) => ipcRenderer.invoke("spark233:emit", name, payload),
   on: (name: string, callback: (payload: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
-    ipcRenderer.on(`floral:event:${name}`, handler);
-    return () => ipcRenderer.removeListener(`floral:event:${name}`, handler);
+    ipcRenderer.on(`spark233:event:${name}`, handler);
+    return () => ipcRenderer.removeListener(`spark233:event:${name}`, handler);
   },
   droppedPaths: (files: File[]) => {
     const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
-    return ipcRenderer.invoke("floral:drop", paths);
+    return ipcRenderer.invoke("spark233:drop", paths);
   },
 });

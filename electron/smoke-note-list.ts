@@ -53,12 +53,19 @@ export async function verifyUnifiedNoteList(
       ),
     "List pin did not update",
   );
-  if (
-    (await main.webContents.executeJavaScript(
-      "document.querySelector('[data-note-id]')?.getAttribute('data-note-id')",
-    )) !== note.id
-  )
-    throw new Error("Pinned note did not move ahead of older pinned entries in its category");
+  // Existing fixture categories legitimately precede the uncategorized group.
+  // Check pin ordering among this note's peers, without imposing global order.
+  const peerIds = context.store
+    .list()
+    .filter((item) => item.category === note.category)
+    .map((item) => item.id);
+  await until(
+    async () =>
+      (await main.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-note-id]')).find(node => ${JSON.stringify(peerIds)}.includes(node.getAttribute('data-note-id')))?.getAttribute('data-note-id')`,
+      )) === note.id,
+    "Pinned note did not move ahead of older pinned entries in its category",
+  );
   const preset = [...context.layouts].find(([, e]) => e.noteId === note.id);
   if (
     !preset ||
@@ -106,7 +113,23 @@ export async function verifyUnifiedNoteList(
   await until(
     () => win.isAlwaysOnTop() === !fullscreenSuppressed(),
     "Opening a pinned preference did not apply the expected native window level",
-  );
+  ).catch((error: unknown) => {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; native pin diagnostic: ${JSON.stringify(
+        {
+          actual: win.isAlwaysOnTop(),
+          expected: !fullscreenSuppressed(),
+          layout: context.layouts.get(label),
+          bounds: win.getBounds(),
+          fullscreenRects: context.fullscreenRects(),
+          visible: win.isVisible(),
+          minimized: win.isMinimized(),
+          focused: win.isFocused(),
+        },
+      )}`,
+      { cause: error },
+    );
+  });
   const fullscreenAvoidanceObserved = fullscreenSuppressed();
   await until(
     () =>

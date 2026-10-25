@@ -70,7 +70,7 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
       coldVisibleQueue = true;
       for (const entry of restored)
         await main.webContents.executeJavaScript(
-          `window.floralDesktop.invoke('hide_note_on_desktop',{noteId:${JSON.stringify(entry.noteId)}})`,
+          `window.spark233Desktop.invoke('hide_note_on_desktop',{noteId:${JSON.stringify(entry.noteId)}})`,
         );
     }
   }
@@ -289,7 +289,7 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
     screen.getCursorScreenPoint = () => cursor;
     try {
       await host.win.webContents.executeJavaScript(
-        `window.floralDesktop.invoke('capsule_hover',{id:${JSON.stringify(entries[0].noteId)}})`,
+        `window.spark233Desktop.invoke('capsule_hover',{id:${JSON.stringify(entries[0].noteId)}})`,
       );
       await until(
         () => !!context.capsules.surfaces.get("preview")?.win.isVisible(),
@@ -404,7 +404,7 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
     // Use the normal hide command so cold-start probes keep top placement without opening fixtures.
     for (const entry of entries)
       await main.webContents.executeJavaScript(
-        `window.floralDesktop.invoke('hide_note_on_desktop',{noteId:${JSON.stringify(entry.noteId)}})`,
+        `window.spark233Desktop.invoke('hide_note_on_desktop',{noteId:${JSON.stringify(entry.noteId)}})`,
       );
   }
 }

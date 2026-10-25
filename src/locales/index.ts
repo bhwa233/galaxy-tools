@@ -23,14 +23,18 @@ export function initializeI18n(preferredLocale?: string | null) {
         fallbackLng: DEFAULT_LOCALE,
         supportedLngs: [...SUPPORTED_LOCALES],
         defaultNS: "translation",
-        ns: ["translation"],
+        ns: ["translation", "clipboard", "search", "applications"],
         interpolation: {
           escapeValue: false,
         },
         returnEmptyString: false,
         returnNull: false,
       })
-      .then(() => i18n);
+      .then(() => {
+        if (typeof document !== "undefined")
+          document.documentElement.lang = i18n.resolvedLanguage ?? DEFAULT_LOCALE;
+        return i18n;
+      });
   }
 
   return initPromise;
@@ -47,6 +51,7 @@ export async function syncLanguage(locale?: string | null) {
   if (i18n.resolvedLanguage !== nextLocale && i18n.language !== nextLocale) {
     await i18n.changeLanguage(nextLocale);
   }
+  if (typeof document !== "undefined") document.documentElement.lang = nextLocale;
 
   return i18n;
 }

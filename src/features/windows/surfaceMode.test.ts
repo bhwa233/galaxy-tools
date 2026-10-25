@@ -11,7 +11,7 @@ describe("surface mode helpers", () => {
     expect(isNoteSurfaceMode("pad")).toBe(true);
     expect(isNoteSurfaceMode("tile")).toBe(true);
     expect(isNoteSurfaceMode("main")).toBe(false);
-    expect(NOTE_SURFACE_MODE_EVENT).toBe("floral-notepaper:surface-mode");
+    expect(NOTE_SURFACE_MODE_EVENT).toBe("spark233:surface-mode");
   });
 
   test("keeps surface mode default sizes explicit", () => {

@@ -1,6 +1,11 @@
 import enUS from "./en-US/translation.json";
 import zhCN from "./zh-CN/translation.json";
-import zhHK from "./zh-HK/translation.json";
+import clipboardZhCN from "../features/clipboard/locales/zh-CN.json";
+import clipboardEnUS from "../features/clipboard/locales/en-US.json";
+import searchZhCN from "../features/search/locales/zh-CN.json";
+import searchEnUS from "../features/search/locales/en-US.json";
+import applicationsZhCN from "../features/applications/locales/zh-CN.json";
+import applicationsEnUS from "../features/applications/locales/en-US.json";
 
 export interface TranslationTree {
   [key: string]: string | TranslationTree;
@@ -30,17 +35,24 @@ function mergeTranslations(source: TranslationTree, overrides: TranslationTree):
 export const translationOverrides = {
   "zh-CN": zhCN,
   "en-US": enUS,
-  "zh-HK": zhHK,
 } as const satisfies Record<string, TranslationTree>;
 
 export const resolvedTranslations = {
   "zh-CN": translationOverrides["zh-CN"],
   "en-US": mergeTranslations(translationOverrides["zh-CN"], translationOverrides["en-US"]),
-  "zh-HK": mergeTranslations(translationOverrides["zh-CN"], translationOverrides["zh-HK"]),
 } as const;
 
 export const resources = {
-  "zh-CN": { translation: resolvedTranslations["zh-CN"] },
-  "en-US": { translation: resolvedTranslations["en-US"] },
-  "zh-HK": { translation: resolvedTranslations["zh-HK"] },
+  "zh-CN": {
+    translation: resolvedTranslations["zh-CN"],
+    clipboard: clipboardZhCN,
+    search: searchZhCN,
+    applications: applicationsZhCN,
+  },
+  "en-US": {
+    translation: resolvedTranslations["en-US"],
+    clipboard: clipboardEnUS,
+    search: searchEnUS,
+    applications: applicationsEnUS,
+  },
 } as const;

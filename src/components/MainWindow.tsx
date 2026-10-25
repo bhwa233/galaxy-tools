@@ -745,6 +745,7 @@ export function MainWindow({
     let cancelled = false;
 
     async function bootstrap() {
+      const initialEpoch = loadEpoch.peek();
       setIsLoading(true);
       try {
         const [loadedConfig, loadedNotes, loadedCategories] = await Promise.all([
@@ -759,10 +760,10 @@ export function MainWindow({
         setNotes(loadedNotes);
         setCategories(loadedCategories);
         setCollapsedCategories(new Set(loadedCategories));
-        if (loadedNotes[0]) {
+        if (loadedNotes[0] && loadEpoch.isCurrent(initialEpoch)) {
           const note = await getNote(loadedNotes[0].id);
-          if (!cancelled) applyNote(note);
-        } else {
+          if (!cancelled && loadEpoch.isCurrent(initialEpoch)) applyNote(note);
+        } else if (!loadedNotes[0] && loadEpoch.isCurrent(initialEpoch)) {
           clearCurrentNote();
         }
 
@@ -783,7 +784,7 @@ export function MainWindow({
     return () => {
       cancelled = true;
     };
-  }, [applyNote, clearCurrentNote]);
+  }, [applyNote, clearCurrentNote, loadEpoch]);
 
   useEffect(() => {
     let active = true;
@@ -1022,25 +1023,6 @@ export function MainWindow({
     };
   }, [loadExternalFile, setContent]);
 
-  useEffect(() => {
-    const unlisten = listen<string | { noteId: string; taskText?: string }>(
-      "open-note",
-      (event) => {
-        const payload = event.payload;
-        if (typeof payload === "string") {
-          void loadNote(payload);
-          return;
-        }
-        // 提醒通知点击：定位到便签，任务级再滚动到具体任务行。
-        void loadNote(payload.noteId);
-        pendingTaskAnchorRef.current = payload.taskText ?? null;
-      },
-    );
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [loadNote]);
-
   // 任务锚点定位：渲染完成后按 data-task-label 找到任务行，滚动居中并闪烁一次。
   useEffect(() => {
     const taskText = pendingTaskAnchorRef.current;
@@ -1221,6 +1203,30 @@ export function MainWindow({
   );
 
   useEffect(() => {
+    const unlisten = listen<string | { noteId: string; taskText?: string }>(
+      "open-note",
+      (event) => {
+        // An explicit search/reminder target wins over the initial default note.
+        const epoch = loadEpoch.bump();
+        void (async () => {
+          if (["dirty", "saving", "error"].includes(saveStateRef.current)) {
+            if (!(await saveCurrentNote(true))) return;
+            if (["dirty", "saving", "error"].includes(saveStateRef.current)) return;
+          }
+          if (!loadEpoch.isCurrent(epoch)) return;
+          const payload = event.payload;
+          pendingTaskAnchorRef.current =
+            typeof payload === "string" ? null : (payload.taskText ?? null);
+          await loadNote(typeof payload === "string" ? payload : payload.noteId);
+        })().catch((error) => showToast(getErrorMessage(error)));
+      },
+    );
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [loadEpoch, loadNote, saveCurrentNote]);
+
+  useEffect(() => {
     const unlisten = listen<ClosePrepareRequest>("desktop:prepare-close", (event) => {
       const respond = async () => {
         const windowLabel = windowLabelRef.current;
@@ -1332,12 +1338,12 @@ export function MainWindow({
     try {
       const dir = await chooseDataDirectory();
       if (!dir) return;
-      // 后端会在所选目录下创建 floral 子目录存放数据；先告知用户，
+      // 后端会在所选目录下创建 spark233 子目录存放数据；先告知用户，
       // 避免其在文件管理器打开所选目录看到"空文件夹"而误判数据丢失
       const confirmed = window.confirm(
         t("settings.dataDir.confirmSubdir", {
           dir,
-          defaultValue: "数据将存放在「{{dir}}」下的 floral 子文件夹中，是否继续？",
+          defaultValue: "数据将存放在「{{dir}}」下的 spark233 子文件夹中，是否继续？",
         }),
       );
       if (!confirmed) return;
@@ -2042,7 +2048,7 @@ export function MainWindow({
         >
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-[15px] font-serif font-medium text-ink-soft tracking-wide leading-none">
-              花笺
+              spark233
             </span>
             <span className="text-[11px] text-ink-ghost font-body leading-none translate-y-px">
               —
@@ -3254,6 +3260,7 @@ export function MainWindow({
               {mountedSidePanel === "settings" && settingsConfig ? (
                 <Suspense fallback={null}>
                   <SettingsPanel
+                    initialGroup="notes"
                     config={settingsConfig}
                     onChange={handleSettingsChange}
                     onMigrateDataDir={() => void handleMigrateDataDir()}

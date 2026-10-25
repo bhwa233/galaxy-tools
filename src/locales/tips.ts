@@ -1,11 +1,9 @@
 import zhCN from "./zh-CN/tips.json";
 import enUS from "./en-US/tips.json";
-import zhHK from "./zh-HK/tips.json";
 
 const tipsMap: Record<string, string[]> = {
   "zh-CN": zhCN,
   "en-US": enUS,
-  "zh-HK": zhHK,
 };
 
 export function getTips(language: string): string[] {

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/skywind3000/ECDICT",
+    "commit": "ab22ad36302cafc6349a050e2b60894855208055",
+    "license": "MIT",
+    "files": {
+      "ecdict.csv": {
+        "bytes": 66009548,
+        "sha256": "d1ecbdf9ee2b920afb6f430ca6b6bb9f559588cf0dff86e04bd255f9390843cc"
+      },
+      "LICENSE": {
+        "bytes": 1063,
+        "sha256": "f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f"
+      }
+    }
+  },
+  "database": "ecdict.sqlite",
+  "bytes": 102096896,
+  "sha256": "2c6d9783d2888e6bce35ba56f2a4422f9a647af871607a1af00847031a591d8a",
+  "entries": 770611,
+  "forms": 136400,
+  "phrases": 366599,
+  "retained": [
+    "word",
+    "phonetic",
+    "definition",
+    "translation",
+    "pos",
+    "tag",
+    "exchange",
+    "frequency rank"
+  ],
+  "derived": ["exchange inflection/lemma index", "shared normalized word/phrase prefix index"],
+  "notRedistributed": ["original CSV", "research-only lemma.en.txt", "audio", "detail"]
+}

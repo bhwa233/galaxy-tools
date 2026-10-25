@@ -10,7 +10,7 @@ describe("locale whitelist", () => {
   test("normalizes supported locales and known aliases", () => {
     expect(normalizeLocale("zh-CN")).toBe("zh-CN");
     expect(normalizeLocale("zh-cn")).toBe("zh-CN");
-    expect(normalizeLocale("zh-TW")).toBe("zh-HK");
+    expect(normalizeLocale("zh-TW")).toBe("zh-CN");
     expect(normalizeLocale("en-GB")).toBe("en-US");
   });
 
@@ -30,7 +30,7 @@ describe("locale whitelist", () => {
 
   test("resolves preferred locale before browser locale and fallback", () => {
     expect(resolveAppLocale("en-US", "zh-CN")).toBe("en-US");
-    expect(resolveAppLocale(undefined, "zh-HK")).toBe("zh-HK");
+    expect(resolveAppLocale(undefined, "zh-HK")).toBe("zh-CN");
     expect(resolveAppLocale(undefined, "fr-FR")).toBe("zh-CN");
   });
 });

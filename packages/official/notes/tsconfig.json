@@ -1,0 +1,5 @@
+{
+  "extends": "../../../electron/tsconfig.json",
+  "compilerOptions": { "noEmit": true, "types": ["node", "electron"] },
+  "include": ["backend.ts"]
+}

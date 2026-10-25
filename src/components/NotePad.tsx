@@ -138,6 +138,11 @@ export function NotePad({
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const editingIdRef = useRef<string | null>(null);
+  // Existing notes must finish loading before any action can treat the empty
+  // initial editor as a new draft. New-note windows remain editable immediately.
+  const [noteReady, setNoteReady] = useState(!initialNoteId);
+  const noteReadyRef = useRef(noteReady);
+  noteReadyRef.current = noteReady;
   const noteSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -248,10 +253,16 @@ export function NotePad({
     editorModeRef.current = note.editorMode ?? DEFAULT_NOTE_EDITOR_MODE;
     setEditorMode(editorModeRef.current);
     setStatus("opened");
+    noteReadyRef.current = true;
+    setNoteReady(true);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    if (initialNoteId) {
+      noteReadyRef.current = false;
+      setNoteReady(false);
+    }
 
     async function bootstrap() {
       try {
@@ -283,6 +294,10 @@ export function NotePad({
       cancelled = true;
     };
   }, [applyNote, initialNoteId, refreshNotes]);
+
+  useEffect(() => {
+    if (noteReady) contentRef.current?.focus();
+  }, [noteReady]);
 
   useEffect(() => {
     let disposed = false;
@@ -414,6 +429,8 @@ export function NotePad({
       hasEnteredOnce.current = true;
       editingIdRef.current = null;
       setEditingNoteId(null);
+      noteReadyRef.current = true;
+      setNoteReady(true);
       editorModeRef.current = DEFAULT_NOTE_EDITOR_MODE;
       setEditorMode(DEFAULT_NOTE_EDITOR_MODE);
       setTitle("");
@@ -527,6 +544,7 @@ export function NotePad({
   const imageBaseDir = useImageBaseDir();
 
   const ensureNoteSaved = useCallback(async (): Promise<string | null> => {
+    if (!noteReadyRef.current) return null;
     if (editingNoteId) return editingNoteId;
     try {
       const note = await saveNote();
@@ -541,6 +559,7 @@ export function NotePad({
     handleDrop: imageDropHandler,
     handleDragOver: imageDragOverHandler,
   } = useImagePaste({
+    disabled: !noteReady,
     noteId: editingNoteId,
     textareaRef: contentRef,
     setContent: (nextContent) => {
@@ -601,6 +620,7 @@ export function NotePad({
 
   const handleSave = useCallback(
     async ({ isAutoSave = false }: { isAutoSave?: boolean } = {}) => {
+      if (!noteReadyRef.current) return;
       try {
         const savedNote = await saveNote();
         if (
@@ -699,6 +719,7 @@ export function NotePad({
   }, []);
 
   const handlePin = async () => {
+    if (!noteReadyRef.current) return;
     try {
       if (shouldSaveBeforeSwitchingToTile(noteSurfaceAutoSave) || !editingNoteId) {
         await saveNote();
@@ -719,6 +740,7 @@ export function NotePad({
   }, []);
 
   const copyTileContent = useCallback(async () => {
+    if (!noteReadyRef.current) return;
     try {
       const clipboard = navigator.clipboard;
       if (!clipboard?.writeText) {
@@ -821,7 +843,7 @@ export function NotePad({
   };
 
   const changeEditorMode = async (next: NoteEditorMode) => {
-    if (next === editorModeRef.current || modeSaving) return;
+    if (!noteReadyRef.current || next === editorModeRef.current || modeSaving) return;
     noteSyncEpoch.current += 1;
     const previous = editorModeRef.current;
     const id = editingIdRef.current;
@@ -856,12 +878,17 @@ export function NotePad({
     "app-surface-frame relative noise-bg w-full h-full min-h-0 bg-cloud overflow-hidden flex flex-col flex-1 border border-paper-deep/70 shadow-[0_1px_10px_rgba(26,26,24,0.06)] transition-all duration-200 ease-out";
 
   return (
-    <div className={surfaceWrapperClassName} aria-busy={isExiting}>
+    <div
+      className={surfaceWrapperClassName}
+      aria-busy={!noteReady || isExiting}
+      data-note-ready={noteReady}
+    >
       {isTile ? (
         <Tile
           title={tileTitle || undefined}
           content={content}
           onContentChange={(nextContent) => {
+            if (!noteReadyRef.current) return;
             contentValueRef.current = nextContent;
             setContent(nextContent);
             statusRef.current = "dirty";
@@ -903,7 +930,11 @@ export function NotePad({
             </svg>
           </button>
           <div className="absolute top-2 right-18 z-10">
-            <NoteReminderButton noteId={tileNoteId} disabled={isExiting} onError={showToast} />
+            <NoteReminderButton
+              noteId={tileNoteId}
+              disabled={!noteReady || isExiting}
+              onError={showToast}
+            />
           </div>
           <div className="absolute top-2 left-2 z-10">{topmostButton}</div>
           <button
@@ -949,7 +980,9 @@ export function NotePad({
                   aria-label={t("notepad.placeholder.title", { defaultValue: "标题（可选）" })}
                   title={title || undefined}
                   value={title}
+                  disabled={!noteReady}
                   onChange={(event) => {
+                    if (!noteReadyRef.current) return;
                     titleValueRef.current = event.target.value;
                     statusRef.current = "dirty";
                     setTitle(event.target.value);
@@ -980,7 +1013,7 @@ export function NotePad({
                       type="button"
                       data-note-editor-mode={value}
                       aria-pressed={editorMode === value}
-                      disabled={modeSaving}
+                      disabled={!noteReady || modeSaving}
                       onClick={() => void changeEditorMode(value)}
                       className={`inline-flex h-6 items-center justify-center px-1.5 text-[10px] leading-none rounded cursor-pointer ${editorMode === value ? "text-bamboo bg-bamboo/10" : "text-ink-ghost"}`}
                     >
@@ -993,10 +1026,11 @@ export function NotePad({
                 <NoteReminderButton
                   noteId={editingNoteId}
                   ensureNoteSaved={ensureNoteSaved}
-                  disabled={isExiting}
+                  disabled={!noteReady || isExiting}
                   onError={showToast}
                 />
                 <button
+                  disabled={!noteReady}
                   onClick={() => void handlePin()}
                   className="group w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 cursor-pointer text-ink-ghost hover:text-ink-faint hover:bg-paper-warm"
                   title={t("notepad.tooltip.pinToTile", { defaultValue: "转为磁贴" })}
@@ -1044,7 +1078,7 @@ export function NotePad({
               data-pad-editor-body="true"
               className="px-4 pt-3 pb-2 flex flex-col flex-1 min-h-0"
             >
-              <div className="flex-1 min-h-0" data-editor-mode={editorMode}>
+              <div className="flex-1 min-h-0" data-editor-mode={noteReady ? editorMode : undefined}>
                 {editorMode === "markdown" ? (
                   <div
                     className="h-full overflow-y-auto leading-relaxed text-ink-soft"
@@ -1057,6 +1091,7 @@ export function NotePad({
                         imageBaseDir={imageBaseDir ?? undefined}
                         imageDisplay={imageDisplay}
                         onContentChange={(nextContent) => {
+                          if (!noteReadyRef.current) return;
                           contentValueRef.current = nextContent;
                           statusRef.current = "dirty";
                           setContent(nextContent);
@@ -1076,7 +1111,9 @@ export function NotePad({
                     ref={contentRef}
                     data-tab-indent="true"
                     value={content}
+                    disabled={!noteReady}
                     onChange={(event) => {
+                      if (!noteReadyRef.current) return;
                       contentValueRef.current = event.target.value;
                       statusRef.current = "dirty";
                       setContent(event.target.value);

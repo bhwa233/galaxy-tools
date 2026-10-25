@@ -1,0 +1,122 @@
+{
+  "name": "@spark233/plugin-clipboard",
+  "version": "0.1.0",
+  "description": "spark233 local multi-format clipboard history",
+  "license": "MIT",
+  "files": [
+    "renderer/**",
+    "native/**",
+    "build.mjs",
+    "README.md",
+    "backend.mjs",
+    "backend-resources.json",
+    "legal/**",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.clipboard",
+    "displayName": "剪贴板历史",
+    "api": "^1.0.0",
+    "host": ">=1.2.0 <2",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-startup",
+    "capabilities": [
+      "native.process",
+      "storage",
+      "clipboard.read",
+      "clipboard.write",
+      "clipboard.watch",
+      "windows",
+      "files.read",
+      "node.backend"
+    ],
+    "native": {
+      "clipboard": {
+        "path": "native/win32-x64/spark233_clipboard_service.exe",
+        "args": []
+      }
+    },
+    "commands": [
+      {
+        "id": "history",
+        "title": "剪贴板历史",
+        "keywords": [
+          "剪贴板",
+          "clipboard",
+          "历史",
+          "cp"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Clipboard history"
+          }
+        }
+      },
+      {
+        "id": "quick",
+        "title": "快捷剪贴板小窗",
+        "keywords": [
+          "快捷剪贴板",
+          "快速粘贴",
+          "clipboard quick"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Quick clipboard window"
+          }
+        }
+      },
+      {
+        "id": "pause",
+        "title": "暂停或恢复剪贴板记录",
+        "keywords": [
+          "暂停剪贴板",
+          "恢复剪贴板"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Pause or resume clipboard recording"
+          }
+        }
+      }
+    ],
+    "modes": [
+      {
+        "id": "clipboard",
+        "title": "剪贴板",
+        "placeholder": "搜索内容、标签、备注或来源应用",
+        "translations": {
+          "en-US": {
+            "title": "Clipboard",
+            "placeholder": "Search content, tags, notes, or source applications"
+          }
+        }
+      }
+    ],
+    "dependencies": {},
+    "optionalDependencies": {},
+    "dataVersion": 1,
+    "translations": {
+      "en-US": {
+        "displayName": "Clipboard history"
+      }
+    },
+    "backend": {
+      "entry": "backend.mjs"
+    },
+    "entry": "renderer/index.html",
+    "ui": {
+      "theme": "^1.0.0"
+    }
+  }
+}

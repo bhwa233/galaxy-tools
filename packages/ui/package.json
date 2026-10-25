@@ -1,0 +1,60 @@
+{
+  "name": "@spark233/ui",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MIT",
+  "files": [
+    "dist",
+    "theme.css",
+    "theme.mjs",
+    "theme.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./theme.d.ts",
+      "import": "./theme.mjs"
+    },
+    "./theme.css": "./theme.css",
+    "./components": {
+      "types": "./dist/components.d.ts",
+      "import": "./dist/components.js"
+    },
+    "./components.css": "./dist/components.css"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "node build.mjs"
+  },
+  "peerDependencies": {
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.5.0",
+    "lucide-react": "^1.61.0",
+    "radix-ui": "^1.8.0",
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "class-variance-authority": {
+      "optional": true
+    },
+    "cn": {
+      "optional": true
+    },
+    "radix-ui": {
+      "optional": true
+    },
+    "lucide-react": {
+      "optional": true
+    }
+  },
+  "spark233Ui": {
+    "sdk": ">=0.2.0 <0.3.0",
+    "hostApi": "^1.1.0",
+    "theme": "^1.0.0"
+  }
+}

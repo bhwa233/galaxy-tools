@@ -3,7 +3,7 @@ import type { NoteWindowState } from "../src/features/windows/noteWindowState.js
 export type NoteLayoutState = CapsuleEntry & {
   topmost: boolean;
   everOpened?: boolean;
-  view: "main" | "notepad" | "tile";
+  view: "main" | "launcher" | "notepad" | "tile";
 };
 /** The saved pin preference is independent of transient OS z-order and capsule topmost. */
 export function deriveNoteWindowState(

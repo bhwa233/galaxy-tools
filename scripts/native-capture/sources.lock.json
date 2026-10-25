@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "toolchainAddons": [
+    {
+      "name": "Microsoft.VC.14.51.ATL.Headers.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/a62262cf-b9f6-4770-9454-7372ad8fcec0/df87bd5da5bb3d101ca8238cc4d5f90d648336202c41f2ab80b5549b7ac495d1/Microsoft.VC.14.51.ATL.Headers.base.vsix",
+      "sha256": "df87bd5da5bb3d101ca8238cc4d5f90d648336202c41f2ab80b5549b7ac495d1"
+    },
+    {
+      "name": "Microsoft.VC.14.51.ATL.X64.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/a62262cf-b9f6-4770-9454-7372ad8fcec0/6bf1c9950675fe9e5f46d861663ae19abcd18ce8e28602675194c32550ab3b04/Microsoft.VC.14.51.ATL.X64.base.vsix",
+      "sha256": "6bf1c9950675fe9e5f46d861663ae19abcd18ce8e28602675194c32550ab3b04"
+    }
+  ],
+  "sources": [
+    {
+      "name": "ScreenCapture",
+      "repository": "https://github.com/xland/ScreenCapture.git",
+      "revision": "00f6d2b86670a3aa7cebee32515cf5cc6e965bd5",
+      "tag": "2.5.15"
+    },
+    {
+      "name": "ImageReader",
+      "repository": "https://github.com/xland/ImageReader.git",
+      "revision": "896830aad60f574a39fdbd9f7967177eb149cb0b",
+      "tag": "1.0.2"
+    },
+    {
+      "name": "Ling",
+      "repository": "https://github.com/xland/Ling.git",
+      "revision": "2ae45005b2863b004b4432bfe85d6e63d7ee44ca"
+    },
+    {
+      "name": "TinyOCR",
+      "repository": "https://github.com/xland/TinyOCR.git",
+      "revision": "1a8516a055328bd15c7d428f29ffdf2893b047ec"
+    }
+  ],
+  "ocrDependencies": {
+    "opencv": {
+      "repository": "https://github.com/opencv/opencv.git",
+      "revision": "0654a42e19215ef25b1d367d822f3c630447e7c7",
+      "tag": "4.14.0"
+    },
+    "onnxruntime": {
+      "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip",
+      "sha256": "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd",
+      "directory": "onnxruntime-win-x64-1.23.2"
+    },
+    "vcRuntime": {
+      "packageId": "Microsoft.VC.14.51.CRT.Redist.X64.base",
+      "version": "14.51.36247",
+      "archive": "Microsoft.VC.14.51.CRT.Redist.X64.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/3984a6ef-2ffc-4c07-962e-bf9e9b862819/24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af/Microsoft.VC.14.51.CRT.Redist.X64.base.vsix",
+      "sha256": "24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af",
+      "prefix": "Contents/VC/Redist/MSVC/14.51.36231/x64/Microsoft.VC145.CRT/",
+      "files": [
+        {
+          "name": "msvcp140.dll",
+          "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"
+        },
+        {
+          "name": "msvcp140_1.dll",
+          "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982"
+        },
+        {
+          "name": "vcruntime140.dll",
+          "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+        },
+        {
+          "name": "vcruntime140_1.dll",
+          "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+        }
+      ],
+      "license": {
+        "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+        "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+        "file": "Microsoft-VC-Runtime-LICENSE.docx"
+      }
+    }
+  },
+  "releases": [
+    {
+      "name": "ScreenCapture.exe",
+      "url": "https://github.com/xland/ScreenCapture/releases/download/2.5.15/ScreenCapture.exe",
+      "bytes": 1943040,
+      "sha256": "a080e7161d885d3bdec53c3388490cbdf23cb5f9a0b77e5963e47248258cd12d"
+    },
+    {
+      "name": "ImageReader.exe",
+      "url": "https://github.com/xland/ImageReader/releases/download/1.0.2/ImageReader.exe",
+      "bytes": 25891840,
+      "sha256": "7cb9750f292636d0bc3e7b81162d4d9c7f712800ffcbf8859fbd52729b5dc333"
+    }
+  ]
+}
