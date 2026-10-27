@@ -53,6 +53,6 @@
 - NSIS 安装包生成通过：`release-electron/spark233-1.2.0-x64.exe`；未执行安装程序。
 - ASAR 收集到 53 个生产依赖包，逐包检查缺失数为 0，没有外部 workspace 链接；MCP 解包文件完整。
 - 源码产物和打包产物分别在隔离数据目录完成现有 Windows 集成冒烟，进程均退出 0；剪贴板记录在启动前暂停。
-- 迁移范围格式检查通过。全仓格式检查仍报告并发编辑中的 `Docs/launcher-todo.md` 和 `Docs/screenshot-enhancement-todo.md`，保留其内容。
+- 迁移范围和全仓格式检查通过。
 
 运行记录：`local-build/pnpm-monorepo-pack-verified.log`、`local-build/pnpm-monorepo-installer.log`、`local-build/review-asar.json`。Windows 集成报告分别位于 `local-build/electron-smoke/ea202597-0a69-4db4-8b85-8ea74439fc87/report.json`（源码产物）和 `local-build/electron-smoke/a9a6bdb5-d639-4fb9-a6e2-07a0efa7c5a6/report.json`（打包产物）。
