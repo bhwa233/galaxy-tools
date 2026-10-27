@@ -20,7 +20,7 @@ Image/file transfers use host-owned resource handles instead of private paths.
 Build declarations and ESM with the repository's selected toolchain:
 
 ```powershell
-npm run sdk:build
+pnpm sdk:build
 ```
 
 This package contains the shared schemas, browser client, and native protocol

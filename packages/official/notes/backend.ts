@@ -2,17 +2,26 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { NoteStore, AppError, atomicWrite, confined, readJson } from "../../../electron/store.js";
-import { defaultConfig } from "../../../electron/host-config.js";
-import { imagePath } from "../../../electron/security.js";
-import { Reminders, REMINDER_TICK_MS } from "../../../electron/reminders.js";
-import type { BackendContext, BackendPlugin } from "../../../electron/plugins/backend-worker.js";
+import {
+  NoteStore,
+  AppError,
+  atomicWrite,
+  confined,
+  readJson,
+} from "../../../apps/desktop/electron/store.js";
+import { defaultConfig } from "../../../apps/desktop/electron/host-config.js";
+import { imagePath } from "../../../apps/desktop/electron/security.js";
+import { Reminders, REMINDER_TICK_MS } from "../../../apps/desktop/electron/reminders.js";
+import type {
+  BackendContext,
+  BackendPlugin,
+} from "../../../apps/desktop/electron/plugins/backend-worker.js";
 import type {
   NotesDataAction,
   NotesDataRequest,
-} from "../../../electron/plugins/official/notes-data-contract.js";
-import type { JsonValue, PluginActivation } from "../../../packages/sdk/src/index.js";
-import { REMINDER_PRESETS } from "../../../src/features/reminders/presets.js";
+} from "../../../apps/desktop/electron/plugins/official/notes-data-contract.js";
+import type { JsonValue, PluginActivation } from "@spark233/sdk";
+import { REMINDER_PRESETS } from "../../../apps/desktop/src/features/reminders/presets.js";
 
 const id = z.string().min(1).max(100),
   text = z.string().max(16 * 1024 * 1024);

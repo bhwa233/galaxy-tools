@@ -24,17 +24,19 @@ const dist = path.join(destination, "dist");
 // component implementation or host-relative import is shipped to consumers.
 await build({
   configFile: false,
-  root: project,
+  root: source,
   logLevel: "warn",
   plugins: [react()],
-  resolve: { alias: { "@": path.join(project, "src") } },
   build: {
     outDir: dist,
     emptyOutDir: true,
     lib: {
-      entry: path.join(source, "src/components.ts"),
+      entry: {
+        components: path.join(source, "src/components.ts"),
+        utils: path.join(source, "src/utils.ts"),
+      },
       formats: ["es"],
-      fileName: () => "components.js",
+      fileName: (format, name) => `${name}.js`,
     },
     rolldownOptions: {
       external: (id) =>
@@ -46,7 +48,7 @@ await build({
 });
 await build({
   configFile: false,
-  root: project,
+  root: source,
   logLevel: "warn",
   plugins: [tailwindcss()],
   build: {
@@ -62,28 +64,24 @@ await build({
 execFileSync(
   process.execPath,
   [
-    path.join(project, "node_modules/typescript/bin/tsc"),
+    fileURLToPath(new URL("./bin/tsc", import.meta.resolve("typescript/package.json"))),
     "-p",
     path.join(source, "tsconfig.json"),
     "--outDir",
     path.join(work, "types"),
   ],
-  { cwd: project, stdio: "inherit", windowsHide: true },
+  { cwd: source, stdio: "inherit", windowsHide: true },
 );
-for (const family of families)
-  await fs.copyFile(
-    path.join(work, "types/src/components/ui", `${family}.d.ts`),
-    path.join(dist, `${family}.d.ts`),
-  );
-const declarations = await fs.readFile(
-  path.join(work, "types/packages/ui/src/components.d.ts"),
-  "utf8",
-);
-await fs.writeFile(
-  path.join(dist, "components.d.ts"),
-  declarations.replaceAll("../../../src/components/ui/", "./"),
-);
-for (const file of ["package.json", "theme.css", "theme.mjs", "theme.d.ts", "README.md", "LICENSE"])
+await fs.cp(path.join(work, "types"), dist, { recursive: true });
+for (const file of [
+  "package.json",
+  "theme.css",
+  "semantic.css",
+  "theme.mjs",
+  "theme.d.ts",
+  "README.md",
+  "LICENSE",
+])
   if (destination !== source)
     await fs.copyFile(path.join(source, file), path.join(destination, file));
 const sourceFiles = [
@@ -93,8 +91,8 @@ const sourceFiles = [
   "packages/ui/semantic.css",
   "packages/ui/theme.css",
   "packages/ui/theme.mjs",
-  "src/lib/utils.ts",
-  ...families.map((family) => `src/components/ui/${family}.tsx`),
+  "packages/ui/src/utils.ts",
+  ...families.map((family) => `packages/ui/src/components/${family}.tsx`),
 ];
 const inputs = await Promise.all(
   sourceFiles.map(async (file) => ({

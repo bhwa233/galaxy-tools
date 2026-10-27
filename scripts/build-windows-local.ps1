@@ -52,14 +52,16 @@ if ($repo.StartsWith('\\')) {
 Push-Location $buildRoot
 try {
   . (Join-Path $buildRoot 'scripts/use-toolchain.ps1')
-  if ($CleanInstall -or -not (Test-Path -LiteralPath (Join-Path $buildRoot 'node_modules/.package-lock.json'))) {
-    & npm.cmd ci
-    if ($LASTEXITCODE -ne 0) { throw "npm ci failed ($LASTEXITCODE)" }
-  }
+  # Always verify every workspace against the committed lockfile. pnpm reuses
+  # its store for normal builds; CleanInstall additionally refreshes links.
+  $installArgs = @('install', '--frozen-lockfile')
+  if ($CleanInstall) { $installArgs += '--force' }
+  & pnpm.cmd @installArgs
+  if ($LASTEXITCODE -ne 0) { throw "pnpm install failed ($LASTEXITCODE)" }
   # plugins:build verifies/recreates every offline payload before packaging.
   $target = if ($Installer) { 'dist:win' } else { 'pack:win' }
-  & npm.cmd run $target
-  if ($LASTEXITCODE -ne 0) { throw "npm run $target failed ($LASTEXITCODE)" }
+  & pnpm.cmd run $target
+  if ($LASTEXITCODE -ne 0) { throw "pnpm run $target failed ($LASTEXITCODE)" }
 } finally {
   Pop-Location
 }

@@ -25,6 +25,6 @@ await build({
 });
 fs.mkdirSync(path.join(root, "legal"), { recursive: true });
 fs.copyFileSync(
-  fileURLToPath(new URL("../../../node_modules/zod/LICENSE", import.meta.url)),
+  fileURLToPath(new URL("./LICENSE", import.meta.resolve("zod/package.json"))),
   path.join(root, "legal/zod-LICENSE.txt"),
 );

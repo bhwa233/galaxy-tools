@@ -1,171 +1,44 @@
 {
-  "name": "spark233",
+  "name": "spark233-workspace",
   "version": "1.2.0",
   "private": true,
-  "description": "Modular Windows desktop launcher and tools",
+  "description": "spark233 desktop, shared packages and official plugins workspace",
   "license": "MIT",
-  "author": "spark233 contributors",
   "type": "module",
-  "main": "dist-electron/electron/main.js",
   "scripts": {
-    "dev": "npm run electron:install && node scripts/dev-electron.mjs",
-    "dev:web": "vite --host 127.0.0.1",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p electron/tsconfig.json --noEmit && tsc -p packages/sdk/tsconfig.json --noEmit && tsc -p packages/official/clipboard/tsconfig.json --noEmit && tsc -p packages/official/notes/tsconfig.json --noEmit",
-    "build": "npm run typecheck && vite build && npm run plugins:build && tsc -p electron/tsconfig.json && node scripts/copy-electron-assets.mjs",
+    "dev": "pnpm sdk:build && pnpm --filter @spark233/desktop dev",
+    "dev:web": "pnpm --filter @spark233/desktop dev:web",
+    "start": "pnpm --filter @spark233/desktop start",
+    "typecheck": "pnpm sdk:build && pnpm -r --if-present typecheck",
+    "build": "pnpm typecheck && pnpm ui:build && pnpm --filter @spark233/desktop build",
     "plugins:build": "node scripts/build-official-plugins.mjs",
-    "start": "npm run electron:install && electron .",
-    "test": "vitest run",
-    "test:ui": "vitest run --config vitest.browser.config.ts",
+    "sdk:build": "pnpm --filter @spark233/sdk build",
+    "ui:build": "pnpm --filter @spark233/ui build",
+    "test": "pnpm sdk:build && pnpm --filter @spark233/desktop test",
+    "test:ui": "pnpm sdk:build && pnpm --filter @spark233/desktop test:ui",
     "lint": "oxlint",
     "fmt": "oxfmt",
-    "sdk:build": "tsc -p packages/sdk/tsconfig.json",
-    "ui:build": "node packages/ui/build.mjs",
-    "pack:win": "npm run build && electron-builder --win --x64 --dir",
-    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "pack:win": "pnpm sdk:build && pnpm --filter @spark233/desktop pack:win",
+    "dist:win": "pnpm sdk:build && pnpm --filter @spark233/desktop dist:win",
+    "electron:install": "pnpm --filter @spark233/desktop electron:install",
     "version:sync": "node scripts/set-version.mjs",
-    "prepare": "husky",
-    "electron:install": "node node_modules/electron/install.js",
-    "contributors:update": "node scripts/fetch-contributors.mjs"
-  },
-  "dependencies": {
-    "npm-package-arg": "14.0.0",
-    "npm-registry-fetch": "20.0.1",
-    "semver": "7.8.5",
-    "ssri": "14.0.0",
-    "tar": "7.5.22",
-    "zod": "4.6.7"
+    "contributors:update": "node scripts/fetch-contributors.mjs",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.3.3",
-    "@types/chroma-js": "3.1.3",
-    "@types/node": "24.19.2",
-    "@types/npm-package-arg": "6.1.4",
-    "@types/npm-registry-fetch": "8.0.9",
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
-    "@types/semver": "7.8.0",
-    "@types/ssri": "7.1.5",
-    "@vitejs/plugin-react": "6.1.2",
-    "@vitest/browser-playwright": "5.0.5",
-    "chroma-js": "3.2.0",
-    "class-variance-authority": "0.7.1",
-    "cmdk": "1.1.1",
-    "cn": "0.5.0",
-    "electron": "45.0.0",
-    "electron-builder": "26.18.0",
     "husky": "9.1.7",
-    "i18next": "26.5.8",
-    "indent-textarea": "4.0.0",
-    "katex": "0.19.1",
     "lint-staged": "17.6.0",
-    "lucide-react": "1.61.0",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
-    "playwright": "1.64.1",
-    "radix-ui": "1.8.1",
-    "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "react-i18next": "17.1.6",
-    "react-markdown": "10.1.0",
-    "rehype-katex": "7.0.1",
-    "rehype-raw": "7.0.0",
-    "rehype-sanitize": "6.0.0",
-    "rehype-slug": "6.0.0",
-    "remark-gfm": "4.0.1",
-    "remark-math": "6.0.0",
-    "shadcn": "4.22.1",
-    "tailwindcss": "4.3.3",
-    "tw-animate-css": "1.4.0",
-    "typescript": "7.0.2",
-    "unist-util-visit": "5.1.0",
-    "vite": "8.3.5",
-    "vitest": "5.0.5",
-    "vitest-browser-react": "2.3.0"
+    "tar": "7.5.22",
+    "typescript": "7.0.2"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,css,json,yml,yaml,html,md}": "oxfmt --no-error-on-unmatched-pattern"
   },
   "engines": {
     "node": ">=26.12.1 <27",
-    "npm": ">=12.2.1 <13"
+    "pnpm": "12.15.0"
   },
-  "packageManager": "npm@12.2.1",
-  "build": {
-    "appId": "com.spark233.desktop",
-    "productName": "spark233",
-    "directories": {
-      "output": "release-electron"
-    },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*",
-      "package.json",
-      "!dist-electron/electron/*.test.*",
-      "!node_modules/zod/src/**",
-      "LICENSE",
-      "THIRD_PARTY_NOTICES.md"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "dist-electron/electron/mcp-relay.js",
-      "dist-electron/electron/mcp-server.js",
-      "dist-electron/electron/mcp-protocol.js"
-    ],
-    "npmRebuild": false,
-    "win": {
-      "icon": "electron/assets/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "spark233-${version}-${arch}.${ext}"
-    },
-    "nsis": {
-      "include": "electron/installer/search-service.nsh",
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
-    },
-    "publish": null,
-    "extraResources": [
-      {
-        "from": "dist-host/command-matcher",
-        "to": "command-matcher"
-      },
-      {
-        "from": "dist-plugins",
-        "to": "plugins"
-      },
-      {
-        "from": "src/assets/fonts/LICENSE_Fonts",
-        "to": "licenses/HarmonyOS_Fonts.txt"
-      },
-      {
-        "from": "src/assets/fonts/LICENSE_SourceHanSerif",
-        "to": "licenses/SourceHanSerif.txt"
-      }
-    ],
-    "fileAssociations": [
-      {
-        "ext": [
-          "md",
-          "markdown"
-        ],
-        "name": "Markdown Document",
-        "role": "Editor"
-      },
-      {
-        "ext": [
-          "txt"
-        ],
-        "name": "Text Document",
-        "role": "Editor"
-      }
-    ]
-  }
+  "packageManager": "pnpm@12.15.0"
 }

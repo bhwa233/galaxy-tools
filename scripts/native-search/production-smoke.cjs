@@ -8,7 +8,8 @@ const { spawn, execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const tar = require("tar");
 const root = path.resolve(__dirname, "../..");
-const compiledRoot = process.env.SPARK233_SEARCH_COMPILED_ROOT || path.join(root, "dist-electron");
+const compiledRoot =
+  process.env.SPARK233_SEARCH_COMPILED_ROOT || path.join(root, "apps/desktop/dist-electron");
 const run = path.join(root, "local-build/evidence/search-production", crypto.randomUUID());
 fs.mkdirSync(run, { recursive: true });
 app.setPath("userData", path.join(run, "electron-profile"));

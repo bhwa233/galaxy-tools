@@ -6,31 +6,20 @@ Thank you for your interest in Floral Notepaper! This guide will help you get st
 
 ## Development Environment Setup
 
-### Dependencies
+### Dependencies and workspace
 
-- [Node.js](https://nodejs.org/) - 20.19+ or 22.12+
-- [Rust](https://www.rust-lang.org/tools/install) toolchain
-- Additional:
+Use Node.js **26.12.1** and pnpm **12.15.0**. The current desktop runtime is Electron, targeting Windows 11 x64. Windows native plugin builds may require the C++ toolchain; the archived Tauri/Rust instructions do not apply to this build.
 
-  | Platform    | Required Dependencies                                                                                                                                                                                                                      |
-  | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-  | **macOS**   | Xcode Command Line Tools                                                                                                                                                                                                                   |
-  | **Linux**   | `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libsoup-3.0-dev`                                                                                                                                 |
-  | **Windows** | [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), [Microsoft Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (pre-installed on Windows 11 and later versions of Windows 10) |
-
-### Clone & Launch
+Follow the [current setup guide](../README_en-US.md) to select the project toolchain without replacing global Node. Run these commands from the repository root:
 
 ```bash
-git clone git@github.com:Achilng/floral-notepaper.git
-cd floral-notepaper
-npm install
-
-# Start development build
-npm run tauri dev
-
-# Build for production
-npm run tauri build
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm build
+pnpm pack:win
 ```
+
+`apps/desktop` contains the Electron and React app; `packages/sdk`, `packages/ui`, `packages/official/*` and `examples/plugins/*` are independent workspaces. Declare dependencies in their owning workspace and maintain the single root `pnpm-lock.yaml`. Shared development tools live at the root. Use `pnpm --filter @spark233/desktop <command>` for app-only tasks.
 
 ## Branch & Commit Conventions
 
@@ -71,16 +60,11 @@ Examples:
 Before submitting a PR, ensure all local checks pass. It's a good idea to run them before each commit as well to avoid CI failures:
 
 ```bash
-# Backend
-cd src-tauri
-cargo test -p floral-notepaper --lib        # Unit tests
-cargo clippy --all-targets -- -D warnings   # Lint
-cargo fmt --check                           # Format check
-
-# Frontend
-npm test                                    # Unit tests
-npx oxlint                                  # Lint
-npx oxfmt --check                           # Format check
+pnpm typecheck
+pnpm lint
+pnpm fmt --check
+pnpm test
+pnpm build
 ```
 
 ## Pull Request Process

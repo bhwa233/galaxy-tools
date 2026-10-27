@@ -6,6 +6,7 @@
   "files": [
     "dist",
     "theme.css",
+    "semantic.css",
     "theme.mjs",
     "theme.d.ts",
     "README.md",
@@ -22,11 +23,30 @@
       "types": "./dist/components.d.ts",
       "import": "./dist/components.js"
     },
-    "./components.css": "./dist/components.css"
+    "./components.css": "./dist/components.css",
+    "./semantic.css": "./semantic.css",
+    "./utils": {
+      "types": "./dist/utils.d.ts",
+      "import": "./dist/utils.js"
+    }
   },
   "scripts": {
     "build": "node build.mjs",
-    "prepack": "node build.mjs"
+    "prepack": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "class-variance-authority": "0.7.1",
+    "cn": "0.5.0",
+    "lucide-react": "1.61.0",
+    "radix-ui": "1.8.1",
+    "react": "19.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
   },
   "peerDependencies": {
     "class-variance-authority": "^0.7.1",

@@ -1,5 +1,7 @@
 # Microsoft Store 发布指南（花笺 MSIX）
 
+> 历史 Tauri/MSIX 发布链参考，相关工作流现存于 `.github/legacy-tauri/`。现行 pnpm/Electron monorepo 使用根目录 `pnpm pack:win` / `pnpm dist:win`，尚未接入本文的 Store 自动发布链；开发与构建入口见 [README](../README.md)。
+
 本文档面向花笺维护者，说明 MSIX 版本发布到 Microsoft Store 所需的**一次性设置**、**配置项**、**发布行为**与**失败处理**。
 
 发布自动化本身集成在 [Release Workflow](../.github/workflows/release.yml) 中（`publish-msix-store` Job），本文档只覆盖 Store 侧的准备与运维。

@@ -15,7 +15,7 @@ class-variance-authority 0.7, cn 0.5 and lucide-react 1.61. Peers are optional f
 framework independent theme-only consumers; component consumers must provide
 them. Component APIs and composition remain those of the existing shadcn source.
 
-`src/components/ui/` remains the single component source. `node packages/ui/build.mjs`
+`packages/ui/src/components/` is the single component source shared by the desktop app and plugins. `node packages/ui/build.mjs`
 bundles its exports and generates standalone JS, declarations and utility CSS
 under `packages/ui/dist/`; `--output <directory>` assembles an independent package
 in an explicit directory. Published imports and declarations do not reference
@@ -28,4 +28,4 @@ and includes it under `uiPackage` in `renderer/spark233-shared-ui.json`. The
 existing font v1 contract is versioned separately from this component package.
 
 The npm scope is provisional until account ownership is verified. Build a local
-archive with `npm pack`; publication requires explicit authorization.
+archive with `pnpm pack`; publication requires explicit authorization.

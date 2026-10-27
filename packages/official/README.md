@@ -14,24 +14,24 @@ is provisional until account ownership is verified; the build does not publish.
 | `spark233.search`       | `search`         |
 
 All seven plugins have representative functional cases in the existing Vitest
-runner. Run `npm test`, or filter them with
-`npm test -- packages/official electron/plugins/official`. Coverage and controlled
+runner. Run `pnpm test`, or filter them with
+`pnpm test packages/official apps/desktop/electron/plugins/official`. Coverage and controlled
 OS/provider boundaries are recorded in the [functional test report](../../Docs/spark233-plugin-functional-tests-2026-10-27.md).
 
-Select the repository's Node/npm runtime, install its lockfile dependencies and
+Select the repository's Node/pnpm runtime, install its lockfile dependencies and
 build the current shared UI source once:
 
 ```powershell
 . ./scripts/use-toolchain.ps1
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm build
 ```
 
-After changing a plugin's UI source, `npm exec -- vite build` refreshes the host
+After changing a plugin's UI source, `pnpm --filter @spark233/desktop exec vite build` refreshes the host
 renderer input without producing an installer. Build a complete single plugin:
 
 ```powershell
-node scripts/build-official-plugins.mjs --plugin spark233.notes
+pnpm --filter @spark233/plugin-notes build
 node scripts/build-official-plugins.mjs --plugin spark233.clipboard --output C:/tmp/spark233-clipboard-artifact
 ```
 
@@ -40,7 +40,7 @@ The default single-plugin output is
 one-package integrity index and file/size records. A single build preserves the
 standard `dist-plugins/index.json`. `--output` selects a dedicated output folder.
 
-`npm run plugins:build` assembles the complete offline distribution and requires
+`pnpm plugins:build` assembles the complete offline distribution and requires
 exactly seven plugins. Native payloads and the fixed dictionary are validated or
 prepared through their existing build entry points. Notes and clipboard business code is
 bundled into each package’s `backend.mjs` before assembly. No npm install lifecycle scripts run

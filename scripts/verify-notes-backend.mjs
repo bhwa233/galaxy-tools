@@ -6,10 +6,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 if (!process.versions.electron) {
-  const { default: executable } = await import("electron");
+  const desktopRequire = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
+  const executable = desktopRequire("electron");
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const child = spawn(
@@ -51,22 +53,23 @@ if (!process.versions.electron) {
     }, 60_000);
     try {
       await app.whenReady();
-      const { createTrustedBackend } = await import("../dist-electron/electron/plugins/backend.js");
+      const { createTrustedBackend } =
+        await import("../apps/desktop/dist-electron/electron/plugins/backend.js");
       const { PluginResourceScope } =
-        await import("../dist-electron/electron/plugins/resources.js");
+        await import("../apps/desktop/dist-electron/electron/plugins/resources.js");
       const { NotesDataClient } =
-        await import("../dist-electron/electron/plugins/official/notes-data-client.js");
+        await import("../apps/desktop/dist-electron/electron/plugins/official/notes-data-client.js");
       const { createNotesRuntime } =
-        await import("../dist-electron/electron/plugins/official/notes.js");
+        await import("../apps/desktop/dist-electron/electron/plugins/official/notes.js");
       const pluginRoot = path.join(repo, "packages/official/notes");
       const entryPath = path.join(pluginRoot, "backend.mjs");
       for (const file of [
         entryPath,
-        "dist-electron/electron/plugins/backend.js",
-        "dist-electron/electron/plugins/backend-worker.js",
-        "dist-electron/electron/plugins/resources.js",
-        "dist-electron/electron/plugins/official/notes-data-client.js",
-        "dist-electron/electron/plugins/official/notes.js",
+        "apps/desktop/dist-electron/electron/plugins/backend.js",
+        "apps/desktop/dist-electron/electron/plugins/backend-worker.js",
+        "apps/desktop/dist-electron/electron/plugins/resources.js",
+        "apps/desktop/dist-electron/electron/plugins/official/notes-data-client.js",
+        "apps/desktop/dist-electron/electron/plugins/official/notes.js",
       ]) {
         const absolute = path.resolve(repo, file);
         report.inputs[path.relative(repo, absolute)] = createHash("sha256")

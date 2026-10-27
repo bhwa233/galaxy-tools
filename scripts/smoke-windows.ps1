@@ -1,8 +1,9 @@
 param([string]$ElectronExe)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
-if (-not $ElectronExe) { $ElectronExe = Join-Path $repo 'node_modules/electron/dist/electron.exe' }
-if (-not (Test-Path -LiteralPath $ElectronExe)) { throw 'Install Windows Electron first: npm run electron:install' }
+$desktop = Join-Path $repo 'apps/desktop'
+if (-not $ElectronExe) { $ElectronExe = Join-Path $desktop 'node_modules/electron/dist/electron.exe' }
+if (-not (Test-Path -LiteralPath $ElectronExe)) { throw 'Install Windows Electron first: pnpm electron:install' }
 $run = Join-Path $repo ('local-build/electron-smoke/' + [Guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $run -Force | Out-Null
 $names = @('SPARK233_CONFIG_DIR', 'SPARK233_DATA_DIR', 'SPARK233_SMOKE')
@@ -16,11 +17,11 @@ try {
   # The native helper starts paused until it receives this isolated persisted policy.
   Push-Location -LiteralPath $repo
   try {
-    node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import { ClipboardHistory } from "./dist-electron/electron/plugins/official/clipboard-history.js"; const history = new ClipboardHistory(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/data/spark233.clipboard")); history.saveSettings({paused:true}); history.close(); fs.writeFileSync(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/state.json"), JSON.stringify({schemaVersion:1,plugins:{},dataVersions:{"spark233.clipboard":{dataVersion:1,pluginVersion:"0.1.0",packageName:"@spark233/plugin-clipboard"}}}));'
+    node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import { ClipboardHistory } from "./apps/desktop/dist-electron/electron/plugins/official/clipboard-history.js"; const history = new ClipboardHistory(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/data/spark233.clipboard")); history.saveSettings({paused:true}); history.close(); fs.writeFileSync(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/state.json"), JSON.stringify({schemaVersion:1,plugins:{},dataVersions:{"spark233.clipboard":{dataVersion:1,pluginVersion:"0.1.0",packageName:"@spark233/plugin-clipboard"}}}));'
     if ($LASTEXITCODE -ne 0) { throw 'Could not pause the isolated clipboard recorder before smoke startup' }
   } finally { Pop-Location }
   $report = Join-Path $run 'report.json'
-  $applicationArgs = @(('"' + $repo + '"'), ('"--smoke-output=' + $report + '"'))
+  $applicationArgs = @(('"' + $desktop + '"'), ('"--smoke-output=' + $report + '"'))
   $startedAt = [DateTimeOffset]::UtcNow
   $process = Start-Process -FilePath $ElectronExe -ArgumentList $applicationArgs -WorkingDirectory $repo -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $run 'stdout.log') -RedirectStandardError (Join-Path $run 'stderr.log')
   $processEvidenceFile = Join-Path $run 'process.json'

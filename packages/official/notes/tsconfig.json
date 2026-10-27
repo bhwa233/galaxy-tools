@@ -1,5 +1,9 @@
 {
-  "extends": "../../../electron/tsconfig.json",
-  "compilerOptions": { "noEmit": true, "types": ["node", "electron"] },
+  "extends": "../../../apps/desktop/electron/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "electron"],
+    "rootDir": "../../.."
+  },
   "include": ["backend.ts"]
 }

@@ -11,6 +11,12 @@
     "sdk.js",
     "README.md"
   ],
+  "scripts": {
+    "build": "pnpm --filter @spark233/sdk build && node build.mjs"
+  },
+  "devDependencies": {
+    "@spark233/sdk": "workspace:*"
+  },
   "spark233": {
     "schemaVersion": 1,
     "id": "hello-web",

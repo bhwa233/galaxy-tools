@@ -8,14 +8,17 @@ import {
   decodeClipboardSnapshot,
   encodeClipboardSnapshot,
   textClipboardSnapshot,
-} from "../../../electron/plugins/official/clipboard-history.js";
-import type { BackendContext, BackendPlugin } from "../../../electron/plugins/backend-worker.js";
-import type { JsonValue } from "../../../packages/sdk/src/index.js";
+} from "../../../apps/desktop/electron/plugins/official/clipboard-history.js";
+import type {
+  BackendContext,
+  BackendPlugin,
+} from "../../../apps/desktop/electron/plugins/backend-worker.js";
+import type { JsonValue } from "@spark233/sdk";
 import type {
   ClipboardEntry,
   ClipboardPage,
   ClipboardSettings,
-} from "../../../src/features/clipboard/types.js";
+} from "../../../apps/desktop/src/features/clipboard/types.js";
 
 describe("clipboard backend persistence and resource ownership", () => {
   let directory: string;

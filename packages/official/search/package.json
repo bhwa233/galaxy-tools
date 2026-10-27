@@ -9,6 +9,9 @@
     "README.md"
   ],
   "type": "module",
+  "scripts": {
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.search"
+  },
   "spark233": {
     "schemaVersion": 1,
     "id": "spark233.search",

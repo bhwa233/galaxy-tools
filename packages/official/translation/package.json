@@ -16,6 +16,12 @@
     "README.md"
   ],
   "type": "module",
+  "scripts": {
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.translation"
+  },
+  "devDependencies": {
+    "vitest": "5.0.5"
+  },
   "spark233": {
     "schemaVersion": 1,
     "id": "spark233.translation",

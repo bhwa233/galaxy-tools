@@ -6,31 +6,20 @@
 
 ## 開發環境配置
 
-### 依賴
+### 依賴與 workspace
 
-- [Node.js](https://nodejs.org/) - 20.19+ 或 22.12+
-- [Rust](https://www.rust-lang.org/tools/install) 工具鏈
-- 其他：
+使用 Node.js **26.12.1** 與 pnpm **12.15.0**。現行桌面執行環境為 Electron，目標為 Windows 11 x64；原生外掛建置可能需要 Windows C++ 工具鏈，歷史 Tauri/Rust 指令不適用於現行建置。
 
-  | 平台        | 所需依賴                                                                                                                                                                                                             |
-  | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | **macOS**   | Xcode Command Line Tools                                                                                                                                                                                             |
-  | **Linux**   | `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`libsoup-3.0-dev`                                                                                                           |
-  | **Windows** | [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)、[Microsoft Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Windows 11 或高版本 Windows 10 已內建） |
-
-### 複製與啟動
+依照[現行開發說明](../README.md#开发)選取專案工具鏈，不替換全域 Node。以下指令均從倉庫根目錄執行：
 
 ```bash
-git clone git@github.com:Achilng/floral-notepaper.git
-cd floral-notepaper
-npm install
-
-# 啟動開發版
-npm run tauri dev
-
-# 構建正式版
-npm run tauri build
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm build
+pnpm pack:win
 ```
+
+`apps/desktop` 包含 Electron 與 React 應用；`packages/sdk`、`packages/ui`、`packages/official/*`、`examples/plugins/*` 各為獨立 workspace。依賴宣告在使用它的套件中，共用開發工具留在根目錄，全倉只維護根目錄的 `pnpm-lock.yaml`。單包任務使用 `pnpm --filter @spark233/desktop <指令>`。
 
 ## 分支與提交規範
 
@@ -71,16 +60,11 @@ npm run tauri build
 提交 PR 前，請確保本機通過以下檢查。可以在每次 commit 前也跑一遍，避免 CI 掛掉後反覆修：
 
 ```bash
-# 後端
-cd src-tauri
-cargo test -p floral-notepaper --lib        # 單元測試
-cargo clippy --all-targets -- -D warnings   # 靜態檢查
-cargo fmt --check                           # 格式檢查
-
-# 前端
-npm test                                    # 單元測試
-npx oxlint                                  # 靜態檢查
-npx oxfmt --check                           # 格式檢查
+pnpm typecheck
+pnpm lint
+pnpm fmt --check
+pnpm test
+pnpm build
 ```
 
 ## Pull Request 流程

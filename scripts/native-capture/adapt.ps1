@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param([string]$OutputRoot = (Join-Path $PSScriptRoot '../../local-build/spark233/native-capture'))
 $ErrorActionPreference = 'Stop'
+$tarExecutable = Join-Path $env:SystemRoot 'System32/tar.exe'
+if (-not (Test-Path -LiteralPath $tarExecutable -PathType Leaf)) { throw "Windows tar is missing: $tarExecutable" }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $sources = Join-Path $OutputRoot 'sources'
 $adapted = Join-Path $OutputRoot 'adapted'
@@ -15,7 +17,7 @@ foreach ($source in $lock.sources) {
     New-Item -ItemType Directory -Force $target | Out-Null
     & git -C $original archive --format=tar -o (Join-Path $adapted "$($source.name).tar") HEAD
     if ($LASTEXITCODE) { throw 'git archive failed' }
-    & tar -xf (Join-Path $adapted "$($source.name).tar") -C $target
+    & $tarExecutable -xf (Join-Path $adapted "$($source.name).tar") -C $target
     if ($LASTEXITCODE) { throw 'tar extraction failed' }
 }
 

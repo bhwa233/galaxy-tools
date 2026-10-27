@@ -8,6 +8,20 @@
     "renderer/**"
   ],
   "type": "module",
+  "scripts": {
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.notes",
+    "build:backend": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@spark233/sdk": "workspace:*",
+    "@types/node": "24.19.2",
+    "electron": "45.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "zod": "4.6.7"
+  },
   "spark233": {
     "schemaVersion": 1,
     "id": "spark233.notes",

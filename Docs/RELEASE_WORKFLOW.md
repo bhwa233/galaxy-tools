@@ -1,5 +1,7 @@
 # Release 发布流程
 
+> 历史 Tauri 发布链参考。相关工作流已移至 `.github/legacy-tauri/`；下文命令和锁文件描述保留原记录，不适用于现行 pnpm/Electron monorepo。当前构建使用根目录 `pnpm pack:win` / `pnpm dist:win`，入口见 [README](../README.md#Windows-构建) 与活跃 `.github/workflows/`。
+
 本文档面向花笺维护者，说明 [Release Workflow](../.github/workflows/release.yml) 的配置、触发方式、构建与签名链路、验证规则以及失败后的处理方式。
 
 该 Workflow 负责生成经过验证的多平台发布产物，并创建或更新 GitHub Draft Release。它不会自动把 Draft Release 发布为正式 Release。

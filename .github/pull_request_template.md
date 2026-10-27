@@ -38,11 +38,10 @@
 
 您确认您运行并通过了：
 
-- [ ] `npx oxfmt --check`
-- [ ] `npx oxlint`
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy --all-targets -- -D warnings`
-- [ ] `cargo test`
-- [ ] `npm test`
+- [ ] `pnpm fmt --check`
+- [ ] `pnpm lint`
+- [ ] `pnpm typecheck`
+- [ ] `pnpm test`
+- [ ] `pnpm build`
 
 <!-- 感谢你对花笺 Floral Notepaper 的贡献！Thank you for your contribution! -->

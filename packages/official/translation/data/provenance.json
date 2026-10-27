@@ -17,7 +17,7 @@
   },
   "database": "ecdict.sqlite",
   "bytes": 102096896,
-  "sha256": "92f67ad5d33d33bf29fd3b36a4e6ed12bbef3b79033d403a267d007fa383bb38",
+  "sha256": "d7c046f2ba43d2630cf276fb5b790f85c8f3d3f26ca12c1b7ef29d5db995a489",
   "entries": 770611,
   "forms": 136400,
   "phrases": 366599,
@@ -31,6 +31,14 @@
     "exchange",
     "frequency rank"
   ],
-  "derived": ["exchange inflection/lemma index", "shared normalized word/phrase prefix index"],
-  "notRedistributed": ["original CSV", "research-only lemma.en.txt", "audio", "detail"]
+  "derived": [
+    "exchange inflection/lemma index",
+    "shared normalized word/phrase prefix index"
+  ],
+  "notRedistributed": [
+    "original CSV",
+    "research-only lemma.en.txt",
+    "audio",
+    "detail"
+  ]
 }

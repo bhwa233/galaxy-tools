@@ -15,7 +15,19 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.clipboard",
+    "build:native": "node build.mjs",
+    "build:backend": "node build.mjs --backend-only",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@spark233/sdk": "workspace:*",
+    "@types/node": "24.19.2",
+    "electron": "45.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "zod": "4.6.7"
   },
   "spark233": {
     "schemaVersion": 1,

@@ -3,20 +3,20 @@
   "inputs": [
     {
       "path": "packages/official/clipboard/backend.ts",
-      "sha256": "9328d1abae3569d9f7b36bca34bfe504c89ce724a5ca9548e50a304eac981bd5"
+      "sha256": "a5c727affbd704c137d5c073df57736781ebb28ea9e7d8d26e40572c299d1a3d"
     },
     {
-      "path": "electron/plugins/official/clipboard-history.ts",
+      "path": "apps/desktop/electron/plugins/official/clipboard-history.ts",
       "sha256": "443b213c7276ac5a91d1cd9b4c9c8bd5da28a9313f7e2e09b3d1066b42c470d3"
     },
     {
-      "path": "electron/persistence.ts",
+      "path": "apps/desktop/electron/persistence.ts",
       "sha256": "968b941acddb76ce8cbb6964c2e3f1c9562bcdae1c9550e63322e8ade449bc00"
     }
   ],
   "file": {
     "name": "backend.mjs",
-    "bytes": 211298,
-    "sha256": "978dcb97aea101d80d135f08eb219e50824cddf40017a3cebb6adeb06ae5daef"
+    "bytes": 211846,
+    "sha256": "ef7b2f02d2e2cd4170d99526cde8a23dddfc28d2096a3927861e8d3fc8ed3b4b"
   }
 }

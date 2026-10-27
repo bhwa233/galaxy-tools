@@ -76,15 +76,15 @@
 
 当前桌面运行时为 Electron 45，前端使用 React 19、TypeScript、Vite 8，发布使用 electron-builder。现有能力包括便签列表、独立便签窗口、Markdown 预览、胶囊、托盘、全局快捷键、提醒、文件关联、命令行入口和默认关闭的本地 MCP。
 
-| 当前入口                                              | 当前职责                                              | 演进方向                                     |
-| ----------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
-| [electron/main.ts](../electron/main.ts)               | 运行时、窗口、便签命令、托盘、快捷键、提醒与 MCP 接线 | 将宿主编排和便签业务逐步分离                 |
-| [electron/store.ts](../electron/store.ts)             | 便签正文、元数据、分类、图片和应用配置                | 便签存储归便签插件；全局配置归宿主           |
-| [electron/preload.cts](../electron/preload.cts)       | 受限桌面桥接                                          | 演进为宿主桥接和插件 SDK 边界                |
-| [src/platform/desktop.ts](../src/platform/desktop.ts) | 前端桌面 API 适配                                     | 保留组件与 Electron 解耦的原则               |
-| [electron/capsules.ts](../electron/capsules.ts)       | 胶囊窗口与交互协调                                    | 保留现有行为，按实际复用需要提取宿主呈现能力 |
-| [electron/windows.ts](../electron/windows.ts)         | Windows 运行适配与原生全屏观察                        | 归入宿主平台集成层                           |
-| [src/App.tsx](../src/App.tsx)                         | 当前窗口视图路由和公共主题初始化                      | 增加启动器与插件视图入口                     |
+| 当前入口                                                           | 当前职责                                              | 演进方向                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------- | -------------------------------------------- |
+| [electron/main.ts](../apps/desktop/electron/main.ts)               | 运行时、窗口、便签命令、托盘、快捷键、提醒与 MCP 接线 | 将宿主编排和便签业务逐步分离                 |
+| [electron/store.ts](../apps/desktop/electron/store.ts)             | 便签正文、元数据、分类、图片和应用配置                | 便签存储归便签插件；全局配置归宿主           |
+| [electron/preload.cts](../apps/desktop/electron/preload.cts)       | 受限桌面桥接                                          | 演进为宿主桥接和插件 SDK 边界                |
+| [src/platform/desktop.ts](../apps/desktop/src/platform/desktop.ts) | 前端桌面 API 适配                                     | 保留组件与 Electron 解耦的原则               |
+| [electron/capsules.ts](../apps/desktop/electron/capsules.ts)       | 胶囊窗口与交互协调                                    | 保留现有行为，按实际复用需要提取宿主呈现能力 |
+| [electron/windows.ts](../apps/desktop/electron/windows.ts)         | Windows 运行适配与原生全屏观察                        | 归入宿主平台集成层                           |
+| [src/App.tsx](../apps/desktop/src/App.tsx)                         | 当前窗口视图路由和公共主题初始化                      | 增加启动器与插件视图入口                     |
 
 现有桌面隔离、保存确认、图片路径授权和 Windows 运行适配应作为迁移约束延续。当前功能细节见 [Electron 迁移说明](electron-migration.md)、[胶囊说明](edge-capsules.md)和 [MCP 接入说明](mcp.md)。
 
@@ -137,7 +137,7 @@ ScreenCapture 的截图与标注窗口保持原生实现，不以重写为 React
 
 已确认采用 shadcn 官方 skill 作为组件实现依据，Vercel Web Interface Guidelines 作为交互与可访问性检查依据，Geist Design System 作为视觉参考。frontend-design skill 可辅助初版布局探索，后续设计遵循本项目已确定的规范。skill 属于开发辅助工具，不能代替共享主题、组件与验收；本轮文档确认不代表已安装新增 skill。
 
-强调色沿用当前 [src/App.css](../src/App.css) 定义的竹绿色，现有颜色如下。它们是实际源码中的颜色基线，后续映射为 shadcn 语义主题变量，不在各页面分别硬编码。
+强调色沿用当前 [src/App.css](../apps/desktop/src/App.css) 定义的竹绿色，现有颜色如下。它们是实际源码中的颜色基线，后续映射为 shadcn 语义主题变量，不在各页面分别硬编码。
 
 | 当前变量           | 浅色主题 | 深色主题 | 主题中的用途                           |
 | ------------------ | -------- | -------- | -------------------------------------- |
@@ -160,7 +160,7 @@ ScreenCapture 的截图与标注窗口保持原生实现，不以重写为 React
 - 跨窗口弹层、滚动条、焦点、快捷键与长文本遵循统一规则；中文输入法组合期间不误执行命令，列表键盘操作与可见焦点完整。
 - 界面完成后运行 Vercel 指南检查，并对浅色、深色、中文长文本、空数据、错误与缩放场景保存截图；Web 专用规则按 Electron 的实际场景适用。
 
-当前共享包为 `@spark233/ui` 0.2.0，兼容 SDK `>=0.2.0 <0.4.0`、宿主 API `^1.1.0` 与主题协议 `^1.0.0`。框架无关的主题 CSS/应用函数保持独立入口；可选 React 入口提供 Button、Alert、Badge、Card、Input、Textarea 与 Spinner 家族及预编译语义 CSS。组件唯一源码仍位于 `src/components/ui/`，构建生成包内 JavaScript、类型声明和样式，发布物不引用宿主源码路径，React 与现有基础库通过 peer 提供。官方剪贴板工作区通过包入口消费，正常 renderer 构建及官方归档记录实际 UI 包版本、兼容范围和入口散列；字体 v1 合同单独版本化。更多业务组件沿用同一包复用规则，不为满足条目数量新造控件。
+当前共享包为 `@spark233/ui` 0.2.0，兼容 SDK `>=0.2.0 <0.4.0`、宿主 API `^1.1.0` 与主题协议 `^1.0.0`。框架无关的主题 CSS/应用函数保持独立入口；可选 React 入口提供 Button、Alert、Badge、Card、Input、Textarea 与 Spinner 家族及预编译语义 CSS。组件唯一源码位于 `packages/ui/src/components/`，桌面原组件路径只保留重导出；构建生成包内 JavaScript、类型声明和样式，发布物不引用宿主源码路径，React 与现有基础库通过 peer 提供。官方剪贴板工作区通过包入口消费，正常 renderer 构建及官方归档记录实际 UI 包版本、兼容范围和入口散列；字体 v1 合同单独版本化。更多业务组件沿用同一包复用规则，不为满足条目数量新造控件。
 
 ScreenCapture 与 ImageReader 的原生窗口不继承 CSS 或 shadcn 组件。宿主内的设置和结果操作遵循完整规范；原生工具栏与识别窗口通过各自实现调整颜色、字体、图标和主题，一期优先保证高频操作与整体观感一致，记录实际可覆盖范围。
 

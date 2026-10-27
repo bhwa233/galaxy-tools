@@ -89,7 +89,13 @@ test("failed discovery retains complete source snapshots until an authoritative 
   fs.mkdirSync(commonMenu, { recursive: true });
   fs.writeFileSync(path.join(userMenu, "User old.lnk"), "Synthetic shortcut; never launched");
   fs.writeFileSync(path.join(commonMenu, "Common old.lnk"), "Synthetic shortcut; never launched");
-  const query = () => backend!.activate({ commandId: "search" }, lifetime);
+  // This cache regression supplies its own request identity. On Windows,
+  // generating one after the synthetic SystemRoot is installed breaks OS RNG lookup.
+  const query = () =>
+    backend!.activate(
+      { commandId: "search", parameters: { requestId: "inventory-cache-regression" } },
+      lifetime,
+    );
 
   const complete = await query();
   expect(complete.inventoryState).toBe("complete");

@@ -12,7 +12,8 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.screenshot",
+    "build:native": "node build.mjs"
   },
   "spark233": {
     "schemaVersion": 1,

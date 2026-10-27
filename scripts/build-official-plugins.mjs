@@ -4,15 +4,19 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { create } from "tar";
 
 // Reuse the production tar reader's npm layout and integrity contract. Packages
 // are assembled locally; no install lifecycle or registry publication runs here.
-const root = path.resolve("packages/official");
-const project = path.resolve(".");
+const project = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
+const root = path.join(project, "packages/official");
 const { values: buildOptions } = parseArgs({
   // dev-electron imports this preparation step while retaining app CLI flags.
-  args: import.meta.main ? process.argv.slice(2) : [],
+  args:
+    process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+      ? process.argv.slice(2)
+      : [],
   options: {
     plugin: { type: "string" },
     output: { type: "string" },
@@ -43,6 +47,7 @@ if (!/^[a-z][a-z0-9._-]{0,127}$/i.test(updateChannel))
 updateRegistry.pathname = updateRegistry.pathname.replace(/\/?$/, "/");
 const updateSource = { registry: updateRegistry.href, channel: updateChannel };
 const output = path.resolve(
+  project,
   buildOptions.output ??
     (selectedPlugin
       ? path.join("local-build/spark233/plugin-artifacts", selectedPlugin)
@@ -147,8 +152,8 @@ async function prepareResources(source, metadata) {
       await fs.readFile(path.join(source, "native/resources.json"), "utf8"),
     );
     for (const relative of [
-      "native/search/search.cpp",
-      "native/search/CMakeLists.txt",
+      "packages/official/search/native-src/search.cpp",
+      "packages/official/search/native-src/CMakeLists.txt",
       "scripts/native-search/build.ps1",
     ]) {
       const current = createHash("sha256")
@@ -164,9 +169,9 @@ async function prepareResources(source, metadata) {
     const inputs =
       id === "spark233.clipboard"
         ? [
-            "native/clipboard/service.cpp",
-            "native/clipboard/clipboard-common.h",
-            "native/clipboard/CMakeLists.txt",
+            "packages/official/clipboard/native-src/service.cpp",
+            "packages/official/clipboard/native-src/clipboard-common.h",
+            "packages/official/clipboard/native-src/CMakeLists.txt",
           ]
         : [
             "native/applications/matcher.cpp",
@@ -196,7 +201,7 @@ async function prepareResources(source, metadata) {
       const name = id === "spark233.ocr" ? "ImageReader.exe" : "ScreenCapture.exe";
       if (!(await exists(path.join(capture, name))))
         throw new Error(
-          `${id} needs a production native build. Run pwsh -File scripts/native-capture/prepare.ps1 -OutputRoot local-build/spark233/native-capture-p4 -SkipReleases; pwsh -File scripts/native-capture/adapt.ps1 -OutputRoot local-build/spark233/native-capture-p4; pwsh -File scripts/native-capture/prepare-ocr-deps.ps1; pwsh -File scripts/native-capture/build.ps1 -OutputRoot local-build/spark233/native-capture-p4 -OpenCVDirectory local-build/spark233/native-capture/deps/opencv/x64/vc18/staticlib -OnnxRuntimeRoot local-build/spark233/native-capture/deps/onnxruntime-win-x64-1.23.2 . Then retry npm run plugins:build.`,
+          `${id} needs a production native build. Run pwsh -File scripts/native-capture/prepare.ps1 -OutputRoot local-build/spark233/native-capture-p4 -SkipReleases; pwsh -File scripts/native-capture/adapt.ps1 -OutputRoot local-build/spark233/native-capture-p4; pwsh -File scripts/native-capture/prepare-ocr-deps.ps1; pwsh -File scripts/native-capture/build.ps1 -OutputRoot local-build/spark233/native-capture-p4 -OpenCVDirectory local-build/spark233/native-capture/deps/opencv/x64/vc18/staticlib -OnnxRuntimeRoot local-build/spark233/native-capture/deps/onnxruntime-win-x64-1.23.2 . Then retry pnpm plugins:build.`,
         );
       run(process.execPath, [path.join(source, "build.mjs"), "--native-build-dir", capture]);
     } else if (id === "spark233.clipboard") {
@@ -333,7 +338,7 @@ async function copyAllowlist(source, destination, metadata) {
   }
 }
 async function copyBusinessRenderer(packageRoot) {
-  const hostRenderer = path.resolve(buildOptions.renderer ?? path.join(project, "dist")),
+  const hostRenderer = path.resolve(project, buildOptions.renderer ?? "apps/desktop/dist"),
     hostAssets = path.join(hostRenderer, "assets");
   const uiPackage = JSON.parse(
     await fs.readFile(path.join(hostRenderer, "spark233-ui.json"), "utf8"),
@@ -425,7 +430,10 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
     throw new Error("Package staging escaped its temporary directory");
   try {
     await copyAllowlist(source, path.join(work, "package"), metadata);
-    await fs.copyFile(path.resolve("LICENSE"), path.join(work, "package", "LICENSE.spark233"));
+    await fs.copyFile(
+      path.join(project, "LICENSE"),
+      path.join(work, "package", "LICENSE.spark233"),
+    );
     let sharedUi;
     if (rendererPlugins.has(metadata.spark233.id)) {
       // Trusted business plugins carry their renderer build. Their windows load
@@ -437,11 +445,11 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
         path.join(work, "package", "legal", "spark233-renderer-THIRD_PARTY_NOTICES.md"),
       );
       await fs.copyFile(
-        path.resolve("src/assets/fonts/LICENSE_Fonts"),
+        path.join(project, "apps/desktop/src/assets/fonts/LICENSE_Fonts"),
         path.join(work, "package", "legal", "HarmonyOS_Fonts.txt"),
       );
       await fs.copyFile(
-        path.resolve("src/assets/fonts/LICENSE_SourceHanSerif"),
+        path.join(project, "apps/desktop/src/assets/fonts/LICENSE_SourceHanSerif"),
         path.join(work, "package", "legal", "SourceHanSerif.txt"),
       );
     }

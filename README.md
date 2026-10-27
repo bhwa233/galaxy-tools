@@ -38,41 +38,65 @@
 
 ## 开发
 
-项目开发环境固定为 **Node.js 26.12.1 / npm 12.2.1**，版本分别记录在 `.node-version` 和 `package.json`，CI 使用相同版本。Electron 内嵌 Node 24 与开发工具链分开管理，主进程类型仍匹配其实际运行时。
+项目开发环境固定为 **Node.js 26.12.1 / pnpm 12.15.0**，版本分别记录在 `.node-version` 和 `package.json`，CI 使用相同版本。Electron 内嵌 Node 24 与开发工具链分开管理，主进程类型仍匹配其实际运行时。
 
-启动器浏览器交互用例单独使用 `npm run test:ui`（Vitest Browser Mode/Chromium），`npm test` 继续运行 Node 功能用例。首次需执行 `npx playwright install chromium --only-shell`；单文件运行及范围见[启动器 UI 测试](Docs/spark233-ui-testing-2026-10-27.md)，不需要打安装包。
+启动器浏览器交互用例单独使用 `pnpm test:ui`（Vitest Browser Mode/Chromium），`pnpm test` 继续运行 Node 功能用例。首次需执行 `pnpm --filter @spark233/desktop exec playwright install chromium --only-shell`；单文件运行及范围见[启动器 UI 测试](Docs/spark233-ui-testing-2026-10-27.md)，不需要打安装包。
 
-Windows 已准备项目专用便携运行时时，在 PowerShell 中执行 `. ./scripts/use-toolchain.ps1` 为当前终端选择工具链，再运行下述 npm 命令；脚本不会替换全局 Node。便携版位于 `%LOCALAPPDATA%/spark233/toolchains/node-v26.12.1-win-x64`，也可自行安装 `.node-version` 对应的官方 Node 并使用 npm 12.2.1。
+Windows 已准备项目专用便携运行时时，在 PowerShell 中执行 `. ./scripts/use-toolchain.ps1` 为当前终端选择工具链，再运行下述 pnpm 命令；脚本不会替换全局 Node。便携版位于 `%LOCALAPPDATA%/spark233/toolchains/node-v26.12.1-win-x64`，也可自行安装 `.node-version` 对应的官方 Node 并使用 pnpm 12.15.0。
+
+pnpm 尚未准备时，使用上述 Node 的 npm 将 pnpm 安装到项目专用工具链目录。npm 12 默认阻止包安装脚本，需要明确批准 pnpm 包并重建其 Windows 启动入口：
+
+```powershell
+npm.cmd install --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" --save-exact --no-package-lock pnpm@12.15.0
+npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" install-scripts approve pnpm
+npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" rebuild pnpm
+. ./scripts/use-toolchain.ps1
+```
+
+`approve` 只记录该工具链目录的脚本许可，`rebuild` 才执行 pnpm 自身的安装脚本。这些 npm 命令只用于准备 pnpm；项目依赖统一使用 pnpm，不修改全局工具链。
+
+仓库采用 pnpm monorepo，所有日常命令从仓库根目录运行，统一使用 `pnpm-lock.yaml`：
+
+| 目录                            | 职责                                                     |
+| ------------------------------- | -------------------------------------------------------- |
+| `apps/desktop/`                 | `@spark233/desktop`：Electron、React、桌面配置和打包入口 |
+| `packages/sdk/`、`packages/ui/` | 插件 SDK、共享 UI 与主题                                 |
+| `packages/official/*/`          | 七个官方插件，各自声明依赖                               |
+| `examples/plugins/*/`           | 插件示例 workspace                                       |
+| `scripts/`                      | 全仓构建、校验与集成工具                                 |
+| `apps/desktop/tests/`           | 桌面集成测试，其他测试随各模块就近放置                   |
+
+桌面编译产物为 `apps/desktop/dist/` 和 `apps/desktop/dist-electron/`；离线插件 `dist-plugins/`、宿主原生资源 `dist-host/`、Windows 包 `release-electron/` 和验证产物 `local-build/` 保留在仓库根目录。需要单包命令时使用 `pnpm --filter @spark233/desktop <命令>`；新增依赖进入实际使用它的 workspace，共用开发工具才加到根目录，不维护独立 npm/yarn 锁文件。
 
 源代码也可保留在 WSL；Windows GUI 运行及打包仍应使用 Windows Node/Electron。不要在 Windows 和 Linux 之间共用同一个 `node_modules`。源代码放在 WSL 时，可从 Windows PowerShell 执行 `scripts/build-windows-local.ps1 -Installer`，脚本使用独立 Windows 构建缓存，并把产物复制回仓库。Windows 沙箱子进程不支持本机测试中的 WSL UNC 可执行文件路径，运行应用时请复制整个 win-unpacked 到 C:/D: 本地目录，或使用安装包。
 
 ```sh
-npm ci
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-`dev` 会安装匹配平台的 Electron 运行时，编译主进程/预加载并启动 Vite 和 Electron。修改 React 界面会热更新；修改 `electron/` 后重启 `npm run dev`。
+`dev` 会安装匹配平台的 Electron 运行时，编译主进程/预加载并启动 Vite 和 Electron。修改 React 界面会热更新；修改 `apps/desktop/electron/` 后重启 `pnpm dev`。
 
 ```sh
-npm run typecheck
-npm run lint
-npm test
-npm run build
-npm start
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm start
 ```
 
-`dev:web` / `preview` 只服务前端资源，桌面功能需要 Electron 预加载桥接。常规构建不访问 GitHub；贡献者名单可选执行 `npm run contributors:update` 更新。
+`dev:web` / `preview` 只服务前端资源，桌面功能需要 Electron 预加载桥接。常规构建不访问 GitHub；贡献者名单可选执行 `pnpm contributors:update` 更新。
 
 ## Windows 构建
 
 ```sh
-npm run pack:win  # release-electron/win-unpacked/，整个目录一起分发
-npm run dist:win  # release-electron/ 下的 NSIS 安装包
+pnpm pack:win  # release-electron/win-unpacked/，整个目录一起分发
+pnpm dist:win  # release-electron/ 下的 NSIS 安装包
 ```
 
 应用名和安装包身份为 `spark233` / `com.spark233.desktop`，整体使用新身份，不提供旧版花笺别名、自动发现或自动迁移。未配置数字签名；上游 Tauri 更新和 Mirror酱入口已停用。插件更新独立管理，自动检查后由用户确认安装；开机启动仅在安装后的版本中设置。
 
-`npm run build` 同时组装七个离线插件到 `dist-plugins/`，打包时放入 ASAR 外的 `resources/plugins/`；单个插件的完整构建见 [官方插件构建说明](packages/official/README.md)。源码目录直接 `npm pack` 不会准备完整原生、词库和渲染资源。缺少原生资源时，构建入口会调用对应 Windows C++ 构建链；这些要求只针对开发者，用户端不运行 npm 安装脚本或临时编译。10 月 25 日历史候选的完整离线安装包及首启展开插件的文件字节已实测，详见[分发记录](Docs/evidence/spark233-packaging.md)；规划预算和 `.tgz` 合计不代表安装占用，用户数据、缓存、索引及服务副本另计。
+`pnpm build` 同时组装七个离线插件到 `dist-plugins/`，打包时放入 ASAR 外的 `resources/plugins/`；单个插件的完整构建见 [官方插件构建说明](packages/official/README.md)。源码目录直接 `pnpm pack` 不会准备完整原生、词库和渲染资源。缺少原生资源时，构建入口会调用对应 Windows C++ 构建链；这些要求只针对开发者，用户端不运行 npm 安装脚本或临时编译。10 月 25 日历史候选的完整离线安装包及首启展开插件的文件字节已实测，详见[分发记录](Docs/evidence/spark233-packaging.md)；规划预算和 `.tgz` 合计不代表安装占用，用户数据、缓存、索引及服务副本另计。
 
 ## 数据与验证
 

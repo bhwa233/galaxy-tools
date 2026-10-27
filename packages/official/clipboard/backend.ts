@@ -1,11 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { ClipboardHistory } from "../../../electron/plugins/official/clipboard-history.js";
-import { atomicWrite, canonical, confined, inside } from "../../../electron/persistence.js";
-import type { BackendContext, BackendPlugin } from "../../../electron/plugins/backend-worker.js";
-import type { ClipboardRequest } from "../../../src/features/clipboard/types.js";
-import type { JsonValue } from "../../../packages/sdk/src/index.js";
+import { ClipboardHistory } from "../../../apps/desktop/electron/plugins/official/clipboard-history.js";
+import {
+  atomicWrite,
+  canonical,
+  confined,
+  inside,
+} from "../../../apps/desktop/electron/persistence.js";
+import type {
+  BackendContext,
+  BackendPlugin,
+} from "../../../apps/desktop/electron/plugins/backend-worker.js";
+import type { ClipboardRequest } from "../../../apps/desktop/src/features/clipboard/types.js";
+import type { JsonValue } from "@spark233/sdk";
 
 const envelope = z.object({ action: z.string().min(1).max(80) }).passthrough();
 const id = z.string().min(1).max(100);

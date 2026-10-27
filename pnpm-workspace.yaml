@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/sdk
+  - packages/ui
+  - packages/official/*
+  - examples/plugins/*
+
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  fsevents: false
+
+strictDepBuilds: true

@@ -30,9 +30,9 @@ if (!process.argv.includes("--backend-only")) {
       {
         protocol: 1,
         inputs: inputs([
-          "native/clipboard/service.cpp",
-          "native/clipboard/clipboard-common.h",
-          "native/clipboard/CMakeLists.txt",
+          "packages/official/clipboard/native-src/service.cpp",
+          "packages/official/clipboard/native-src/clipboard-common.h",
+          "packages/official/clipboard/native-src/CMakeLists.txt",
         ]),
         files: [{ name, bytes: content.length, sha256: hashFile(path.join(target, name)) }],
       },
@@ -65,8 +65,8 @@ fs.writeFileSync(
       schemaVersion: 1,
       inputs: inputs([
         "packages/official/clipboard/backend.ts",
-        "electron/plugins/official/clipboard-history.ts",
-        "electron/persistence.ts",
+        "apps/desktop/electron/plugins/official/clipboard-history.ts",
+        "apps/desktop/electron/persistence.ts",
       ]),
       file: { name: "backend.mjs", bytes: fs.statSync(backend).size, sha256: hashFile(backend) },
     },
@@ -76,7 +76,7 @@ fs.writeFileSync(
 );
 fs.mkdirSync(path.join(packageRoot, "legal"), { recursive: true });
 fs.copyFileSync(
-  path.join(workspace, "node_modules/zod/LICENSE"),
+  fileURLToPath(new URL("./LICENSE", import.meta.resolve("zod/package.json"))),
   path.join(packageRoot, "legal/zod-LICENSE.txt"),
 );
 console.log(`Prepared clipboard backend ${fs.statSync(backend).size} bytes`);

@@ -2,10 +2,4 @@
 @import "./theme.css";
 @import "./semantic.css";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
-@source "../../src/components/ui/button.tsx";
-@source "../../src/components/ui/alert.tsx";
-@source "../../src/components/ui/badge.tsx";
-@source "../../src/components/ui/card.tsx";
-@source "../../src/components/ui/input.tsx";
-@source "../../src/components/ui/textarea.tsx";
-@source "../../src/components/ui/spinner.tsx";
+@source "./src/components/*.tsx";

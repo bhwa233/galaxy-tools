@@ -6,6 +6,6 @@
 
 `capture` 打开原生工作面；`ocr` 选择当前图像后直接取字；`cancel` 明确取消本次任务。OCR 停用时不启用替代后端，基础截图继续工作。活动标注会话会拒绝停用或更新，需用户先完成或明确取消。
 
-宿主适配器为 `electron/plugins/official/capture.ts`。原生正常取消使用绑定 session/PID 的 `cancel.request`，退出前确认 `cancel.json`；尚未退出的任务继续被资源 scope 登记，不以强杀冒充保存成功。
+宿主适配器为 `apps/desktop/electron/plugins/official/capture.ts`。原生正常取消使用绑定 session/PID 的 `cancel.request`，退出前确认 `cancel.json`；尚未退出的任务继续被资源 scope 登记，不以强杀冒充保存成功。
 
 完整原生界面、部分选字、多屏 DPI 与正式安装包验收仍由实施计划记录，构建和协议验证不代表这些交互已验收。

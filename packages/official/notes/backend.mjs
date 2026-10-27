@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-// node_modules/zod/v4/core/util.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
 	const numericValues = Object.values(entries).filter((v) => typeof v === "number");
 	return Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
@@ -555,7 +555,7 @@ function constantCatch(value) {
 	fn[CONSTANT_CATCH] = true;
 	return fn;
 }
-// node_modules/zod/v4/core/core.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/core.js
 var _a$1;
 var _zodDesc = {
 	value: void 0,
@@ -661,7 +661,7 @@ function config(newConfig) {
 	if (newConfig) Object.assign(globalConfig, newConfig);
 	return globalConfig;
 }
-// node_modules/zod/v4/core/errors.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/errors.js
 function _getMessage() {
 	const internals = this._zod;
 	internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -775,7 +775,7 @@ function formatError(error, mapper = (issue) => issue.message) {
 	processError(error);
 	return fieldErrors;
 }
-// node_modules/zod/v4/core/parse.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
 	return {
 		callee: params?.callee ?? callee,
@@ -977,7 +977,7 @@ var _safeEncodeAsync = (_Err) => async (schema, value, _ctx) => {
 var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 	return _safeParseAsync(_Err)(schema, value, _ctx);
 };
-// node_modules/zod/v4/core/regexes.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/regexes.js
 /**
 * @deprecated CUID v1 is deprecated by its authors due to information leakage
 * (timestamps embedded in the id). Use {@link cuid2} instead.
@@ -1049,7 +1049,7 @@ var boolean$1 = /^(?:true|false)$/i;
 var _null$2 = /^null$/i;
 var lowercase = /^[^A-Z]*$/;
 var uppercase = /^[^a-z]*$/;
-// node_modules/zod/v4/core/checks.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/checks.js
 var $ZodCheck = /*@__PURE__*/ $constructor("$ZodCheck", (inst, def) => {
 	var _a;
 	inst._zod ?? (inst._zod = {});
@@ -1344,7 +1344,7 @@ var $ZodCheckOverwrite = /*@__PURE__*/ $constructor("$ZodCheckOverwrite", (inst,
 		payload.value = def.tx(payload.value);
 	};
 });
-// node_modules/zod/v4/core/doc.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/doc.js
 var Doc = class {
 	constructor(args = [], closed = {}) {
 		this.content = [];
@@ -1377,13 +1377,13 @@ var Doc = class {
 		return new F(...Object.keys(this.closed), `return function (${this.args.join(", ")}) {\n${content.join("\n")}\n};`)(...Object.values(this.closed));
 	}
 };
-// node_modules/zod/v4/core/versions.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/versions.js
 var version = {
 	major: 4,
 	minor: 6,
 	patch: 7
 };
-// node_modules/zod/v4/core/schemas.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/schemas.js
 var $ZodType = /*@__PURE__*/ $constructor("$ZodType", (inst, def) => {
 	var _a;
 	inst ?? (inst = {});
@@ -2804,7 +2804,7 @@ function handleRefineResult(result, payload, input, inst) {
 		payload.issues.push(issue(_iss));
 	}
 }
-// node_modules/zod/v4/core/memoizer.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
 	constructor() {
 		super(`Cannot parse a reference cycle that closes through a transform`);
@@ -3056,7 +3056,7 @@ function isBackEdge(ctx, value) {
 	const backEdges = ctx[STATE]?.backEdges;
 	return backEdges !== void 0 && isRef(value) && backEdges.has(value);
 }
-// node_modules/zod/v4/locales/en.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/locales/en.js
 var error = () => {
 	const Sizable = {
 		string: {
@@ -3163,7 +3163,7 @@ var error = () => {
 function en_default() {
 	return { localeError: error() };
 }
-// node_modules/zod/v4/core/registries.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/registries.js
 var _a;
 var $ZodRegistry = class {
 	constructor() {
@@ -3209,7 +3209,7 @@ function registry() {
 }
 (_a = globalThis).__zod_globalRegistry ?? (_a.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
-// node_modules/zod/v4/core/api.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
 	if (def.checks) def.checks = [...def.checks];
 	return def;
@@ -3724,7 +3724,7 @@ function _check(fn, params) {
 	ch._zod.check = fn;
 	return ch;
 }
-// node_modules/zod/v4/core/to-json-schema.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
 	for (const source of sources) for (const key of Reflect.ownKeys(source)) if (Object.prototype.propertyIsEnumerable.call(source, key)) assignProp(target, key, source[key]);
 	return target;
@@ -4167,7 +4167,7 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
 	extractDefs(ctx, schema);
 	return finalize(ctx, schema);
 };
-// node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/json-schema-processors.js
 var narrowMin = (agg, key, value) => {
 	if (agg[key] === void 0 || value > agg[key]) agg[key] = value;
 };
@@ -4627,7 +4627,7 @@ var lazyProcessor = (schema, ctx, _json, params) => {
 	const seen = ctx.seen.get(schema);
 	seen.ref = innerType;
 };
-// node_modules/zod/v4/classic/errors.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
 function _lazyMethod(proto, key, make) {
 	Object.defineProperty(proto, key, {
@@ -4676,7 +4676,7 @@ var initializer = (inst, issues) => {
 	});
 };
 var ZodRealError = /*@__PURE__*/ $constructor("ZodError", initializer, void 0, { Parent: Error });
-// node_modules/zod/v4/classic/parse.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/parse.js
 var parse$1 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -4689,7 +4689,7 @@ var safeEncode = /* @__PURE__ */ _safeEncode(ZodRealError);
 var safeDecode = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
-// node_modules/zod/v4/classic/schemas.js
+// node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
 	if (!globalConfig.localeError) config(en_default());
 }
@@ -5597,7 +5597,7 @@ function json(params) {
 	});
 	return jsonSchema;
 }
-// src/features/plugins/settingsFields.ts
+// apps/desktop/src/features/plugins/settingsFields.ts
 var field = (key, type, extra = {}) => ({
 	key,
 	type,
@@ -5683,7 +5683,7 @@ field("excludedRoots", "lines", { label: "pluginConfig.fields.excludedRoots" }),
 	label: "pluginConfig.fields.maxFileMiB"
 }), field("includeHidden", "boolean", { label: "pluginConfig.fields.includeHidden" });
 field("endpoint", "text", { label: "translation.endpoint" }), field("model", "text", { label: "translation.model" }), field("key", "secret", { label: "translation.key" });
-// src/locales/locale-whitelist.ts
+// apps/desktop/src/locales/locale-whitelist.ts
 var SUPPORTED_LOCALES = ["zh-CN", "en-US"];
 var SUPPORTED_LOCALE_SET = new Set(SUPPORTED_LOCALES);
 var LOCALE_ALIASES = {
@@ -5717,7 +5717,7 @@ function normalizeLocale(locale) {
 function resolveAppLocale(preferredLocale, navigatorLocale) {
 	return normalizeLocale(preferredLocale) ?? normalizeLocale(navigatorLocale) ?? "zh-CN";
 }
-// src/features/settings/tileColor.ts
+// apps/desktop/src/features/settings/tileColor.ts
 var DEFAULT_TILE_COLOR = "#f6f3ec";
 var FULL_HEX_COLOR = /^#?([0-9a-fA-F]{6})$/;
 var SHORT_HEX_COLOR = /^#?([0-9a-fA-F]{3})$/;
@@ -5729,7 +5729,7 @@ function normalizeTileColor(value) {
 	if (shortMatch) return `#${shortMatch[1].split("").map((character) => character + character).join("").toLowerCase()}`;
 	return DEFAULT_TILE_COLOR;
 }
-// electron/persistence.ts
+// apps/desktop/electron/persistence.ts
 var AppError = class extends Error {
 	code;
 	details;
@@ -5773,7 +5773,7 @@ function confined(root, ...parts) {
 	if (!inside(path.resolve(root), file) || !inside(canonical(root), canonical(file))) throw new AppError("unsafePath", "路径超出授权目录");
 	return file;
 }
-// electron/host-config.ts
+// apps/desktop/electron/host-config.ts
 var superPanelFields = {
 	superPanelEnabled: boolean(),
 	superPanelButton: _enum([
@@ -5965,7 +5965,7 @@ var HostConfigStore = class {
 		return value;
 	}
 };
-// electron/store.ts
+// apps/desktop/electron/store.ts
 function component(value, allowEmpty = false) {
 	if (typeof value !== "string" || !allowEmpty && !value.trim() || value === "." || value.includes("..") || /[<>:"/\\|?*\x00-\x1f]/.test(value) || /[. ]$/.test(value) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(value)) throw new AppError("unsafePath", "文件名或分类名不合法");
 	return value;
@@ -6282,7 +6282,7 @@ var NoteStore = class {
 		}
 	}
 };
-// electron/security.ts
+// apps/desktop/electron/security.ts
 function imagePath(dataDir, candidate, background) {
 	const target = canonical(candidate);
 	if (!/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(target)) throw new AppError("permissionDenied", "仅允许加载图片资源");
@@ -6290,7 +6290,7 @@ function imagePath(dataDir, candidate, background) {
 	if (!fs.statSync(target).isFile()) throw new AppError("permissionDenied", "资源不是文件");
 	return target;
 }
-// src/features/reminders/presets.ts
+// apps/desktop/src/features/reminders/presets.ts
 var REMINDER_PRESETS = [
 	{
 		id: "15m",
@@ -6335,7 +6335,7 @@ function presetFireAt(id, now) {
 			return at;
 	}
 }
-// electron/reminders.ts
+// apps/desktop/electron/reminders.ts
 var OVERDUE_GRACE_MS = 6e5;
 var REMINDER_TICK_MS = 15e3;
 var MAX_FUTURE_MS = 31536e6;

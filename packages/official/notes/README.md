@@ -11,7 +11,7 @@ target, preserving the existing note and preventing duplicate IDs on rebuild.
 If restoring the target also fails, both failures are reported. This does not
 provide a multi-file transaction across a power loss.
 
-`electron/plugins/official/notes-data-contract.ts` defines the internal versioned
+`apps/desktop/electron/plugins/official/notes-data-contract.ts` defines the internal versioned
 data protocol. Ordinary host calls use `NotesDataClient` through the live plugin
 manager. Startup and final-save transports are restricted to the current owner;
 final writes require a new durable preparation before release.
@@ -25,9 +25,10 @@ pages can save. Reloading a page only helps when its installed archive already
 contains the new client; this is not unchanged compatibility with older archives.
 
 ```sh
-npm exec -- tsc -p packages/official/notes/tsconfig.json
-node packages/official/notes/build.mjs
-npm exec -- tsc -p electron/tsconfig.json
+pnpm sdk:build
+pnpm --filter @spark233/plugin-notes typecheck
+pnpm --filter @spark233/plugin-notes build:backend
+pnpm --filter @spark233/desktop exec tsc -p electron/tsconfig.json
 node scripts/verify-notes-backend.mjs
 ```
 
@@ -36,8 +37,8 @@ controlled trash refusal/move. It does not operate the user's recycle bin.
 Build the renderer and use the official assembly script for a complete archive:
 
 ```sh
-npm exec -- vite build
-node scripts/build-official-plugins.mjs --plugin spark233.notes
+pnpm --filter @spark233/desktop exec vite build
+pnpm --filter @spark233/plugin-notes build
 ```
 
 See [official package assembly](../README.md) and the

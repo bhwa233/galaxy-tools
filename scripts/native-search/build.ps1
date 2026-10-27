@@ -9,6 +9,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$tarExecutable = Join-Path $env:SystemRoot 'System32/tar.exe'
+if (-not (Test-Path -LiteralPath $tarExecutable -PathType Leaf)) { throw "Windows tar is missing: $tarExecutable" }
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 if (-not $BuildRoot) { $BuildRoot = Join-Path $repoRoot 'local-build/spark233/native-search' }
 $BuildRoot = [IO.Path]::GetFullPath($BuildRoot)
@@ -33,7 +35,7 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
     & git -C $SourceRepository archive --format=tar "--output=$archive" $commit
     if ($LASTEXITCODE -ne 0) { throw 'Pulse source export failed' }
     New-Item -ItemType Directory -Path $sourceRoot | Out-Null
-    & tar -xf $archive -C $sourceRoot
+    & $tarExecutable -xf $archive -C $sourceRoot
     if ($LASTEXITCODE -ne 0) { throw 'Pulse source extraction failed' }
 
     # Runtime names, services, pipes, locks, data roots and environment variables
@@ -298,7 +300,7 @@ if (-not $NinjaExecutable) {
     $NinjaExecutable = if (Test-Path -LiteralPath $portableNinja) { $portableNinja } else { (Get-Command ninja -ErrorAction Stop).Source }
 }
 $binaryRoot = Join-Path $BuildRoot 'build'
-& $CMakeExecutable -S (Join-Path $repoRoot 'native/search') -B $binaryRoot -G Ninja "-DCMAKE_MAKE_PROGRAM=$NinjaExecutable" "-DSPARK233_PULSE_SOURCE=$sourceRoot" -DCMAKE_BUILD_TYPE=Release
+& $CMakeExecutable -S (Join-Path $repoRoot 'packages/official/search/native-src') -B $binaryRoot -G Ninja "-DCMAKE_MAKE_PROGRAM=$NinjaExecutable" "-DSPARK233_PULSE_SOURCE=$sourceRoot" -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'Search configure failed' }
 & $CMakeExecutable --build $binaryRoot --target spark233_search spark233_search_probe pulse_index_caller_filter_test --parallel 4
 if ($LASTEXITCODE -ne 0) { throw 'Search build failed' }
@@ -315,7 +317,7 @@ $resourceFiles = foreach ($name in @('spark233.Search.exe', 'spark233.Index.exe'
     @{ name = $name; bytes = (Get-Item -LiteralPath $resourcePath).Length; sha256 = (Get-FileHash -LiteralPath $resourcePath -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 $sourceHashes = @{}
-foreach ($relative in @('native/search/search.cpp', 'native/search/CMakeLists.txt', 'scripts/native-search/build.ps1')) {
+foreach ($relative in @('packages/official/search/native-src/search.cpp', 'packages/official/search/native-src/CMakeLists.txt', 'scripts/native-search/build.ps1')) {
     $sourceHashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $repoRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 @{ protocol = 1; files = @($resourceFiles); inputs = $sourceHashes; upstream = @{ commit = $commit; archiveSha256 = $manifest.archiveSha256; adaptation = $manifest.adaptation } } |

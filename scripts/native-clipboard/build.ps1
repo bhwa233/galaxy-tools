@@ -14,7 +14,7 @@ foreach ($line in $environment) {
 }
 $cmake = Join-Path $tools 'cmake-4.4.4-windows-x86_64/bin/cmake.exe'
 $ninja = Join-Path $tools 'ninja-1.13.2/ninja.exe'
-& $cmake -S (Join-Path $repoRoot 'native/clipboard') -B (Join-Path $BuildRoot 'build') -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DCMAKE_BUILD_TYPE=Release
+& $cmake -S (Join-Path $repoRoot 'packages/official/clipboard/native-src') -B (Join-Path $BuildRoot 'build') -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'Clipboard native configure failed' }
 & $cmake --build (Join-Path $BuildRoot 'build') --parallel 2
 if ($LASTEXITCODE -ne 0) { throw 'Clipboard native build failed' }

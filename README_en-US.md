@@ -85,37 +85,61 @@ be reopened through the tray; hiding is available in the context menu. Failed
 saves keep the editor open. See [note and capsule behavior](README.md) and
 [remaining capsule acceptance limits](Docs/edge-capsules.md).
 
-Use Node.js **26.12.1** and npm **12.2.1**, pinned in `.node-version` and
+Use Node.js **26.12.1** and pnpm **12.15.0**, pinned in `.node-version` and
 `package.json`. On Windows, dot-source `. ./scripts/use-toolchain.ps1` to select
 the project's portable runtime without changing global Node. Electron's embedded
 Node 24 is separate from this development toolchain. Windows GUI/native builds
 require Windows tools; do not share `node_modules` between Windows and Linux.
 
+If pnpm is missing, use the selected Node's npm to prepare an isolated toolchain.
+npm 12 blocks package installation scripts by default, so approve pnpm and
+rebuild its Windows launchers before selecting the toolchain again:
+
+```powershell
+npm.cmd install --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" --save-exact --no-package-lock pnpm@12.15.0
+npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" install-scripts approve pnpm
+npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" rebuild pnpm
+. ./scripts/use-toolchain.ps1
+```
+
+`approve` records script permission in this toolchain directory; `rebuild`
+executes pnpm's installation script. These npm commands only prepare pnpm.
+Project dependencies use pnpm, and the global toolchain stays untouched.
+
+This is a pnpm workspace with one root `pnpm-lock.yaml`. Run the commands below
+from the repository root. `apps/desktop` owns Electron, React and app configs;
+`packages/sdk`, `packages/ui`, `packages/official/*` and `examples/plugins/*`
+are separate workspaces. Declare dependencies in the workspace that uses them;
+root dependencies are shared development tools. Use
+`pnpm --filter @spark233/desktop <command>` for desktop-only tasks.
+Desktop output lives in `apps/desktop/dist` and `apps/desktop/dist-electron`.
+`dist-plugins`, `dist-host`, `release-electron` and `local-build` stay at the root.
+
 ```powershell
 . ./scripts/use-toolchain.ps1
-npm ci
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 `dev` prepares the matching Electron runtime and seven offline plugin packages,
 then starts Vite and Electron. React edits hot-reload; restart after changes to
-`electron/`. Native resources can require the Windows C++ toolchain when built
+`apps/desktop/electron/`. Native resources can require the Windows C++ toolchain when built
 from source. End users do not run npm lifecycle scripts or compile plugins.
 
 ```powershell
-npm run typecheck
-npm run lint
-npm test
-npm run build
-npm start
-npm run pack:win  # release-electron/win-unpacked
-npm run dist:win  # NSIS installer in release-electron
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm start
+pnpm pack:win  # release-electron/win-unpacked
+pnpm dist:win  # NSIS installer in release-electron
 ```
 
-`npm run build` assembles all seven packages into `dist-plugins/`; Windows builds
+`pnpm build` assembles all seven packages into `dist-plugins/`; Windows builds
 include them outside ASAR at `resources/plugins/`. See
 [official plugin build instructions](packages/official/README.md) for independent
-plugin artifacts. Plain `npm pack` in a source directory does not assemble all
+plugin artifacts. Plain `pnpm pack` in a source directory does not assemble all
 renderer, native and dictionary resources. Distribute the entire unpacked
 application directory. Current installer and expanded plugin file sizes have
 been measured in the [distribution record](Docs/evidence/spark233-packaging.md).

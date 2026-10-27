@@ -2,7 +2,7 @@
 
 本协议供明确实现 spark233 宿主协议的可信原生程序使用，不自动适配普通 EXE 的命令行或窗口。官方截图、OCR、剪贴板和搜索仍使用各自专用 adapter。Web 插件调用原生能力时只选择本插件清单声明的入口 ID 和公开命令；renderer 不能提交可执行路径或进程参数。
 
-类型定义见 [native-protocol.ts](../packages/sdk/src/native-protocol.ts)，宿主实现见 [native-runtime.ts](../electron/plugins/native-runtime.ts)。SDK 入口导出 `NATIVE_PLUGIN_PROTOCOL`、`NativePluginRequest` 和 `NativePluginMessage`。
+类型定义见 [native-protocol.ts](../packages/sdk/src/native-protocol.ts)，宿主实现见 [native-runtime.ts](../apps/desktop/electron/plugins/native-runtime.ts)。SDK 入口导出 `NATIVE_PLUGIN_PROTOCOL`、`NativePluginRequest` 和 `NativePluginMessage`。
 
 ## 程序与权限
 

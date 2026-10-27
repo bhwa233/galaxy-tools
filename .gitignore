@@ -29,6 +29,7 @@ x86/
 
 ## Node / Tauri
 node_modules/
+.pnpm-store/
 dist/
 src-tauri/target/
 src-tauri/gen/
@@ -47,6 +48,7 @@ CLAUDE.md
 .claude
 
 src/assets/fonts/SourceHanSerifSC-Bold.woff2
+apps/desktop/src/assets/fonts/SourceHanSerifSC-Bold.woff2
 
 ## IDE
 .idea/

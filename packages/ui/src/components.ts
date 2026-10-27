@@ -1,13 +1,7 @@
-// Keep the installed shadcn source authoritative; the UI build bundles these
-// exports and emits self-contained declarations for independent npm consumers.
-export { Button, buttonVariants } from "../../../src/components/ui/button.js";
-export {
-  Alert,
-  AlertTitle,
-  AlertDescription,
-  AlertAction,
-} from "../../../src/components/ui/alert.js";
-export { Badge, badgeVariants } from "../../../src/components/ui/badge.js";
+// Shared shadcn sources are owned by this package and used by the host too.
+export { Button, buttonVariants } from "./components/button.js";
+export { Alert, AlertTitle, AlertDescription, AlertAction } from "./components/alert.js";
+export { Badge, badgeVariants } from "./components/badge.js";
 export {
   Card,
   CardHeader,
@@ -16,7 +10,7 @@ export {
   CardContent,
   CardFooter,
   CardAction,
-} from "../../../src/components/ui/card.js";
-export { Input } from "../../../src/components/ui/input.js";
-export { Textarea } from "../../../src/components/ui/textarea.js";
-export { Spinner } from "../../../src/components/ui/spinner.js";
+} from "./components/card.js";
+export { Input } from "./components/input.js";
+export { Textarea } from "./components/textarea.js";
+export { Spinner } from "./components/spinner.js";

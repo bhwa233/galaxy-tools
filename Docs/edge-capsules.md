@@ -19,11 +19,11 @@
 
 ## 实现边界
 
-`electron/main.ts` 中的布局表是每张便签的唯一状态来源。展开矩形 `bounds` 与 `capsule` 位置分开；`folded` 不等于隐藏，`visible=false` 才会退出桌面和队列。布局协议升级到 version 2，兼容不含胶囊字段的 version 1。
+`apps/desktop/electron/main.ts` 中的布局表是每张便签的唯一状态来源。展开矩形 `bounds` 与 `capsule` 位置分开；`folded` 不等于隐藏，`visible=false` 才会退出桌面和队列。布局协议升级到 version 2，兼容不含胶囊字段的 version 1。
 
-`electron/capsules.ts` 只协调桌面呈现与交互；`electron/capsule-layout.ts` 处理队列、排序与屏幕 DIP 几何。每个有内容的屏幕边缘共用一个窗口，全应用共用一个预览窗口，悬浮胶囊单独承载；不为每个收纳便签保留正文 renderer。
+`apps/desktop/electron/capsules.ts` 只协调桌面呈现与交互；`apps/desktop/electron/capsule-layout.ts` 处理队列、排序与屏幕 DIP 几何。每个有内容的屏幕边缘共用一个窗口，全应用共用一个预览窗口，悬浮胶囊单独承载；不为每个收纳便签保留正文 renderer。
 
-`src/features/capsules/` 提供胶囊/主胶囊和预览界面，复用现有主题、字体和 MarkdownPreview。Windows 原生窗口形状只包含实际胶囊，透明空白不拦截桌面鼠标。
+`apps/desktop/src/features/capsules/` 提供胶囊/主胶囊和预览界面，复用现有主题、字体和 MarkdownPreview。Windows 原生窗口形状只包含实际胶囊，透明空白不拦截桌面鼠标。
 
 拖动使用现有 Pointer Capture 与 Electron 屏幕坐标。主进程拥有起拖成员、目标边缘及最终落点，显示器/DPI 变化时取消当前手势并恢复。整队迁移提交前重新检查成员，避免把已经隐藏或删除的便签一起迁走。
 
@@ -31,7 +31,7 @@
 
 ## Windows 适配
 
-`electron/windows.ts` 保留之前的 GPU 工作目录修复，并启动 `FullscreenWatcher.cs` 对应的小型 Windows 观察进程。它使用 Win32 查询前台窗口、显示器和窗口矩形；不安装输入钩子、不激活窗口。只在对应显示器有外部全屏窗口时调整本应用窗口的 Z 序。
+`apps/desktop/electron/windows.ts` 保留之前的 GPU 工作目录修复，并启动 `FullscreenWatcher.cs` 对应的小型 Windows 观察进程。它使用 Win32 查询前台窗口、显示器和窗口矩形；不安装输入钩子、不激活窗口。只在对应显示器有外部全屏窗口时调整本应用窗口的 Z 序。
 
 首次运行使用 Windows 11 自带 .NET Framework 编译器，将随应用提供的固定源码编译到配置目录的 `native/` 缓存，按源码 SHA-256 命名复用。运行期间不常驻 PowerShell，不需要 Rust、额外 npm 原生模块或单独安装 .NET SDK。若系统策略阻止编译/启动，日志会记录 `fullscreen-watcher` 错误；胶囊功能仍可用，但全屏避让需要修复运行环境。
 

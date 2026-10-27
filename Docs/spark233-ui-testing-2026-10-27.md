@@ -28,21 +28,21 @@
 
 ## 执行入口
 
-使用项目固定的 Node/npm，首次安装开发依赖与对应浏览器：
+当前 pnpm monorepo 使用固定的 Node 26.12.1 / pnpm 12.15.0，从仓库根目录安装开发依赖与对应浏览器；下方“完成记录”保留迁移前的原始运行命令和证据：
 
 ```bash
-npm ci
-npx playwright install chromium --only-shell
+pnpm install --frozen-lockfile
+pnpm --filter @spark233/desktop exec playwright install chromium --only-shell
 ```
 
 日常只运行启动器组件套件，或指定其中一个文件：
 
 ```bash
-npm run test:ui
-npm run test:ui -- src/features/launcher/Launcher.browser.test.tsx
+pnpm test:ui
+pnpm test:ui src/features/launcher/Launcher.browser.test.tsx
 ```
 
-`npm test` 继续运行原 Node 功能套件。自动失败截图位于 `local-build/browser-ui/attachments/failure-screenshots/`，主动截图目录为 `local-build/browser-ui/screenshots/`；失败轨迹保存在 `local-build/browser-ui/traces/`，可查看断言前的 DOM 与交互，成功用例不保留最终轨迹压缩包。不提交测试浏览器缓存或生成产物。
+`pnpm test` 继续运行原 Node 功能套件。单文件参数相对于 `apps/desktop`（根命令会委派给桌面 workspace）。自动失败截图位于 `local-build/browser-ui/attachments/failure-screenshots/`，主动截图目录为 `local-build/browser-ui/screenshots/`；失败轨迹保存在 `local-build/browser-ui/traces/`，可查看断言前的 DOM 与交互，成功用例不保留最终轨迹压缩包。不提交测试浏览器缓存或生成产物。
 
 ## 完成记录
 

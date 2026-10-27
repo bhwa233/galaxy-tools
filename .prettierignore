@@ -2,4 +2,11 @@ dist/
 node_modules/
 src-tauri/target/
 src-tauri/gen/
-package-lock.json
+pnpm-lock.yaml
+
+# Generated bundles, provenance and vendored license text retain build/source bytes.
+examples/plugins/*/sdk.js
+packages/official/*/backend.mjs
+packages/official/*/backend-resources.json
+packages/official/*/data/provenance.json
+packages/official/*/licenses/**

@@ -4,13 +4,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, test, vi } from "vitest";
 import notesBackend from "./backend.ts";
-import type { BackendContext } from "../../../electron/plugins/backend-worker.js";
+import type { BackendContext } from "../../../apps/desktop/electron/plugins/backend-worker.js";
 import type {
   NotesDataAction,
   NotesDataParameters,
   NotesDataResult,
-} from "../../../electron/plugins/official/notes-data-contract.js";
-import type { JsonValue } from "../../sdk/src/index.js";
+} from "../../../apps/desktop/electron/plugins/official/notes-data-contract.js";
+import type { JsonValue } from "@spark233/sdk";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

@@ -6,13 +6,14 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { PluginManager } from "../dist-electron/electron/plugins/manager.js";
+import { createRequire } from "node:module";
+import { PluginManager } from "../apps/desktop/dist-electron/electron/plugins/manager.js";
 import {
   PluginBackupService,
   readPendingBackupDataRoots,
-} from "../dist-electron/electron/plugins/backup.js";
-import { defaultHostEnvironment } from "../dist-electron/electron/plugins/manifest.js";
-import { HostPrivateDataRootsStore } from "../dist-electron/electron/private-data-roots.js";
+} from "../apps/desktop/dist-electron/electron/plugins/backup.js";
+import { defaultHostEnvironment } from "../apps/desktop/dist-electron/electron/plugins/manifest.js";
+import { HostPrivateDataRootsStore } from "../apps/desktop/dist-electron/electron/private-data-roots.js";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const parent = path.join(repo, "local-build/spark233/plugin-backup-probe");
@@ -233,14 +234,15 @@ if (childContext) {
 
     // Generate the legacy snapshot using the actual checked-in schema 1 writer,
     // rather than duplicating its manifest or recovery schema in this probe.
-    const { transformWithOxc } = await import("vite");
+    const desktopRequire = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
+    const { transformWithOxc } = await import(pathToFileURL(desktopRequire.resolve("vite")).href);
     const legacySource = execFileSync(
       "git",
       ["show", "37bc1c55d9b544baec2b3ce902a8c0ce6d9ec3e7:electron/plugins/backup.ts"],
       { cwd: repo, encoding: "utf8" },
     );
     const legacyRoot = path.join(root, "legacy-runtime");
-    fs.cpSync(path.join(repo, "dist-electron"), legacyRoot, { recursive: true });
+    fs.cpSync(path.join(repo, "apps/desktop/dist-electron"), legacyRoot, { recursive: true });
     const legacyEntry = path.join(legacyRoot, "electron/plugins/backup-legacy.js");
     write(legacyEntry, (await transformWithOxc(legacySource, "backup-legacy.ts")).code);
     const { PluginBackupService: LegacyBackupService } = await import(
@@ -299,7 +301,7 @@ if (childContext) {
 
     for (const file of ["electron/plugins/backup.js", "electron/plugins/manager.js"]) {
       report.inputs[file] = createHash("sha256")
-        .update(fs.readFileSync(path.join(repo, "dist-electron", file)))
+        .update(fs.readFileSync(path.join(repo, "apps/desktop/dist-electron", file)))
         .digest("hex");
     }
     report.inputs.legacyWriter = createHash("sha256").update(legacySource).digest("hex");
