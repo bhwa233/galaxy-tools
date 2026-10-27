@@ -1,4 +1,6 @@
+import { openSettingsWindow } from "../settings/api";
 import { useEffect, useRef, useState } from "react";
+import { translationTarget } from "../../../packages/official/translation/language.mjs";
 import { registerHostPreparation } from "../windows/hostPreparation";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -12,25 +14,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { invoke, writeText } from "../../platform/desktop";
-import {
-  configureTranslation,
-  getTranslationConfiguration,
-  translationAction,
-  watchTranslationChunks,
-} from "./api";
+import { invoke, listen, writeText } from "../../platform/desktop";
+import { getTranslationConfiguration, translationAction, watchTranslationChunks } from "./api";
 import type {
   DictionaryEntryResult,
   DictionaryItem,
@@ -72,16 +62,12 @@ export function TranslationWorkspace({
   const [translation, setTranslation] = useState<TranslationResult>();
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const saving = false;
   const [error, setError] = useState<string>();
   const [cancelled, setCancelled] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [config, setConfig] = useState<TranslationConfiguration>();
-  const [endpoint, setEndpoint] = useState("");
-  const [model, setModel] = useState("");
-  const [key, setKey] = useState("");
-  const [clearKey, setClearKey] = useState(false);
   const current = useRef<string | undefined>(undefined);
   const mounted = useRef(true);
   useEffect(
@@ -98,6 +84,18 @@ export function TranslationWorkspace({
   const abortRequested = useRef(false);
   const queryGeneration = useRef(0);
   const exportGeneration = useRef(0);
+
+  useEffect(() => {
+    const subscription = listen<{ pluginId: string }>("plugin-settings-changed", ({ payload }) => {
+      if (payload.pluginId === "spark233.translation")
+        void getTranslationConfiguration()
+          .then(setConfig)
+          .catch((value) => setError(errorText(value)));
+    });
+    return () => {
+      void subscription.then((stop) => stop());
+    };
+  }, []);
 
   const resetTranslation = () => {
     const requestId = current.current;
@@ -155,8 +153,6 @@ export function TranslationWorkspace({
       .then((status) => {
         if (!closed) {
           setConfig(status);
-          setEndpoint(status.endpoint);
-          setModel(status.model);
         }
       })
       .catch((value: unknown) => {
@@ -265,26 +261,7 @@ export function TranslationWorkspace({
       setError(errorText(value));
     }
   };
-  const save = async () => {
-    setSaving(true);
-    setError(undefined);
-    try {
-      const status = await configureTranslation({
-        endpoint: endpoint.trim(),
-        model: model.trim(),
-        ...(clearKey ? { key: "" } : key ? { key } : {}),
-      });
-      setConfig(status);
-      setEndpoint(status.endpoint);
-      setModel(status.model);
-      setKey("");
-      setClearKey(false);
-    } catch (value) {
-      setError(errorText(value));
-    } finally {
-      setSaving(false);
-    }
-  };
+
   const exportResult = async (target: "copy" | "notes", content = translated) => {
     if (target === "notes" && !notesAvailable) {
       setError(unavailableTargetReason);
@@ -314,7 +291,7 @@ export function TranslationWorkspace({
       if (mounted.current && exportGeneration.current === generation) setExporting(false);
     }
   };
-  const defaultEnglish = /\p{Script=Han}/u.test(text);
+  const defaultEnglish = translationTarget(text) === "en";
   const dictionaryText = entry
     ? [
         entry.entry.word,
@@ -611,109 +588,19 @@ export function TranslationWorkspace({
         </CardFooter>
       </Card>
 
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>{t("translation.config", { defaultValue: "翻译服务配置" })}</CardTitle>
-          <CardDescription>
-            {t("translation.configHint", {
-              defaultValue:
-                "只保留一个生效配置。密钥保存在插件私有目录，不进入查询结果或界面回显。",
-            })}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            id="translation-provider"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void save();
-            }}
-          >
-            <FieldGroup>
-              <Field data-disabled={saving || busy}>
-                <FieldLabel htmlFor="translation-endpoint">
-                  {t("translation.endpoint", { defaultValue: "兼容服务地址" })}
-                </FieldLabel>
-                <Input
-                  id="translation-endpoint"
-                  type="url"
-                  value={endpoint}
-                  onChange={(event) => setEndpoint(event.target.value)}
-                  required
-                  disabled={saving || busy}
-                  placeholder="https://provider.example/v1"
-                />
-                <FieldDescription>
-                  {t("translation.endpointHint", {
-                    defaultValue: "使用 HTTPS；本机 localhost / 127.0.0.1 可使用 HTTP。",
-                  })}
-                </FieldDescription>
-              </Field>
-              <Field data-disabled={saving || busy}>
-                <FieldLabel htmlFor="translation-model">
-                  {t("translation.model", { defaultValue: "模型名" })}
-                </FieldLabel>
-                <Input
-                  id="translation-model"
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                  maxLength={200}
-                  required
-                  disabled={saving || busy}
-                />
-              </Field>
-              <Field data-disabled={saving || busy || clearKey}>
-                <FieldLabel htmlFor="translation-key">
-                  {t("translation.key", { defaultValue: "API 密钥" })}
-                  {config?.hasKey && (
-                    <Badge variant="secondary">
-                      {t("translation.keySaved", { defaultValue: "已保存" })}
-                    </Badge>
-                  )}
-                </FieldLabel>
-                <Input
-                  id="translation-key"
-                  type="password"
-                  autoComplete="new-password"
-                  value={key}
-                  onChange={(event) => setKey(event.target.value)}
-                  maxLength={8192}
-                  disabled={saving || busy || clearKey}
-                />
-                <FieldDescription>
-                  {t("translation.keyHint", {
-                    defaultValue: "留空保留已保存密钥。本机免密服务可以不填。",
-                  })}
-                </FieldDescription>
-              </Field>
-              <Field orientation="horizontal" data-disabled={saving || busy}>
-                <Checkbox
-                  id="translation-clear-key"
-                  checked={clearKey}
-                  onCheckedChange={(checked) => setClearKey(checked === true)}
-                  disabled={saving || busy}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="translation-clear-key">
-                    {t("translation.clearKey", { defaultValue: "清除已保存密钥" })}
-                  </FieldLabel>
-                </FieldContent>
-              </Field>
-            </FieldGroup>
-          </form>
-        </CardContent>
-        <CardFooter>
-          <Button
-            size="sm"
-            type="submit"
-            form="translation-provider"
-            disabled={saving || busy || !endpoint.trim() || !model.trim()}
-          >
-            {saving && <Spinner data-icon="inline-start" />}
-            {t("translation.saveConfig", { defaultValue: "保存配置" })}
-          </Button>
-        </CardFooter>
-      </Card>
+      <Button
+        variant="outline"
+        className="self-start"
+        onClick={() => {
+          void openSettingsWindow({
+            page: "plugins",
+            pluginId: "spark233.translation",
+            tab: "config",
+          }).catch((value) => setError(errorText(value)));
+        }}
+      >
+        {t("pluginConfig.openSettings")}
+      </Button>
     </section>
   );
 }

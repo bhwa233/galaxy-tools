@@ -5,7 +5,7 @@ claim that its npm scope has been registered. Publishing is a separate step.
 
 A plugin is a prebuilt npm package with a `spark233` manifest in `package.json`.
 The manifest is validated without running plugin code or npm lifecycle scripts.
-`schemaVersion` is 1; the current host API is 1.1.0 and theme protocol is 1.0.0.
+`schemaVersion` is 1; the current host API is 1.2.0 and theme protocol is 1.0.0.
 Package, plugin data and host API versions are independent.
 
 Web entry paths, backend entry paths and native executable paths are relative to
@@ -39,6 +39,32 @@ when a required plugin is absent, disabled, failed or incompatible. Direct or
 stale activation is rejected before the command runtime starts. This never
 automatically enables the dependency or disables unrelated commands; an optional
 dependency remains optional for the rest of the plugin.
+
+Host API 1.2 / SDK 0.3 adds source-application commands. A command can declare
+`sourceApplications: ["winword.exe", "excel.exe"]`; use `api: "^1.2.0"` when using
+this field or the new `window` input/match kind. Rules contain 1–32 executable
+basenames, are trimmed, lowercased and deduplicated, and reject full paths,
+control characters and Windows filename separators. There are no wildcards.
+Commands without this field retain their existing availability.
+
+The host supplies `context.sourceApplication` from the captured source window.
+It never contains a title, full executable path, process handle or HWND.
+With no selected text/image/files, a `window` context has the shape
+`{ kind: "window", sourceApplication: "winword.exe" }`; those three existing
+context kinds can carry the same optional source metadata. Declare
+`inputs: ["window"]` for a general source-window action, or combine the source
+rule with an existing input kind to restrict a text/image/file action.
+Source-restricted commands without a matching content input receive only the
+window metadata, rather than gaining access to selected content implicitly.
+
+The launcher applies source rules to ordinary results, aliases, pins, modes,
+providers and secondary actions. Actual activation/query checks the declaration
+again before cold startup and before dispatch. Missing or mismatching trusted
+source metadata rejects a restricted command; renderer-supplied paths or source
+names do not establish that context. The host-only dispatch guard is an in-memory
+callback and is not part of IPC or this plugin protocol. Older commands that do
+not opt into source/window features receive their original context shape,
+without the new metadata or a window-only context.
 
 For a data schema change, increment `spark233.dataVersion` and declare a prebuilt
 `spark233.migration.entry`, such as `migrate.mjs`. Migration requires the

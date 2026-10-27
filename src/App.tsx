@@ -2,6 +2,7 @@ import { CapsuleHost } from "./features/capsules/CapsuleHost";
 import { useEffect } from "react";
 import "./App.css";
 import { ContextMenuProvider } from "./components/ContextMenu";
+import { SettingsWindow } from "./features/settings/SettingsWindow";
 import { Launcher } from "./features/launcher/Launcher";
 import { MainWindow } from "./components/MainWindow";
 import { NotePad } from "./components/NotePad";
@@ -26,15 +27,15 @@ function App() {
   const activeView = route.view;
   useEffect(() => {
     const subscription =
-      activeView === "launcher"
+      activeView === "launcher" || activeView === "settings"
         ? listen<ClosePrepareRequest>("desktop:prepare-close", (event) => {
             void prepareHostWindow()
               .then(
-                () => reportClosePreparation(event.payload.requestId, "launcher", "ready"),
+                () => reportClosePreparation(event.payload.requestId, activeView, "ready"),
                 (error) =>
                   reportClosePreparation(
                     event.payload.requestId,
-                    "launcher",
+                    activeView,
                     "failed",
                     String(error),
                   ),
@@ -114,7 +115,9 @@ function App() {
   return (
     <ContextMenuProvider>
       <div className="app-window-shell h-screen font-body text-ink overflow-hidden">
-        {activeView === "launcher" ? (
+        {activeView === "settings" ? (
+          <SettingsWindow />
+        ) : activeView === "launcher" ? (
           <Launcher />
         ) : activeView === "main" ? (
           <MainWindow />

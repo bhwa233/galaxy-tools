@@ -1,4 +1,4 @@
-import type { TileColorMode } from "./types";
+import type { TileColorMode } from "./types.js";
 
 export const DEFAULT_TILE_COLOR = "#f6f3ec";
 export const SYSTEM_TILE_COLOR_LIGHT = "#f6f3ec";

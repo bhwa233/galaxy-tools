@@ -1,5 +1,7 @@
 # 便签业务边界尚未完成的实现续作
 
+> 2026-10-26：下文描述发现缺口及暂停时的历史输入。真实数据引擎和 main 异步接线已完成当前源码续作，接线过程见[utility 接线记录](spark233-notes-utility-integration.md)，通用备份、崩溃恢复与最新 Windows 候选见[本轮收口](spark233-notes-finalization.md)。
+
 日期：2026-10-25。依据为架构 4.1/4.3 和 TODO P3.1/P3.3，不新增独立于原目标的范围。
 
 已确认源码现状：`packages/official/notes/backend.mjs` 仅校验命令并返回 `action`；`electron/plugins/official/notes.ts` 接收主进程提供的 `newNote/search/open` 回调；`electron/main.ts` 仍创建并直接调用 `NoteStore`，负责正文、分类、附件及便签搜索。便签 renderer 已从插件安装目录加载，资源生命周期、保存拒绝和固定样本证据有效，但这些证据不能证明业务引擎已经随独立包发布。

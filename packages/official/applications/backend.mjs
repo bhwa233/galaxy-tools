@@ -5,6 +5,13 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createPinyinMatcher } from "./pinyin.mjs";
+import {
+  SUPPORTED_KINDS,
+  validateEntries,
+  readSettingsFile,
+  writeSettingsFile,
+  assertEntryTarget,
+} from "./custom-entries.mjs";
 
 const CACHE_MS = 60_000;
 const MAX_ENTRIES = 20_000;
@@ -54,22 +61,29 @@ export default function applicationsPlugin(lifetime) {
   lifetime.signal.addEventListener("abort", abort, { once: true });
   let entries = new Map();
   let refreshedAt = 0;
+  let lastAttemptAt = 0;
+  let inventoryState = "partial";
+  let sourceStatus = { menus: [], registeredApplications: { state: "partial" } };
+  let snapshots = new Map();
+  const rejectedTargets = new Set();
+  const roots = menuRoots();
   let inventoryRevision = 0;
   let refreshing;
   let warnings = [];
   let sources = { shortcuts: 0, registeredApplications: 0, appx: 0 };
   let stopping = false;
-  let currentQuery;
+  const queries = new Map();
   const customFile = path.join(lifetime.dataDir, "custom-entries.json");
   let customEntries = [];
   let settingsLoaded;
   let saving = Promise.resolve();
+  const acceptedSaves = new Set();
   const watchers = [];
   const invalidate = () => {
     inventoryRevision++;
-    refreshedAt = 0;
+    lastAttemptAt = 0;
   };
-  for (const directory of menuRoots()) {
+  for (const directory of roots) {
     try {
       const watcher = watch(directory, { recursive: true }, invalidate);
       watcher.on("error", invalidate);
@@ -81,98 +95,92 @@ export default function applicationsPlugin(lifetime) {
   const calibration = setInterval(invalidate, CACHE_MS);
   calibration.unref();
 
-  function validateEntries(value) {
-    if (!Array.isArray(value) || value.length > 200)
-      throw new Error("Custom applications must be a list of at most 200 entries");
-    const ids = new Set();
-    return value.map((entry) => {
-      if (
-        !entry ||
-        typeof entry !== "object" ||
-        Array.isArray(entry) ||
-        typeof entry.id !== "string" ||
-        !/^[a-f0-9-]{36}$/i.test(entry.id) ||
-        ids.has(entry.id) ||
-        typeof entry.title !== "string" ||
-        !entry.title.trim() ||
-        entry.title.length > 160 ||
-        typeof entry.path !== "string" ||
-        !path.isAbsolute(entry.path) ||
-        entry.path.length > 32768 ||
-        !/\.(?:exe|lnk|url)$/i.test(entry.path) ||
-        /[\x00-\x1f]/.test(entry.path) ||
-        !Array.isArray(entry.args) ||
-        entry.args.length > 64 ||
-        entry.args.some(
-          (argument) =>
-            typeof argument !== "string" || argument.length > 4096 || argument.includes("\0"),
-        ) ||
-        entry.args.reduce((length, argument) => length + argument.length, 0) > 24000 ||
-        typeof entry.cwd !== "string" ||
-        entry.cwd.length > 32768 ||
-        /[\x00-\x1f]/.test(entry.cwd) ||
-        (entry.cwd && !path.isAbsolute(entry.cwd))
-      )
-        throw new Error("Invalid custom application name, path, arguments, or working directory");
-      if (!/\.exe$/i.test(entry.path) && (entry.args.length || entry.cwd))
-        throw new Error("Shortcut entries retain their own arguments and working directory");
-      ids.add(entry.id);
-      return {
-        id: entry.id,
-        title: entry.title.trim(),
-        path: path.resolve(entry.path),
-        args: [...entry.args],
-        cwd: entry.cwd ? path.resolve(entry.cwd) : "",
-      };
-    });
-  }
   async function loadSettings() {
     if (!settingsLoaded)
       settingsLoaded = (async () => {
-        try {
-          if ((await fs.stat(customFile)).size > 2 * 1024 * 1024)
-            throw new Error("Custom application settings are too large");
-          const saved = JSON.parse(await fs.readFile(customFile, "utf8"));
-          if (saved.version !== 1) throw new Error("Unknown custom application settings version");
-          customEntries = validateEntries(saved.entries);
-        } catch (error) {
-          if (error.code !== "ENOENT") throw error;
-        }
+        customEntries = (await readSettingsFile(customFile))?.entries ?? [];
       })();
     await settingsLoaded;
   }
   function applyCustomEntries(target) {
-    for (const [id, entry] of target) if (entry.target.kind === "custom") target.delete(id);
+    for (const [id, entry] of target) if (entry.customKind) target.delete(id);
     for (const entry of customEntries) {
       const id = idFor("custom", entry.id);
+      if (rejectedTargets.has(id)) continue;
       target.set(id, {
         id,
         title: entry.title,
         description: entry.path,
-        target: { kind: "custom", path: entry.path, args: [...entry.args], cwd: entry.cwd },
+        customKind: entry.kind,
+        target:
+          entry.kind === "document" || entry.kind === "directory"
+            ? { kind: entry.kind, path: entry.path }
+            : { kind: "custom", path: entry.path, args: [...entry.args], cwd: entry.cwd },
       });
     }
   }
 
+  function selectionVersion(entry) {
+    const target = entry.target;
+    return createHash("sha256")
+      .update(
+        JSON.stringify([
+          entry.customKind ?? target.kind,
+          target.path ?? "",
+          target.args ?? [],
+          target.cwd ?? "",
+          target.appUserModelId ?? "",
+        ]),
+      )
+      .digest("hex");
+  }
+
   async function discover() {
     const revision = inventoryRevision;
-    const next = new Map();
+    const pending = new Map(snapshots);
     const issues = [];
-    for (const root of menuRoots()) {
+    const menuStates = [];
+    const authoritativeIds = new Set();
+    // Snapshots belong to a source, never to the merged result. A failed scan
+    // cannot confirm deletions; custom entries are applied from current settings
+    // only after discovery, so removed custom IDs cannot return through fallback.
+    const accept = (key, found, complete) => {
+      const previous = snapshots.get(key);
+      const snapshot = complete
+        ? { entries: found, hasCompleteSnapshot: true, lastCompleteAt: Date.now() }
+        : previous?.hasCompleteSnapshot
+          ? previous
+          : { entries: found, hasCompleteSnapshot: false, lastCompleteAt: 0 };
+      pending.set(key, snapshot);
+      if (complete) {
+        for (const id of previous?.entries.keys() ?? []) authoritativeIds.add(id);
+        for (const id of found.keys()) authoritativeIds.add(id);
+      }
+      return {
+        state: complete ? "complete" : snapshot.hasCompleteSnapshot ? "stale" : "partial",
+        hasCompleteSnapshot: snapshot.hasCompleteSnapshot,
+        lastCompleteAt: snapshot.lastCompleteAt,
+        count: snapshot.entries.size,
+      };
+    };
+    for (const root of roots) {
+      const found = new Map();
       const directories = [root];
+      let complete = true;
       while (directories.length) {
         controller.signal.throwIfAborted();
         const directory = directories.pop();
         let children;
         try {
           children = await fs.readdir(directory, { withFileTypes: true });
-        } catch (error) {
-          if (error.code !== "ENOENT") issues.push(`开始菜单不可读：${directory}`);
+        } catch {
+          // Missing roots or enumerated children cannot confirm deletions. Only
+          // a successful read, including an empty directory, is authoritative.
+          complete = false;
+          issues.push(`开始菜单不可读：${directory}`);
           continue;
         }
         for (const child of children) {
-          if (next.size >= MAX_ENTRIES)
-            throw new Error("Application inventory exceeds its entry limit");
           if (child.isSymbolicLink()) continue;
           const location = path.join(directory, child.name);
           if (child.isDirectory()) {
@@ -181,8 +189,14 @@ export default function applicationsPlugin(lifetime) {
           }
           if (!child.isFile() || !/\.(?:lnk|url)$/i.test(child.name)) continue;
           if (uninstallEntry(path.basename(child.name, path.extname(child.name)))) continue;
+          if (found.size >= MAX_ENTRIES) {
+            complete = false;
+            issues.push(`开始菜单条目超过上限：${root}`);
+            directories.length = 0;
+            break;
+          }
           const id = idFor("shortcut", location.toLocaleLowerCase());
-          next.set(id, {
+          found.set(id, {
             id,
             title: path.basename(child.name, path.extname(child.name)),
             description: path.relative(root, location),
@@ -191,7 +205,13 @@ export default function applicationsPlugin(lifetime) {
           });
         }
       }
+      menuStates.push({ root, ...accept(`menu:${root}`, found, complete) });
     }
+    const shortcuts = menuStates.flatMap(({ root }) => [
+      ...pending.get(`menu:${root}`).entries.values(),
+    ]);
+    const registered = new Map();
+    let registeredComplete = true;
     try {
       const powershell = path.join(
         process.env.SystemRoot ?? "C:\\Windows",
@@ -201,7 +221,8 @@ export default function applicationsPlugin(lifetime) {
         "powershell.exe",
       );
       const output = await new Promise((resolve, reject) => {
-        execFile(
+        let completed;
+        const child = execFile(
           powershell,
           [
             "-NoLogo",
@@ -217,8 +238,18 @@ export default function applicationsPlugin(lifetime) {
             timeout: 20_000,
             signal: controller.signal,
           },
-          (error, stdout) => (error ? reject(error) : resolve(stdout)),
+          (error, stdout) => {
+            completed = { error, stdout };
+          },
         );
+        // Abort/timeout callbacks may run before stdio and the process close.
+        // Stop must wait for the owned system query to actually finish.
+        child.once("close", () => {
+          if (!completed)
+            reject(new Error("Registered application process closed without a result"));
+          else if (completed.error) reject(completed.error);
+          else resolve(completed.stdout);
+        });
       });
       const records = JSON.parse(output.replace(/^\uFEFF/, "") || "[]");
       for (const record of Array.isArray(records) ? records : [records]) {
@@ -231,13 +262,16 @@ export default function applicationsPlugin(lifetime) {
           !record.AppID ||
           record.AppID.length > 4096 ||
           /[\x00-\x1f]/.test(record.AppID)
-        )
+        ) {
+          registeredComplete = false;
+          issues.push("Windows 注册应用返回不完整条目");
           continue;
+        }
         if (uninstallEntry(record.Name)) continue;
-        if (next.size >= MAX_ENTRIES)
+        if (registered.size >= MAX_ENTRIES)
           throw new Error("Application inventory exceeds its entry limit");
         const id = idFor("app", record.AppID);
-        next.set(id, {
+        registered.set(id, {
           id,
           title: record.Name,
           description: record.AppID.includes("!")
@@ -247,17 +281,53 @@ export default function applicationsPlugin(lifetime) {
           iconPath:
             typeof record.Icon === "string" && path.isAbsolute(record.Icon)
               ? record.Icon
-              : [...next.values()].find((entry) => entry.title === record.Name)?.iconPath,
+              : shortcuts.find((entry) => entry.title === record.Name)?.iconPath,
         });
       }
     } catch (error) {
       controller.signal.throwIfAborted();
+      registeredComplete = false;
       issues.push(`Windows 注册应用读取失败：${error.message}`);
     }
+    const registeredState = accept("registered", registered, registeredComplete);
     controller.signal.throwIfAborted();
+    const next = new Map();
+    const canRestoreRejected = revision === inventoryRevision;
+    for (const snapshot of pending.values())
+      for (const [id, entry] of snapshot.entries)
+        if (!rejectedTargets.has(id) || (canRestoreRejected && authoritativeIds.has(id)))
+          next.set(id, entry);
+    // A rejected custom ID is restored only after a real metadata check of
+    // the still-configured target, never from a retained discovery snapshot.
+    for (const entry of customEntries) {
+      const id = idFor("custom", entry.id);
+      if (!rejectedTargets.has(id)) continue;
+      try {
+        await assertEntryTarget(entry, controller.signal);
+        if (revision === inventoryRevision && customEntries.includes(entry))
+          rejectedTargets.delete(id);
+      } catch {
+        controller.signal.throwIfAborted();
+      }
+    }
     applyCustomEntries(next);
+    for (const id of rejectedTargets)
+      if (!canRestoreRejected || !authoritativeIds.has(id)) next.delete(id);
+    if (next.size > MAX_ENTRIES) throw new Error("Application inventory exceeds its entry limit");
+    controller.signal.throwIfAborted();
+    const states = [...menuStates, registeredState];
+    const complete = states.every((source) => source.state === "complete");
     entries = next;
-    refreshedAt = revision === inventoryRevision ? Date.now() : 0;
+    snapshots = pending;
+    if (canRestoreRejected) for (const id of authoritativeIds) rejectedTargets.delete(id);
+    lastAttemptAt = revision === inventoryRevision ? Date.now() : 0;
+    if (complete) refreshedAt = Date.now();
+    inventoryState = complete
+      ? "complete"
+      : states.some((source) => source.state === "partial")
+        ? "partial"
+        : "stale";
+    sourceStatus = { menus: menuStates, registeredApplications: registeredState };
     warnings = issues;
     sources = { shortcuts: 0, registeredApplications: 0, appx: 0 };
     for (const entry of next.values()) {
@@ -271,7 +341,7 @@ export default function applicationsPlugin(lifetime) {
   async function inventory(signal) {
     if (stopping) throw new Error("Application search is stopping");
     signal.throwIfAborted();
-    if (!refreshing && (!refreshedAt || Date.now() - refreshedAt >= CACHE_MS)) {
+    if (!refreshing && (!lastAttemptAt || Date.now() - lastAttemptAt >= CACHE_MS)) {
       refreshing = discover().finally(() => {
         refreshing = undefined;
       });
@@ -295,109 +365,165 @@ export default function applicationsPlugin(lifetime) {
     return entries;
   }
 
-  return {
-    async activate(activation, context) {
-      context.signal.throwIfAborted();
-      await loadSettings();
-      const input = activation.parameters;
-      if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input)))
-        throw new Error("Application parameters must be an object");
-      const action =
-        input?.action ??
-        (["launch", "reveal", "copy-path", "refresh"].includes(activation.commandId)
-          ? activation.commandId
-          : "search");
-      if (activation.commandId === "settings") {
-        if (action === "get") return { entries: structuredClone(customEntries) };
-        if (action !== "save") throw new Error("Unknown custom application settings action");
-        const next = validateEntries(input.entries);
-        const serialized = JSON.stringify({ version: 1, entries: next }, null, 2) + "\n";
-        if (Buffer.byteLength(serialized) > 2 * 1024 * 1024)
-          throw new Error("Custom application settings are too large");
-        const task = saving.then(async () => {
-          context.signal.throwIfAborted();
-          // The independent npm backend cannot import host persistence.ts.
-          // Keep its fsync + same-directory rename transaction only here.
-          await fs.mkdir(lifetime.dataDir, { recursive: true });
-          const temporary = `${customFile}.${randomUUID()}.tmp`;
-          let file;
-          try {
-            file = await fs.open(temporary, "wx", 0o600);
-            await file.writeFile(serialized);
-            await file.sync();
-            await file.close();
-            file = undefined;
-            context.signal.throwIfAborted();
-            await fs.rename(temporary, customFile);
-          } finally {
-            await file?.close();
-            await fs.rm(temporary, { force: true });
-          }
-          customEntries = next;
-          applyCustomEntries(entries);
-          currentQuery?.abort();
-          return { entries: structuredClone(customEntries) };
-        });
-        saving = task.catch(() => {});
-        return task;
-      }
-      if (["launch", "reveal", "copy-path"].includes(action)) {
-        // Launch only the exact item the private inventory knows. Never consume
-        // renderer paths, command lines, executable arguments or shell URLs.
-        if (typeof input?.id !== "string" || !/^[a-f0-9]{64}$/.test(input.id))
-          throw new Error("Choose an indexed application before launching");
-        const selected = entries.get(input.id);
-        if (!selected) throw new Error("Application selection expired; search again");
-        if (selected.target.kind !== "app") {
-          try {
-            if (!(await fs.stat(selected.target.path)).isFile())
-              throw new Error("Application file is unavailable");
-          } catch (error) {
-            entries.delete(input.id);
-            invalidate();
-            throw error;
-          }
+  async function activate(activation, context) {
+    context.signal.throwIfAborted();
+    await loadSettings();
+    const input = activation.parameters;
+    if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input)))
+      throw new Error("Application parameters must be an object");
+    const action =
+      input?.action ??
+      (["launch", "reveal", "copy-path", "refresh"].includes(activation.commandId)
+        ? activation.commandId
+        : "search");
+    if (activation.commandId === "settings") {
+      if (action === "get")
+        return { entries: structuredClone(customEntries), supportedKinds: [...SUPPORTED_KINDS] };
+      if (action !== "save") throw new Error("Unknown custom application settings action");
+      const next = validateEntries(input.entries);
+      const task = saving.then(async () => {
+        context.signal.throwIfAborted();
+        await writeSettingsFile(customFile, next, context.signal);
+        for (const entry of next) {
+          const previous = customEntries.find((saved) => saved.id === entry.id);
+          if (
+            !previous ||
+            previous.kind !== entry.kind ||
+            previous.path !== entry.path ||
+            previous.cwd !== entry.cwd ||
+            JSON.stringify(previous.args) !== JSON.stringify(entry.args)
+          )
+            rejectedTargets.delete(idFor("custom", entry.id));
         }
-        return {
-          action:
-            action === "launch"
-              ? "launchApplication"
-              : action === "reveal"
-                ? "revealApplication"
-                : "copyApplicationPath",
-          target: { ...selected.target },
-        };
+        customEntries = next;
+        invalidate();
+        applyCustomEntries(entries);
+        for (const request of queries.values()) request.controller.abort();
+        queries.clear();
+        return { entries: structuredClone(customEntries), supportedKinds: [...SUPPORTED_KINDS] };
+      });
+      saving = task.catch(() => {});
+      return task;
+    }
+    if (["launch", "reveal", "copy-path"].includes(action)) {
+      // Launch only the exact item the private inventory knows. Never consume
+      // renderer paths, command lines, executable arguments or shell URLs.
+      if (typeof input?.id !== "string" || !/^[a-f0-9]{64}$/.test(input.id))
+        throw new Error("Choose an indexed application before launching");
+      const selected = entries.get(input.id);
+      if (!selected) throw new Error("Application selection expired; search again");
+      if (
+        typeof input.selectionVersion !== "string" ||
+        input.selectionVersion !== selectionVersion(selected)
+      )
+        throw new Error("Application selection changed; search again");
+      if (selected.target.kind !== "app") {
+        try {
+          if (selected.customKind) {
+            await assertEntryTarget(
+              { ...selected.target, kind: selected.customKind },
+              context.signal,
+            );
+          } else if (!(await fs.stat(selected.target.path)).isFile()) {
+            throw new Error("Application file is unavailable");
+          }
+          context.signal.throwIfAborted();
+          if (entries.get(input.id) !== selected) throw new Error("Application selection changed");
+        } catch (error) {
+          context.signal.throwIfAborted();
+          if (entries.get(input.id) !== selected) throw error;
+          entries.delete(input.id);
+          // A retained source must not resurrect a target already rejected
+          // by live validation. A later complete scan can rediscover it.
+          rejectedTargets.add(input.id);
+          invalidate();
+          throw error;
+        }
       }
-      if (action === "refresh") invalidate();
-      else if (action !== "search") throw new Error("Unknown application action");
-      const query =
-        input?.query ?? (activation.context?.kind === "text" ? activation.context.text : "");
-      if (typeof query !== "string" || query.length > 2000)
-        throw new Error("Invalid application query");
-      const limit = input?.limit ?? 30;
-      const english = input?.locale === "en-US";
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
-        throw new Error("Application result limit must be between 1 and 100");
-      currentQuery?.abort();
-      const queryController = new AbortController();
-      currentQuery = queryController;
-      const querySignal = AbortSignal.any([
-        context.signal,
-        queryController.signal,
-        controller.signal,
-      ]);
+      return {
+        action:
+          action === "launch"
+            ? "launchApplication"
+            : action === "reveal"
+              ? "revealApplication"
+              : "copyApplicationPath",
+        target: { ...selected.target },
+      };
+    }
+    if (action === "refresh") invalidate();
+    else if (action !== "search") throw new Error("Unknown application action");
+    const query =
+      input?.query ?? (activation.context?.kind === "text" ? activation.context.text : "");
+    if (typeof query !== "string" || query.length > 2000)
+      throw new Error("Invalid application query");
+    const limit = input?.limit ?? 30;
+    const english = input?.locale === "en-US";
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new Error("Application result limit must be between 1 and 100");
+    if (
+      input?.includeIds !== undefined &&
+      (!Array.isArray(input.includeIds) ||
+        input.includeIds.length > 100 ||
+        input.includeIds.some((id) => typeof id !== "string" || !/^[a-f0-9]{64}$/i.test(id)))
+    )
+      throw new Error("Application includeIds must contain at most 100 unique stable IDs");
+    const includeIds = input?.includeIds?.map((id) => id.toLowerCase()) ?? [];
+    if (new Set(includeIds).size !== includeIds.length)
+      throw new Error("Application includeIds must contain unique stable IDs");
+    if (
+      input?.onlyIds !== undefined &&
+      (typeof input.onlyIds !== "boolean" || input.includeIds === undefined)
+    )
+      throw new Error("Application onlyIds requires a boolean and valid includeIds");
+    const onlyIds = input?.onlyIds === true;
+    for (const key of ["callerId", "requestId"])
+      if (
+        input?.[key] !== undefined &&
+        (typeof input[key] !== "string" ||
+          !input[key] ||
+          input[key].length > 200 ||
+          /[\x00-\x1f]/.test(input[key]))
+      )
+        throw new Error(`Invalid application query ${key}`);
+    const callerId = input?.callerId ?? "legacy";
+    const request = {
+      requestId: input?.requestId ?? randomUUID(),
+      controller: new AbortController(),
+    };
+    queries.get(callerId)?.controller.abort();
+    queries.set(callerId, request);
+    const querySignal = AbortSignal.any([
+      context.signal,
+      request.controller.signal,
+      controller.signal,
+    ]);
+    try {
       const source = await inventory(querySignal);
+      // Another caller may refresh discovery while this caller awaits pinyin.
+      // Keep its source status bound to the inventory it actually searched.
+      const status = {
+        sources: { ...sources },
+        refreshedAt,
+        lastAttemptAt,
+        inventoryState,
+        sourceStatus: {
+          ...structuredClone(sourceStatus),
+          custom: { state: "complete", count: customEntries.length },
+        },
+        warnings: [...warnings],
+      };
       const needle = normalize(query);
       const tokens = needle.split(/\s+/).filter(Boolean);
       const results = [];
-      const entriesByIndex = [...source.values()];
-      const matches = /[a-z]{2}/i.test(needle)
-        ? await pinyin.match(
-            entriesByIndex.map((entry) => normalize(entry.title)),
-            needle,
-            querySignal,
-          )
-        : { matches: [] };
+      const entriesByIndex = onlyIds ? [] : [...source.values()];
+      const matches =
+        !onlyIds && /[a-z]{2}/i.test(needle)
+          ? await pinyin.match(
+              entriesByIndex.map((entry) => normalize(entry.title)),
+              needle,
+              querySignal,
+            )
+          : { matches: [] };
       querySignal.throwIfAborted();
       const pinyinMatches = new Map(matches.matches.map((match) => [match.index, match]));
       for (const [index, entry] of entriesByIndex.entries()) {
@@ -434,20 +560,68 @@ export default function applicationsPlugin(lifetime) {
             Number(right.entry.target.kind !== "shortcut") ||
           left.entry.title.localeCompare(right.entry.title, "zh-CN"),
       );
+      // Stored preferences resolve exact current inventory identities. This
+      // adds query results only; launch still revalidates the private index.
+      const included = new Map();
+      for (const id of includeIds) {
+        const entry = source.get(id);
+        if (entry && entries.has(id) && !rejectedTargets.has(id)) included.set(id, { entry });
+      }
+      for (const result of results)
+        if (included.has(result.entry.id)) included.set(result.entry.id, result);
+      // Preference IDs must not exhaust the page before natural exact titles.
+      // Pure ID resolution preserves the caller's explicit order unchanged.
+      const exact = onlyIds ? [] : results.filter(({ score }) => score === 100);
+      const exactIds = new Set(exact.map(({ entry }) => entry.id));
+      const merged = [
+        ...exact,
+        ...[...included.values()].filter(({ entry }) => !exactIds.has(entry.id)),
+        ...results.filter(({ entry }) => !exactIds.has(entry.id) && !included.has(entry.id)),
+      ];
+      const admitted = [];
+      let unavailableCustom = 0;
+      for (const result of merged) {
+        querySignal.throwIfAborted();
+        const { entry } = result;
+        if (entry.customKind) {
+          try {
+            await assertEntryTarget({ ...entry.target, kind: entry.customKind }, querySignal);
+            if (entries.get(entry.id) !== entry) continue;
+          } catch {
+            querySignal.throwIfAborted();
+            if (entries.get(entry.id) === entry) {
+              entries.delete(entry.id);
+              rejectedTargets.add(entry.id);
+              invalidate();
+            }
+            unavailableCustom++;
+            continue;
+          }
+        }
+        admitted.push(result);
+        if (admitted.length === limit) break;
+      }
+      querySignal.throwIfAborted();
       return {
-        items: results.slice(0, limit).map(({ entry, pinyinMatch }) => ({
+        items: admitted.map(({ entry, pinyinMatch }) => ({
           id: entry.id,
           title: entry.title,
           description: `${entry.target.kind !== "app" ? entry.description : english ? (entry.target.appUserModelId.includes("!") ? "Windows registered application / AppX" : "Windows registered application") : entry.description}${pinyinMatch ? (english ? " · Pinyin match" : " · 拼音匹配") : ""}`,
-          kind: "application",
+          kind: ["document", "directory"].includes(entry.customKind)
+            ? entry.customKind
+            : "application",
           commandId: "launch",
-          parameters: { action: "launch", id: entry.id },
+          parameters: { action: "launch", id: entry.id, selectionVersion: selectionVersion(entry) },
           iconPath: entry.iconPath ?? (entry.target.kind !== "app" ? entry.target.path : undefined),
           actions: [
             {
               title: english ? "Show location" : "打开所在位置",
               commandId: "reveal",
-              parameters: { action: "reveal", id: entry.id },
+              parameters: {
+                action: "reveal",
+                id: entry.id,
+                selectionVersion: selectionVersion(entry),
+              },
             },
             {
               title:
@@ -459,18 +633,31 @@ export default function applicationsPlugin(lifetime) {
                     ? "Copy path"
                     : "复制路径",
               commandId: "copy-path",
-              parameters: { action: "copy-path", id: entry.id },
+              parameters: {
+                action: "copy-path",
+                id: entry.id,
+                selectionVersion: selectionVersion(entry),
+              },
             },
           ],
         })),
-        total: results.length,
+        total: merged.length - unavailableCustom,
         indexed: source.size,
-        sources: { ...sources },
-        refreshedAt,
-        warnings: [...warnings],
-        hint: english
-          ? "Search original names, full pinyin, initials, or mixed Chinese and Latin text."
-          : "支持应用原名、中文全拼、拼音首字母与中英混排。",
+        ...status,
+        hint:
+          (unavailableCustom
+            ? english
+              ? "Some custom targets are missing or changed type. "
+              : "部分自定义目标不存在或类型已改变。 "
+            : "") +
+          (status.warnings.length
+            ? english
+              ? "Some application sources are unavailable; results may be incomplete or stale. "
+              : "应用来源读取异常，结果可能不完整或过期。 "
+            : "") +
+          (english
+            ? "Search original names, full pinyin, initials, or mixed Chinese and Latin text."
+            : "支持应用原名、中文全拼、拼音首字母与中英混排。"),
         pinyinSupported: true,
         ...(matches.pid
           ? {
@@ -482,21 +669,43 @@ export default function applicationsPlugin(lifetime) {
             }
           : {}),
       };
+    } finally {
+      // An older request may settle after its replacement has registered.
+      // Only the request still owning this caller slot may remove it.
+      if (queries.get(callerId) === request) queries.delete(callerId);
+    }
+  }
+  return {
+    activate(activation, context) {
+      const operation = activate(activation, context);
+      if (activation.commandId === "settings" && activation.parameters?.action === "save") {
+        // Register before loadSettings yields, so a following stop also drains
+        // a Save accepted while the first configuration read is still pending.
+        acceptedSaves.add(operation);
+        void operation.finally(() => acceptedSaves.delete(operation)).catch(() => {});
+      }
+      return operation;
     },
-    prepareStop() {
+    async prepareStop() {
+      while (acceptedSaves.size) await Promise.allSettled(acceptedSaves);
+      await saving;
       return { ok: true };
     },
     async stop() {
       stopping = true;
       clearInterval(calibration);
       for (const watcher of watchers) watcher.close();
-      currentQuery?.abort();
+      for (const request of queries.values()) request.controller.abort();
+      queries.clear();
       controller.abort();
       lifetime.signal.removeEventListener("abort", abort);
+      while (acceptedSaves.size) await Promise.allSettled(acceptedSaves);
       await saving;
       await refreshing?.catch(() => {});
       await pinyin.stop();
       entries.clear();
+      snapshots.clear();
+      rejectedTargets.clear();
     },
   };
 }

@@ -20,10 +20,12 @@ export interface ResourceHandle {
   mimeType?: string;
   size?: number;
 }
-export type PluginContext =
+export type PluginContext = (
   | { kind: "text"; text: string }
   | { kind: "image"; resource: ResourceHandle }
-  | { kind: "files"; resources: ResourceHandle[] };
+  | { kind: "files"; resources: ResourceHandle[] }
+  | { kind: "window"; sourceApplication: string }
+) & { sourceApplication?: string };
 export interface PluginActivation {
   commandId?: string;
   context?: PluginContext;

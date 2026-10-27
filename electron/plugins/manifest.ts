@@ -7,7 +7,7 @@ import {
   pluginPackageSchema,
   type PluginPackageMetadata,
 } from "../../packages/sdk/src/index.js";
-import { AppError, canonical, confined, inside } from "../store.js";
+import { AppError, canonical, confined, inside } from "../persistence.js";
 
 export interface HostEnvironment {
   version: string;

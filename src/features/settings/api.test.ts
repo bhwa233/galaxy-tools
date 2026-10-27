@@ -6,7 +6,7 @@ import {
   chooseDataDirectory,
   getConfig,
   normalizeViewMode,
-  saveConfig,
+  patchConfig,
 } from "./api";
 import type { AppConfig } from "./types";
 
@@ -27,6 +27,12 @@ describe("settings api", () => {
   test("gets config through the desktop adapter", async () => {
     const config: AppConfig = {
       locale: "zh-CN",
+      superPanelEnabled: false,
+      superPanelButton: "middle",
+      superPanelTrigger: "hold",
+      superPanelHoldMs: 500,
+      superPanelExcludedApps: [],
+      superPanelCopyFallback: false,
       dataDir: "D:\\notes",
       globalShortcut: "Ctrl+Space",
       closeToTray: true,
@@ -62,9 +68,15 @@ describe("settings api", () => {
     expect(invoke).toHaveBeenCalledWith("config_get");
   });
 
-  test("saves config through the desktop adapter", async () => {
+  test("patches only the changed config fields through the desktop adapter", async () => {
     const config: AppConfig = {
       locale: "zh-CN",
+      superPanelEnabled: false,
+      superPanelButton: "middle",
+      superPanelTrigger: "hold",
+      superPanelHoldMs: 500,
+      superPanelExcludedApps: [],
+      superPanelCopyFallback: false,
       dataDir: "D:\\notes",
       globalShortcut: "Alt+Space",
       closeToTray: false,
@@ -95,9 +107,9 @@ describe("settings api", () => {
     };
     mockedInvoke.mockResolvedValue(config);
 
-    await expect(saveConfig(config)).resolves.toBe(config);
+    await expect(patchConfig({ fontSize: 16 })).resolves.toBe(config);
 
-    expect(invoke).toHaveBeenCalledWith("config_save", { config });
+    expect(invoke).toHaveBeenCalledWith("config_patch", { patch: { fontSize: 16 } });
   });
 
   test("checks global shortcut availability through the desktop adapter", async () => {

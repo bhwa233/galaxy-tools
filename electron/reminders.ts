@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { AppError, atomicWrite, readJson } from "./store.js";
+import { AppError, atomicWrite, readJson } from "./persistence.js";
 import { presetFireAt, type ReminderPresetId } from "../src/features/reminders/presets.js";
 import type { ReminderItem } from "../src/features/reminders/types.js";
 
-// 提醒归主进程所有：数据目录 reminders.json（原子写）、15s 轮询调度、
-// 通知副作用通过 options.notify 注入，保持本模块不依赖 electron、可单测。
+// 便签插件持有提醒数据和调度；系统通知通过 options.notify 委托宿主。
+// 数据目录 reminders.json（原子写）、15s 轮询；本模块不依赖 Electron。
 export const OVERDUE_GRACE_MS = 10 * 60 * 1000;
 export const OVERDUE_DROP_MS = 24 * 60 * 60 * 1000;
 export const REMINDER_TICK_MS = 15_000;

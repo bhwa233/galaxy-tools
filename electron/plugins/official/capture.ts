@@ -9,7 +9,7 @@ import type {
   ResourceHandle,
   StopReason,
 } from "../../../packages/sdk/src/index.js";
-import { atomicWrite, canonical, confined, inside } from "../../store.js";
+import { atomicWrite, canonical, confined, inside } from "../../persistence.js";
 import { createTrustedNativeProcess, type PluginNativeController } from "../backend.js";
 import { PluginResourceScope, type StopDecision } from "../resources.js";
 
@@ -33,6 +33,7 @@ export interface CaptureRuntimeOptions {
   dataDir: string;
   cacheDir: string;
   approveTrust: () => boolean | Promise<boolean>;
+  onOutputBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
   /** Sampled when opening and immediately before forwarding a selected image. */
   getOcrStatus: () => OcrAvailability;
   getLocale?: () => string;
@@ -48,6 +49,7 @@ export interface OcrRuntimeOptions {
   dataDir: string;
   cacheDir: string;
   approveTrust: () => boolean | Promise<boolean>;
+  onOutputBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
   /** Host resource resolver must enforce the resource's ownership and lifetime. */
   resolveImage: (resource: ResourceHandle) => string | Promise<string>;
   /** Register only OCR-owned durable output, after both image and result save. */
@@ -264,6 +266,7 @@ class CaptureController implements CaptureRuntime {
         ],
       },
       approveTrust: this.options.approveTrust,
+      onOutputBytes: this.options.onOutputBytes,
       prepareStop: () => ({ ok: true }),
       requestShutdown: () => this.requestCancellation(session),
       timeoutMs: this.options.timeoutMs ?? 15000,
@@ -346,7 +349,8 @@ class CaptureController implements CaptureRuntime {
     };
     let availabilityTimer: ReturnType<typeof setInterval> | undefined;
     try {
-      const ocr = options.getOcrStatus().available && !!options.recognize;
+      // The native session reads this file dynamically. A fixed false argv
+      // would prevent an already-open selection from following a later enable.
       syncOcrStatus();
       availabilityTimer = setInterval(() => {
         try {
@@ -359,7 +363,6 @@ class CaptureController implements CaptureRuntime {
       await this.start(session, [
         "--auto-quit=true",
         `--spark233-locale=${options.getLocale?.().toLowerCase().startsWith("en") ? "en-US" : "zh-CN"}`,
-        `--spark233-ocr-enabled=${ocr}`,
         ...(activation.commandId === "ocr" ? ["--enter=ocr"] : []),
       ]);
       // Basic copy/save/close may intentionally produce no OCR transfer.
@@ -502,6 +505,7 @@ class OcrController extends CaptureController implements OcrRuntime {
         ],
       },
       approveTrust: this.ocrOptions.approveTrust,
+      onOutputBytes: this.ocrOptions.onOutputBytes,
       onExit: (exit) => {
         if ((exit.error || exit.code !== 0) && workerReference)
           workerReference.failure = new Error(exit.error ?? `OCR worker exited (${exit.code})`);

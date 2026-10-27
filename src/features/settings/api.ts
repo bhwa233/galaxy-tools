@@ -1,6 +1,6 @@
 import { invoke } from "../../platform/desktop";
 import { open } from "../../platform/desktop";
-import type { AppConfig, ViewMode } from "./types";
+import type { AppConfig, AppConfigPatch, ViewMode } from "./types";
 
 export interface ShortcutCheckResult {
   available: boolean;
@@ -12,8 +12,11 @@ export function getConfig(): Promise<AppConfig> {
   return invoke("config_get");
 }
 
-export function saveConfig(config: AppConfig): Promise<AppConfig> {
-  return invoke("config_save", { config });
+export function patchConfig(
+  patch: AppConfigPatch,
+  options?: { expectedCommandShortcuts: Record<string, string> },
+): Promise<AppConfig> {
+  return invoke("config_patch", { patch, ...options });
 }
 
 export function checkGlobalShortcut(shortcut: string): Promise<ShortcutCheckResult> {
@@ -49,4 +52,14 @@ export function normalizeViewMode(value: string): ViewMode {
   }
 
   return "edit";
+}
+
+export type SettingsPage = "general" | "entries" | "plugins" | "backup" | "diagnostics";
+export interface SettingsTarget {
+  page?: SettingsPage;
+  pluginId?: string;
+  tab?: "config" | "functions" | "matching" | "info";
+}
+export function openSettingsWindow(target: SettingsTarget = {}): Promise<void> {
+  return invoke("settings_open", target);
 }

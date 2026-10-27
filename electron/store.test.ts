@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { NoteStore, atomicWrite, confined } from "./store";
 import { FileGrants, externalUrl } from "./security";
 
@@ -17,6 +17,7 @@ function fixture() {
   };
 }
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 describe("Electron persistence boundary", () => {
@@ -36,6 +37,22 @@ describe("Electron persistence boundary", () => {
     expect(restarted.get(first.id).content).toBe(source + "编辑");
     expect(() => restarted.setEditorMode(first.id, "preview")).toThrow("便签模式不合法");
     expect(restarted.config.defaultViewMode).toBe("edit");
+  });
+  test("keeps note preferences in the note data domain across restart and migration", () => {
+    const { root, store } = fixture();
+    store.saveConfig({ ...store.config, fontSize: 21, noteAutoSave: false });
+    const hostFile = path.join(root, "config", "config.json");
+    expect(JSON.parse(fs.readFileSync(hostFile, "utf8"))).not.toHaveProperty("fontSize");
+    const restarted = new NoteStore(path.join(root, "config"), store.dataDir, async () => {});
+    expect(restarted.config.fontSize).toBe(21);
+    expect(restarted.config.noteAutoSave).toBe(false);
+    const destination = path.join(root, "new-location");
+    fs.mkdirSync(destination);
+    restarted.migrate(destination);
+    const moved = new NoteStore(path.join(root, "config"), restarted.dataDir, async () => {});
+    expect(moved.config.fontSize).toBe(21);
+    expect(moved.config.noteAutoSave).toBe(false);
+    expect(fs.existsSync(path.join(moved.dataDir, ".spark233-preferences.json"))).toBe(true);
   });
   test("reads the existing floral disk format, retains note identity across rename, move and restart", () => {
     const { root, store } = fixture();
@@ -81,6 +98,88 @@ describe("Electron persistence boundary", () => {
     expect(store.list()[0]).toMatchObject({ id: "legacy", title: "保留正文" });
     expect(store.get("legacy").content).toBe("# 保留正文\n中文");
     expect(fs.readdirSync(store.dataDir).some((file) => file.includes(".corrupt-"))).toBe(true);
+  });
+  test("metadata write failure restores an existing body and reports a failed body rollback", () => {
+    const { store } = fixture();
+    const old = store.save({ title: "原标题", content: "# 原文\n保留", category: "" });
+    const target = store.notePath(old),
+      metadata = path.join(store.dataDir, "metadata.json");
+    const oldBody = fs.readFileSync(target),
+      oldIndex = fs.readFileSync(metadata);
+    const originalRename = fs.renameSync,
+      commitFailure = new Error("OWN_METADATA_COMMIT_FAILURE");
+    let failCommit = true;
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      if (destination === metadata && failCommit) {
+        failCommit = false;
+        throw commitFailure;
+      }
+      originalRename(source, destination);
+    });
+    // The body used to remain overwritten even though the metadata commit reported failure.
+    expect(() => store.save({ ...old, content: "# 新正文" }, old.id)).toThrow(commitFailure);
+    rename.mockRestore();
+    expect(fs.readFileSync(target)).toEqual(oldBody);
+    expect(fs.readFileSync(metadata)).toEqual(oldIndex);
+    expect(store.get(old.id)).toEqual(old);
+    expect(store.save({ ...old, content: "# 重试成功" }, old.id).content).toBe("# 重试成功");
+
+    const retryIndex = fs.readFileSync(metadata),
+      rollbackFailure = new Error("OWN_BODY_ROLLBACK_FAILURE");
+    let commitRejected = false;
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      if (destination === metadata) {
+        commitRejected = true;
+        throw commitFailure;
+      }
+      if (commitRejected && destination === target) throw rollbackFailure;
+      originalRename(source, destination);
+    });
+    let failure: unknown;
+    try {
+      store.save({ ...old, content: "# 双故障" }, old.id);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([commitFailure, rollbackFailure]);
+    expect(fs.readFileSync(metadata)).toEqual(retryIndex);
+  });
+  test("failed rename and move leave no duplicate body and remain rebuildable and retryable", () => {
+    const { store } = fixture();
+    const old = store.save({
+      title: "旧标题",
+      content: "# 原正文\n![](images/a.png)",
+      category: "",
+    });
+    store.createCategory("工作");
+    const metadata = path.join(store.dataDir, "metadata.json"),
+      oldIndex = fs.readFileSync(metadata);
+    const oldBody = fs.readFileSync(store.notePath(old));
+    const originalRename = fs.renameSync;
+    let failCommit = true;
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      if (destination === metadata && failCommit) {
+        failCommit = false;
+        throw new Error("OWN_METADATA_COMMIT_FAILURE");
+      }
+      originalRename(source, destination);
+    });
+    // Previously this left another Markdown with the same ID, breaking metadata rebuild.
+    const request = { title: "新标题", content: "# 新正文", category: "工作" };
+    expect(() => store.save(request, old.id)).toThrow("OWN_METADATA_COMMIT_FAILURE");
+    rename.mockRestore();
+    expect(fs.readFileSync(metadata)).toEqual(oldIndex);
+    expect(fs.readFileSync(store.notePath(old))).toEqual(oldBody);
+    expect(fs.readdirSync(path.join(store.dataDir, "notes", "工作"))).toEqual([]);
+    expect(store.get(old.id)).toEqual(old);
+    expect(store.rebuild().map((note) => note.id)).toEqual([old.id]);
+    expect(store.get(old.id).content).toBe(old.content);
+    const saved = store.save(request, old.id);
+    expect(saved).toMatchObject({ id: old.id, ...request });
+    expect(fs.existsSync(store.notePath(old))).toBe(false);
+    expect(store.rebuild().map((note) => note.id)).toEqual([old.id]);
+    expect(store.get(old.id).content).toBe(request.content);
   });
   test("rejects traversal, junction escape and a file grant redirected after selection", () => {
     const { root, store } = fixture();

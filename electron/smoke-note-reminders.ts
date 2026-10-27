@@ -43,7 +43,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
     if (!result.ok) throw new Error("Could not list reminders");
     return result.value;
   }
-  const win = context.windows.get(context.openNote())!;
+  const win = context.windows.get(await context.openNote())!;
   const errors: string[] = [];
   const onConsole = (details: Electron.Event<Electron.WebContentsConsoleMessageEventParams>) => {
     if (details.level === "error") errors.push(details.message);
@@ -52,14 +52,14 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
   main.webContents.on("console-message", onConsole);
   try {
     await until(win, `!!document.querySelector('${bell}')`, "Small note has no reminder button");
-    const originalCount = context.store.list().length;
+    const originalCount = (await context.notes.list()).length;
     // A fresh empty draft must be saved by the reminder entry itself, without requiring Ctrl+S.
     await openPanel(win);
     const layout = [...context.layouts.values()].find(
       (entry) => context.windows.get(entry.label) === win,
     )!;
     const id = layout.noteId;
-    if (!id || context.store.list().length !== originalCount + 1)
+    if (!id || (await context.notes.list()).length !== originalCount + 1)
       throw new Error("Draft reminder entry did not save exactly one note");
     await click(win, '[data-reminder-preset="15m"]');
     await until(
@@ -89,7 +89,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
       "!!document.querySelector('input[type=checkbox]')",
       "Reminder note tasks did not render",
     );
-    const original = context.store.get(id);
+    const original = await context.notes.get(id);
     await main.webContents.executeJavaScript(
       `window.spark233Desktop.invoke('open_note_in_editor',{noteId:${JSON.stringify(id)}})`,
     );
@@ -193,7 +193,7 @@ export async function verifyNoteReminders(context: SmokeContext, main: BrowserWi
       )
         throw new Error("Reminder entry is not at upper right");
     }
-    const saved = context.store.get(id);
+    const saved = await context.notes.get(id);
     if (saved.content !== original.content || saved.updatedAt !== original.updatedAt)
       throw new Error("Reminder operations modified note content or content timestamp");
     if (errors.length) throw new Error(`Reminder renderer errors: ${errors.join("; ")}`);

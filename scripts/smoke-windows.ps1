@@ -21,11 +21,39 @@ try {
   } finally { Pop-Location }
   $report = Join-Path $run 'report.json'
   $applicationArgs = @(('"' + $repo + '"'), ('"--smoke-output=' + $report + '"'))
+  $startedAt = [DateTimeOffset]::UtcNow
   $process = Start-Process -FilePath $ElectronExe -ArgumentList $applicationArgs -WorkingDirectory $repo -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $run 'stdout.log') -RedirectStandardError (Join-Path $run 'stderr.log')
-  $deadline = (Get-Date).AddSeconds(120)
-  while (-not $process.WaitForExit(1000)) {
-    if ((Get-Date) -ge $deadline) { throw "Smoke test timed out. Isolated process: $($process.Id), evidence: $run" }
+  $processEvidenceFile = Join-Path $run 'process.json'
+  $processEvidence = [ordered]@{
+    pid = $process.Id
+    startedAt = $startedAt.ToString('o')
+    exitedAt = $null
+    durationSeconds = $null
+    exitCode = $null
+    timeoutSeconds = 300
+    timedOut = $false
+    executable = $ElectronExe
+    report = $report
   }
+  $processEvidence | ConvertTo-Json | Set-Content -LiteralPath $processEvidenceFile -Encoding utf8
+  Write-Output "Smoke started: PID=$($process.Id), UTC=$($processEvidence.startedAt), evidence: $run"
+  $deadline = (Get-Date).AddSeconds(300)
+  while (-not $process.WaitForExit(1000)) {
+    if ((Get-Date) -ge $deadline) {
+      $processEvidence.timedOut = $true
+      $processEvidence.durationSeconds = [Math]::Round(([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds, 3)
+      $processEvidence | ConvertTo-Json | Set-Content -LiteralPath $processEvidenceFile -Encoding utf8
+      throw "Smoke test timed out after 300 seconds. Isolated process: $($process.Id), evidence: $run"
+    }
+  }
+  $process.WaitForExit() # Flush redirected output after the bounded wait observes exit.
+  $process.Refresh()
+  $processEvidence.exitedAt = $process.ExitTime.ToUniversalTime().ToString('o')
+  $processEvidence.durationSeconds = [Math]::Round(([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds, 3)
+  $processEvidence.exitCode = $process.ExitCode
+  $processEvidence | ConvertTo-Json | Set-Content -LiteralPath $processEvidenceFile -Encoding utf8
+  Write-Output "Smoke exited: PID=$($process.Id), UTC=$($processEvidence.exitedAt), exitCode=$($processEvidence.exitCode), durationSeconds=$($processEvidence.durationSeconds)"
+  if ($null -eq $processEvidence.exitCode -or $processEvidence.exitCode -ne 0) { throw "Smoke process did not confirm exit code 0 (actual: $($processEvidence.exitCode)); inspect $run" }
   if (-not (Test-Path -LiteralPath $report)) { throw "No report generated; inspect $run" }
   $result = Get-Content -LiteralPath $report -Raw -Encoding UTF8 | ConvertFrom-Json
   if (-not $result.ok) { throw ($result | ConvertTo-Json -Depth 10) }

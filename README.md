@@ -1,6 +1,14 @@
 # spark233
 
-基于 floral-notepaper 演进的 Windows 桌面启动器与插件工具集，使用 **Electron 45 + TypeScript + React 19 + Vite 8**，目标平台为 **Windows 11 x64**。MVP 已完成本轮实现与逐项证据审计，最后人工验收待安排；界面语言为简体中文和英文。
+当前按[剩余实施基线](Docs/spark233-remaining-implementation-2026-10-27.md)执行：先文档、再集中代码、最后统一验证。以下已通过报告对应各自历史输入；本轮来源程序匹配、文档正清单及恢复边界草稿尚待统一验收。
+
+2026-10-27 续作：当前 **60/108** 完成。[更新反馈](Docs/evidence/spark233-package-tasks-followup.md)、[诊断](Docs/evidence/spark233-diagnostics-followup.md)及[关键词记忆](Docs/evidence/spark233-keyword-learning-followup.md)已收口。上下文超级面板的捕获、资源与生命周期链已有真实Main/UI代表证据，对应历史Windows候选179测试、74项审计、固定样本/完整烟测及binder均通过，见[超级面板记录](Docs/evidence/spark233-context-panel-followup.md)。文档/目录实际Shell窗口，以及超级面板的物理鼠标、OS选区、焦点、IME和多屏仍待最终验收，对应条目保持未勾选。
+
+2026-10-26 续证时清单 **57/108** 已完成，包含本日新增十项需求；已补齐授权确认、便签启停、词典独立更新及剪贴板收藏编辑/清理，见[工作区补证](Docs/evidence/spark233-workspace-lifecycle-followup.md)。分批查询、常用入口固定、个人别名和命令隐藏已收口，新候选的 39 项审计、167 tests 及完整 Windows smoke 通过，见[入口偏好收口](Docs/evidence/spark233-launcher-preferences-followup.md)。设置缩放与可访问性修复及先前候选状态见[界面续修](Docs/evidence/spark233-settings-zoom-followup.md)。
+
+基于 floral-notepaper 演进的 Windows 桌面启动器与插件工具集，使用 **Electron 45 + TypeScript + React 19 + Vite 8**，目标平台为 **Windows 11 x64**。MVP 按逐项审计持续收口，Windows 候选已通过完整 GUI smoke，最后实机验收待完成；界面语言为简体中文和英文。
+
+2026-10-26 已接齐便签 utility/main、通用外置数据备份、私有根保护、崩溃恢复及设置字段补丁。已取得类型检查、lint、33 文件/163 项测试、真实 utility、main 七组和备份七组代表链证据，Windows `dist:win` 也已成功生成目录包与 NSIS。最终同一输入的固定旧样本 `seeded-smoke-pQcL2D` 与完整 Windows GUI smoke `c94c7be6-ea9b-4abe-a711-da40a9378cf0` 均通过，实际进程退出码为 0；固定 ID、原文、附件、提醒与布局保持，P3.1 已按原条目验收完成。该次收口进度为 47/98 完整完成，其余 51 项仍部分完成或待验收/发布；IME、多屏、干净安装及 SYSTEM 服务等边界继续保留。完整证据和产物身份见[本轮收口记录](Docs/evidence/spark233-notes-finalization.md)。
 
 默认入口为 uTools 式启动器，使用 Rubick 式关键词与插件模式、React + shadcn/ui 和竹绿色主题。首次展示启动器引导，不自动新建空便签；后续启动恢复便签布局并驻留托盘，默认 `Alt+Space` 呼出启动器，新建便签是独立命令。
 
@@ -8,7 +16,7 @@
 
 截图与 OCR 使用 ScreenCapture + ImageReader，查词使用离线 ECDICT 基础词库；AI 翻译需主动执行并配置 OpenAI 兼容服务。应用搜索接入拼音匹配，文件搜索沿用 Pulse 文件名服务与 Instant 按需正文模式，服务安装需 Windows 管理员授权。剪贴板参考 QcClip，包含多格式历史、收藏标签、编辑、批量合并、图库、便捷小窗与主动清理；一致备份恢复由宿主协调。
 
-架构与完整一期范围见 [架构设计](Docs/launcher-architecture.md)，当前实现及证据边界见 [实施清单](Docs/launcher-todo.md)。技术栈、插件底座、业务链路、Windows 目录包与 NSIS 已完成本轮自动检查，固定样本正文/附件保留及七插件不可用网络代表链通过。安装包约 200.33 MiB，应用目录加首启展开插件的代码文件约 614.79 MiB，用户数据与索引另计；精确散列和口径见[分发记录](Docs/evidence/spark233-packaging.md)。真实界面/IME/多屏、截图标注、剪贴板回贴、UAC/SYSTEM 搜索服务与全卷、干净 Windows 物理断网首装仍待最后人工验收；当前安装器未签名、未执行。MVP 复用现有门禁与少量代表链路，没有新增大规模测试套件。
+架构与完整一期范围见 [架构设计](Docs/launcher-architecture.md)，当前实现及证据边界见 [实施清单](Docs/launcher-todo.md)。10 月 25 日候选的技术栈、插件底座、业务链路、Windows 目录包与 NSIS 已完成当时的自动检查，固定样本正文/附件保留及七插件不可用网络代表链通过。安装包约 200.33 MiB，应用目录加首启展开插件的代码文件约 614.79 MiB，用户数据与索引另计；精确散列和口径见[分发记录](Docs/evidence/spark233-packaging.md)。真实界面/IME/多屏、截图标注、剪贴板回贴、UAC/SYSTEM 搜索服务与全卷、干净 Windows 物理断网首装仍待最后人工验收；当前安装器未签名、未执行。MVP 复用现有门禁与少量代表链路，没有新增大规模测试套件。
 
 保留便签列表、分类、Markdown/文本磁贴、图片、主题与背景设置，使用原有文本编辑器和 Markdown 预览组件。正文仍是独立 `.md` 文件，图片仍存放在 `images/`；桌面 API 通过受限预加载桥接调用主进程。
 
@@ -31,6 +39,8 @@
 ## 开发
 
 项目开发环境固定为 **Node.js 26.12.1 / npm 12.2.1**，版本分别记录在 `.node-version` 和 `package.json`，CI 使用相同版本。Electron 内嵌 Node 24 与开发工具链分开管理，主进程类型仍匹配其实际运行时。
+
+启动器浏览器交互用例单独使用 `npm run test:ui`（Vitest Browser Mode/Chromium），`npm test` 继续运行 Node 功能用例。首次需执行 `npx playwright install chromium --only-shell`；单文件运行及范围见[启动器 UI 测试](Docs/spark233-ui-testing-2026-10-27.md)，不需要打安装包。
 
 Windows 已准备项目专用便携运行时时，在 PowerShell 中执行 `. ./scripts/use-toolchain.ps1` 为当前终端选择工具链，再运行下述 npm 命令；脚本不会替换全局 Node。便携版位于 `%LOCALAPPDATA%/spark233/toolchains/node-v26.12.1-win-x64`，也可自行安装 `.node-version` 对应的官方 Node 并使用 npm 12.2.1。
 
@@ -62,7 +72,7 @@ npm run dist:win  # release-electron/ 下的 NSIS 安装包
 
 应用名和安装包身份为 `spark233` / `com.spark233.desktop`，整体使用新身份，不提供旧版花笺别名、自动发现或自动迁移。未配置数字签名；上游 Tauri 更新和 Mirror酱入口已停用。插件更新独立管理，自动检查后由用户确认安装；开机启动仅在安装后的版本中设置。
 
-`npm run build` 同时组装七个离线插件到 `dist-plugins/`，打包时放入 ASAR 外的 `resources/plugins/`；单个插件的完整构建见 [官方插件构建说明](packages/official/README.md)。源码目录直接 `npm pack` 不会准备完整原生、词库和渲染资源。缺少原生资源时，构建入口会调用对应 Windows C++ 构建链；这些要求只针对开发者，用户端不运行 npm 安装脚本或临时编译。当前完整离线安装包及首启展开插件的文件字节已实测，详见[分发记录](Docs/evidence/spark233-packaging.md)；规划预算和 `.tgz` 合计不代表安装占用，用户数据、缓存、索引及服务副本另计。
+`npm run build` 同时组装七个离线插件到 `dist-plugins/`，打包时放入 ASAR 外的 `resources/plugins/`；单个插件的完整构建见 [官方插件构建说明](packages/official/README.md)。源码目录直接 `npm pack` 不会准备完整原生、词库和渲染资源。缺少原生资源时，构建入口会调用对应 Windows C++ 构建链；这些要求只针对开发者，用户端不运行 npm 安装脚本或临时编译。10 月 25 日历史候选的完整离线安装包及首启展开插件的文件字节已实测，详见[分发记录](Docs/evidence/spark233-packaging.md)；规划预算和 `.tgz` 合计不代表安装占用，用户数据、缓存、索引及服务副本另计。
 
 ## 数据与验证
 

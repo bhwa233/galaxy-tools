@@ -1,5 +1,22 @@
 import { invoke } from "../../platform/desktop";
-import type { LauncherItem, LauncherItemAction, LauncherQueryResult, LauncherState } from "./types";
+import type {
+  LauncherItem,
+  LauncherItemAction,
+  LauncherLearningMutation,
+  LauncherPreferenceMutation,
+  LauncherQueryResult,
+  LauncherState,
+} from "./types";
+
+export function updateLauncherLearning(input: LauncherLearningMutation): Promise<LauncherState> {
+  return invoke("launcher_learning_update", input);
+}
+
+export function updateLauncherPreference(
+  input: LauncherPreferenceMutation,
+): Promise<LauncherState> {
+  return invoke("launcher_preference_update", input);
+}
 
 export function getLauncherState(): Promise<LauncherState> {
   return invoke("launcher_state");
@@ -16,6 +33,9 @@ export function queryLauncher(
     ...(mode ? { mode } : {}),
     ...(directory ? { directory } : {}),
   });
+}
+export function cancelLauncherQuery(sessionId: string, requestId?: string): Promise<void> {
+  return invoke("launcher_cancel_query", { sessionId, ...(requestId ? { requestId } : {}) });
 }
 export function pickLauncherDirectory(): Promise<string | undefined> {
   return invoke("launcher_pick_directory");

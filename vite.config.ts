@@ -106,6 +106,7 @@ export default defineConfig(async () => ({
       "**/dist-electron/**",
       "**/dist/**",
       "**/dist-plugins/**",
+      "**/*.browser.test.*",
     ],
     setupFiles: ["./src/locales/test-setup.ts"],
   },

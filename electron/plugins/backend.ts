@@ -20,10 +20,11 @@ export interface PluginBackendController {
   readonly owner: PluginOwner;
   readonly pid: number | undefined;
   readonly running: boolean;
-  activate(activation: PluginActivation): Promise<JsonValue | undefined>;
+  activate(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   /** Host-only final writes during an already owned save preparation. */
   maintenance(activation: PluginActivation): Promise<JsonValue | undefined>;
   prepareStop(reason: StopReason): Promise<StopDecision>;
+  cancelStop(): Promise<void>;
   dispose(): Promise<void>;
 }
 export interface TrustedBackendOptions {
@@ -37,6 +38,7 @@ export interface TrustedBackendOptions {
   onEvent?: (event: Extract<BackendMessage, { type: "event" }>) => void;
   onCrash?: (error: Error) => void;
   onLog?: (stream: "stdout" | "stderr", text: string) => void;
+  onLogBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
   timeoutMs?: number;
   /** Host policy for long business tasks; save/stop/init keep timeoutMs. */
   activationTimeoutMs?: (activation: PluginActivation) => number | undefined;
@@ -120,8 +122,17 @@ class UtilityBackend implements PluginBackendController {
       this.hostCalls.clear();
       if (!this.disposing) options.onCrash?.(error);
     });
-    child.stdout?.on("data", (chunk: Buffer) => options.onLog?.("stdout", String(chunk)));
-    child.stderr?.on("data", (chunk: Buffer) => options.onLog?.("stderr", String(chunk)));
+    for (const stream of ["stdout", "stderr"] as const)
+      child[stream]?.on("data", (chunk: Buffer) => {
+        if (options.scope.accepts(this.owner)) {
+          try {
+            options.onLogBytes?.(stream, chunk.length);
+          } catch {
+            /* Numeric observation only. */
+          }
+        }
+        options.onLog?.(stream, String(chunk));
+      });
   }
 
   get pid(): number | undefined {
@@ -186,21 +197,34 @@ class UtilityBackend implements PluginBackendController {
         this.pending.get(message.requestId)?.type !== "activate" ||
         !this.options.onHostCall ||
         !this.options.hostCapabilities?.includes("storage") ||
-        message.call?.operation !== "file.trash" ||
+        !["file.trash", "storage.protectRoot"].includes(message.call?.operation) ||
         typeof message.call.path !== "string" ||
-        message.call.path.length > 4096 ||
-        path.isAbsolute(message.call.path)
+        message.call.path.length > 32768
       )
         throw new AppError("permissionDenied", "Backend platform action is not authorized");
-      const file = confined(this.options.dataDir, message.call.path);
-      const realRoot = canonical(this.options.dataDir);
-      if (file === realRoot || !fs.lstatSync(file).isFile())
-        throw new AppError("permissionDenied", "Trash requires an owned regular file");
+      let call: BackendHostCall;
+      if (message.call.operation === "file.trash") {
+        if (path.isAbsolute(message.call.path))
+          throw new AppError("permissionDenied", "Trash requires a relative owned path");
+        const file = confined(this.options.dataDir, message.call.path);
+        if (file === canonical(this.options.dataDir) || !fs.lstatSync(file).isFile())
+          throw new AppError("permissionDenied", "Trash requires an owned regular file");
+        call = { operation: "file.trash", path: file };
+      } else {
+        if (
+          !path.isAbsolute(message.call.path) ||
+          path.resolve(message.call.path) === path.parse(message.call.path).root
+        )
+          throw new AppError(
+            "permissionDenied",
+            "Private data protection requires an explicit directory",
+          );
+        // No filesystem authority is granted here. Main must bind this planned
+        // root to its pending, user-authorized migration before registering it.
+        call = { operation: "storage.protectRoot", path: canonical(message.call.path) };
+      }
       this.hostCalls.set(message.callId, controller);
-      await this.options.onHostCall(
-        { operation: "file.trash", path: file },
-        { owner: this.owner, signal: controller.signal },
-      );
+      await this.options.onHostCall(call, { owner: this.owner, signal: controller.signal });
       if (!this.options.scope.accepts(message.owner) || controller.signal.aborted)
         throw new AppError("pluginDisabled", "Platform result belongs to an expired owner");
       if (!this.exited)
@@ -229,9 +253,10 @@ class UtilityBackend implements PluginBackendController {
   private rpc(
     message: BackendRequest,
     timeoutMs = this.options.timeoutMs ?? 10_000,
+    cancellation?: { signal: AbortSignal; cancel: () => void },
   ): Promise<JsonValue | undefined> {
     if (this.exited) return Promise.reject(new Error("Plugin backend is no longer running"));
-    return new Promise((resolve, reject) => {
+    const result = new Promise<JsonValue | undefined>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(message.requestId);
         if (message.type === "activate") {
@@ -248,6 +273,13 @@ class UtilityBackend implements PluginBackendController {
         reject(new Error(`Plugin backend ${message.type} timed out`));
       }, timeoutMs);
       this.pending.set(message.requestId, { type: message.type, resolve, reject, timer });
+      // Registration follows pending ownership so even an already-aborted signal
+      // releases this RPC. Never send an activation after cancellation wins.
+      cancellation?.signal.addEventListener("abort", cancellation.cancel, { once: true });
+      if (cancellation?.signal.aborted) {
+        cancellation.cancel();
+        return;
+      }
       try {
         this.child.postMessage(message);
       } catch (error) {
@@ -256,6 +288,9 @@ class UtilityBackend implements PluginBackendController {
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+    return result.finally(() =>
+      cancellation?.signal.removeEventListener("abort", cancellation.cancel),
+    );
   }
 
   async initialize(entryPath: string): Promise<void> {
@@ -280,7 +315,11 @@ class UtilityBackend implements PluginBackendController {
       throw new Error("Migration did not acknowledge the requested data version");
   }
 
-  async activate(activation: PluginActivation): Promise<JsonValue | undefined> {
+  async activate(
+    activation: PluginActivation,
+    signal?: AbortSignal,
+  ): Promise<JsonValue | undefined> {
+    signal?.throwIfAborted();
     if (this.options.scope.state !== "active" || this.disposing)
       throw new Error("Plugin backend is not accepting commands");
     this.prepared = false;
@@ -303,6 +342,7 @@ class UtilityBackend implements PluginBackendController {
       return await this.rpc(
         { type: "activate", owner: this.owner, requestId, activation },
         this.options.activationTimeoutMs?.(activation),
+        signal ? { signal, cancel: () => void release().catch(() => {}) } : undefined,
       );
     } finally {
       await release();
@@ -317,6 +357,7 @@ class UtilityBackend implements PluginBackendController {
   }
 
   async prepareStop(reason: StopReason): Promise<StopDecision> {
+    this.prepared = false;
     if (this.exited)
       return reason === "crash"
         ? { ok: true }
@@ -346,6 +387,12 @@ class UtilityBackend implements PluginBackendController {
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  async cancelStop(): Promise<void> {
+    if (this.exited || this.disposing) throw new Error("Backend cannot resume after preparation");
+    this.prepared = false;
+    await this.rpc({ type: "cancelStop", owner: this.owner, requestId: randomUUID() });
   }
 
   dispose(): Promise<void> {
@@ -404,6 +451,7 @@ export async function createTrustedBackend(
   const controller = new UtilityBackend(child, options);
   const release = options.scope.own("process", {
     prepareStop: (reason) => controller.prepareStop(reason),
+    cancelStop: () => controller.cancelStop(),
     dispose: () => controller.dispose(),
   });
   try {
@@ -431,6 +479,7 @@ export interface TrustedNativeOptions {
   approveTrust: () => boolean | Promise<boolean>;
   prepareStop?: (reason: StopReason) => StopDecision | Promise<StopDecision>;
   requestShutdown?: () => void | Promise<void>;
+  onOutputBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
   onOutput?: (output: {
     owner: PluginOwner;
     requestId: string;
@@ -485,8 +534,14 @@ export async function createTrustedNativeProcess(
   });
   for (const stream of ["stdout", "stderr"] as const)
     child[stream].on("data", (chunk: Buffer) => {
-      if (options.scope.accepts(owner))
+      if (options.scope.accepts(owner)) {
+        try {
+          options.onOutputBytes?.(stream, chunk.length);
+        } catch {
+          /* Never affect protocol/lifecycle. */
+        }
         options.onOutput?.({ owner, requestId, stream, text: String(chunk) });
+      }
     });
   const controller: PluginNativeController = {
     owner,

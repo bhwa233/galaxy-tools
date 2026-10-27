@@ -12,7 +12,8 @@ import { app, screen, type BrowserWindow } from "electron";
 import type { NoteLayoutState } from "./note-window-state.js";
 import type { NoteWindowSnapshot } from "../src/features/windows/noteWindowState.js";
 import type { Capsules } from "./capsules.js";
-import type { NoteStore } from "./store.js";
+import type { NotesDataClient } from "./plugins/official/notes-data-client.js";
+import type { AppConfig } from "../src/features/settings/types.js";
 
 export interface SmokeContext {
   output: string;
@@ -24,10 +25,13 @@ export interface SmokeContext {
     workingDirectoryIsLocal: boolean;
     sandboxEnabled: boolean;
   };
-  store: NoteStore;
+  notes: NotesDataClient;
+  config: () => AppConfig;
+  configDir: string;
+  dataDir: () => string;
   windows: Map<string, BrowserWindow>;
   layouts: Map<string, NoteLayoutState>;
-  openNote: (id?: string, view?: "notepad" | "tile") => string;
+  openNote: (id?: string, view?: "notepad" | "tile") => Promise<string>;
   showMain: () => BrowserWindow;
   showLauncher: () => Promise<BrowserWindow>;
   pauseForBackup: () => Promise<() => void>;
@@ -38,7 +42,7 @@ export interface SmokeContext {
   quit: () => void;
 }
 export async function runSmoke(context: SmokeContext): Promise<void> {
-  const { store, windows, openNote, showMain } = context;
+  const { notes, windows, openNote, showMain } = context;
   const checks: Record<string, unknown> = {};
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   async function clickCapsule(win: BrowserWindow, selector: string, movement = 0) {
@@ -55,8 +59,14 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
     await wait(120);
   }
-  async function hydrated(win: BrowserWindow) {
+  async function hydrated(source: BrowserWindow | string): Promise<BrowserWindow> {
+    let win = typeof source === "string" ? windows.get(source) : source;
     for (let i = 0; i < 100; i++) {
+      if (!win && typeof source === "string") win = windows.get(source);
+      if (!win) {
+        await wait(100);
+        continue;
+      }
       if (win.isDestroyed()) throw new Error("Window destroyed during load");
       if (
         await win.webContents
@@ -67,7 +77,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       ) {
         await wait(500);
         await ensureSourceEditor(win);
-        return;
+        return win;
       }
       await wait(100);
     }
@@ -153,9 +163,96 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       resume?.();
     }
   }
+  async function verifyFinalPluginSave() {
+    // Regression: the final note write succeeded, but surface_state re-read the
+    // same identity through the fenced public manager and refused the save ack.
+    const lifecycleLauncher = await context.showLauncher();
+    const pluginCommand = async (command: string, args: unknown) => {
+      const result = await lifecycleLauncher.webContents.executeJavaScript(
+        `window.spark233Desktop.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)})`,
+      );
+      if (!result.ok) throw new Error(JSON.stringify(result.error));
+    };
+    const autoSave = context.config().noteSurfaceAutoSave;
+    const originalFont = context.config().fontSize;
+    const originalSurfaceFont = context.config().surfaceFontSize;
+    await pluginCommand("config_patch", {
+      patch: { noteSurfaceAutoSave: false },
+    });
+    let notesStopped = false;
+    try {
+      const fixture = await notes.save({ title: "Final plugin save", content: "", category: "" });
+      const editor = windows.get(await openNote(fixture.id))!;
+      await hydrated(editor);
+      // Two settings panels can hold the same old snapshot. Each must submit
+      // only its edited field, so the second window cannot revert the first.
+      const editorBefore = await editor.webContents.executeJavaScript(
+        "window.spark233Desktop.invoke('config_get')",
+      );
+      const launcherBefore = context.config();
+      const fontSize = launcherBefore.fontSize === 18 ? 19 : 18;
+      const surfaceFontSize = editorBefore.value.surfaceFontSize === 20 ? 21 : 20;
+      await pluginCommand("config_patch", { patch: { fontSize } });
+      const patched = await editor.webContents.executeJavaScript(
+        `window.spark233Desktop.invoke('config_patch', {patch:{surfaceFontSize:${surfaceFontSize}}})`,
+      );
+      if (
+        !patched.ok ||
+        patched.value.fontSize !== fontSize ||
+        patched.value.surfaceFontSize !== surfaceFontSize
+      )
+        throw new Error("A stale settings window reverted another window's config patch");
+      const forbidden = await editor.webContents.executeJavaScript(
+        `window.spark233Desktop.invoke('config_patch', {patch:{dataDir:${JSON.stringify(context.dataDir())}}})`,
+      );
+      const obsolete = await editor.webContents.executeJavaScript(
+        `window.spark233Desktop.invoke('config_save', {config:${JSON.stringify(editorBefore.value)}})`,
+      );
+      if (
+        forbidden.ok ||
+        forbidden.error.code !== "invalidPayload" ||
+        obsolete.ok ||
+        obsolete.error.code !== "obsoleteClient"
+      )
+        throw new Error("Config writes accepted a root change or an obsolete full snapshot");
+      checks.independentSettingsPatches = true;
+      const finalContent = "停用插件前的未保存正文\n";
+      await editor.webContents.executeJavaScript(`(() => {
+      const area = document.querySelector('textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, ${JSON.stringify(finalContent)});
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+      await wait(80);
+      await pluginCommand("plugins_enable", { pluginId: "spark233.notes", enabled: false });
+      notesStopped = true;
+      if (!editor.isDestroyed()) throw new Error("Saved plugin stop left the editor alive");
+      await pluginCommand("plugins_enable", { pluginId: "spark233.notes", enabled: true });
+      notesStopped = false;
+      if ((await notes.get(fixture.id)).content !== finalContent)
+        throw new Error("Plugin stop/restart lost the final renderer save");
+      checks.finalPluginSave = true;
+    } finally {
+      if (notesStopped)
+        await pluginCommand("plugins_enable", { pluginId: "spark233.notes", enabled: true });
+      await pluginCommand("config_patch", {
+        patch: {
+          noteSurfaceAutoSave: autoSave,
+          fontSize: originalFont,
+          surfaceFontSize: originalSurfaceFont,
+        },
+      });
+    }
+    // Restored windows must finish their ready handshake before the final quit.
+    for (const [label, restored] of windows)
+      if (context.layouts.get(label)?.view !== "launcher") await hydrated(restored);
+  }
   try {
-    if (process.argv.includes("--smoke-launcher-maintenance")) {
-      await verifyLauncherMaintenance();
+    if (
+      process.argv.includes("--smoke-launcher-maintenance") ||
+      process.argv.includes("--smoke-notes-final-save")
+    ) {
+      if (process.argv.includes("--smoke-launcher-maintenance")) await verifyLauncherMaintenance();
+      if (process.argv.includes("--smoke-notes-final-save")) await verifyFinalPluginSave();
       fs.mkdirSync(path.dirname(context.output), { recursive: true });
       fs.writeFileSync(
         context.output,
@@ -171,11 +268,11 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       );
       return;
     }
-    checks.initialNoteCount = store.list().length;
+    checks.initialNoteCount = (await notes.list()).length;
     // The launcher no longer manufactures a blank note on first startup.
     // Existing editor regressions still need an explicit controlled document.
-    if (!store.list().length)
-      store.save({
+    if (!(await notes.list()).length)
+      await notes.save({
         title: "Smoke editor fixture",
         content: "# Controlled smoke document\n",
         category: "",
@@ -203,12 +300,14 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     }
     checks.restoredPinPreferences = restoredPins.length;
     const pinOnlyId =
-      store.list().find((n) => n.title === "未展示置顶恢复验证")?.id ??
-      store.save({
-        title: "未展示置顶恢复验证",
-        content: "只保留置顶偏好，不打开窗口",
-        category: "",
-      }).id;
+      (await notes.list()).find((n) => n.title === "未展示置顶恢复验证")?.id ??
+      (
+        await notes.save({
+          title: "未展示置顶恢复验证",
+          content: "只保留置顶偏好，不打开窗口",
+          category: "",
+        })
+      ).id;
     await main.webContents.executeJavaScript(
       "window.spark233Desktop.invoke('note_set_pinned',{noteId:" +
         JSON.stringify(pinOnlyId) +
@@ -221,7 +320,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       win.webContents.on("console-message", (details) => {
         if (details.level === "error") errors.push(details.message);
       });
-    const note = store.save({
+    const note = await notes.save({
       title: "Electron 中文验证",
       content: "# 测试\n- [ ] 保留中文\n**Markdown**\n",
       category: "",
@@ -232,7 +331,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     await hydrated(win);
     const ipc = await win.webContents.executeJavaScript(`(async () => {
       const result = await window.spark233Desktop.invoke('notes_get', { id: ${JSON.stringify(note.id)} });
-      const denial = await window.spark233Desktop.invoke('read_external_file', { path: ${JSON.stringify(path.join(store.configDir, "config.json"))} });
+      const denial = await window.spark233Desktop.invoke('read_external_file', { path: ${JSON.stringify(path.join(context.configDir, "config.json"))} });
       return { node: typeof require, bridge: !!window.spark233Desktop, note: result, denial };
     })()`);
     if (
@@ -254,12 +353,12 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     })()`);
     await wait(80);
     await context.hideAndRelease(win);
-    if (!win.isDestroyed() || store.get(note.id).content !== dirtyText)
+    if (!win.isDestroyed() || (await notes.get(note.id)).content !== dirtyText)
       throw new Error("Close/release lost unsaved content");
     await expectNotePresence(main, note.id, "hidden");
     checks.durableClose = true;
     checks.rendererReleased = true;
-    const reopened = windows.get(openNote(note.id))!;
+    const reopened = windows.get(await openNote(note.id))!;
     await hydrated(reopened);
     checks.restored = await reopened.webContents.executeJavaScript(
       `document.querySelector('textarea').value === ${JSON.stringify(dirtyText)}`,
@@ -309,7 +408,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       area.dispatchEvent(new Event('input', { bubbles: true }));
     })()`);
     await wait(80);
-    const metadataFile = path.join(store.dataDir, "metadata.json");
+    const metadataFile = path.join(context.dataDir(), "metadata.json");
     const backup = `${metadataFile}.smoke-backup`;
     fs.renameSync(metadataFile, backup);
     fs.mkdirSync(metadataFile);
@@ -330,7 +429,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       ));
     if (!checks.saveFailurePreservesWindow)
       throw new Error("Save failure destroyed the dirty editor");
-    const relativeImage = store.saveImage(
+    const relativeImage = await notes.saveImage(
       note.id,
       Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZl8AAAAASUVORK5CYII=",
@@ -338,14 +437,15 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       ),
       "png",
     );
+    const imagePath = await notes.resolveImage(relativeImage);
     checks.imageFetch = await reopened.webContents.executeJavaScript(
-      `fetch('spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.dataDir, relativeImage))})).then(async r => ({ status: r.status, type: r.headers.get('content-type'), size: (await r.arrayBuffer()).byteLength }))`,
+      `fetch('spark233://asset/' + encodeURIComponent(${JSON.stringify(imagePath)})).then(async r => ({ status: r.status, type: r.headers.get('content-type'), size: (await r.arrayBuffer()).byteLength }))`,
     );
     checks.image = await reopened.webContents.executeJavaScript(
-      `(async () => { const img = new Image(); img.src = 'spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.dataDir, relativeImage))}); await img.decode(); return img.naturalWidth; })()`,
+      `(async () => { const img = new Image(); img.src = 'spark233://asset/' + encodeURIComponent(${JSON.stringify(imagePath)}); await img.decode(); return img.naturalWidth; })()`,
     );
     checks.protocolDenied = await reopened.webContents.executeJavaScript(
-      `fetch('spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(store.configDir, "config.json"))})).then(r => r.status)`,
+      `fetch('spark233://asset/' + encodeURIComponent(${JSON.stringify(path.join(context.configDir, "config.json"))})).then(r => r.status)`,
     );
     if (checks.image !== 1 || checks.protocolDenied !== 403)
       throw new Error("Asset protocol boundary failed");
@@ -357,7 +457,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       !reopened.isDestroyed() ||
       !layout.folded ||
       !layout.visible ||
-      store.get(note.id).content !== failureText
+      (await notes.get(note.id)).content !== failureText
     )
       throw new Error("Fold did not save and release its editor");
     const owner = () =>
@@ -381,12 +481,12 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       }
     })()`);
     for (let i = 0; i < 2; i++) {
-      const n = store.save({
+      const n = await notes.save({
         title: `队列验证 ${i + 1}`,
         content: "# 胶囊预览\n- [ ] 任务\n",
         category: "",
       });
-      const w = windows.get(openNote(n.id))!;
+      const w = windows.get(await openNote(n.id))!;
       await hydrated(w);
       w.setBounds(expandedBounds);
       await context.foldAndRelease(w);
@@ -482,8 +582,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     );
     queueWin.setBounds(originalQueueBounds);
     await clickCapsule(queueWin, `[data-capsule-id="${note.id}"]`);
-    const restored = windows.get(label)!;
-    await hydrated(restored);
+    const restored = await hydrated(label);
     if (
       context.layouts.get(label)!.folded ||
       JSON.stringify(restored.getBounds()) !== JSON.stringify(expandedBounds)
@@ -531,13 +630,13 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     });
     await expectNotePresence(main, note.id, "hidden");
     if (
-      store.get(note.id).content !== failureText ||
+      (await notes.get(note.id)).content !== failureText ||
       context.layouts.get(label)!.topmost !== pinBeforeClose ||
       windows.has(label)
     )
       throw new Error("Capsule close lost content, pin preference, or reopened the editor");
     if (owner()) throw new Error("Closed capsule remained in the edge queue");
-    const afterClose = windows.get(openNote(note.id))!;
+    const afterClose = windows.get(await openNote(note.id))!;
     await hydrated(afterClose);
     if (
       !(await afterClose.webContents.executeJavaScript(
@@ -554,12 +653,12 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       titleReadable: true,
       closeOnRight: true,
     };
-    const floatingNote = store.save({
+    const floatingNote = await notes.save({
       title: "悬浮胶囊点击",
       content: "悬浮展开后正文保持原样",
       category: "",
     });
-    const floatingLabel = openNote(floatingNote.id);
+    const floatingLabel = await openNote(floatingNote.id);
     const floatingEditor = windows.get(floatingLabel)!;
     await hydrated(floatingEditor);
     const floatingBounds = floatingEditor.getBounds();
@@ -571,18 +670,16 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       x: floatingBounds.x,
       y: floatingBounds.y,
     };
-    context.capsules.refresh();
+    await context.capsules.refresh();
     const floating = context.capsules.surfaces.get(`floating:${floatingNote.id}`)!;
     for (let i = 0; !floating.ready && i < 60; i++) await wait(50);
     if (!floating.ready) throw new Error("Floating capsule did not render");
     await clickCapsule(floating.win, `[data-capsule-id="${floatingNote.id}"]`);
-    const floatingRestored = windows.get(floatingLabel);
-    if (!floatingRestored || floatingLayout.folded)
-      throw new Error("Native click did not open floating capsule");
-    await hydrated(floatingRestored);
+    const floatingRestored = await hydrated(floatingLabel);
+    if (floatingLayout.folded) throw new Error("Native click did not open floating capsule");
     if (
       JSON.stringify(floatingRestored.getBounds()) !== JSON.stringify(floatingBounds) ||
-      store.get(floatingNote.id).content !== floatingNote.content
+      (await notes.get(floatingNote.id)).content !== floatingNote.content
     )
       throw new Error("Floating capsule lost its expanded bounds or note content");
     await context.hideAndRelease(floatingRestored);
@@ -608,6 +705,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     )
       throw new Error(`Hardware GPU/sandbox check failed: ${JSON.stringify(gpu)}`);
     await verifyLauncherMaintenance();
+    await verifyFinalPluginSave();
     checks.errors = errors;
     fs.mkdirSync(path.dirname(context.output), { recursive: true });
     fs.writeFileSync(

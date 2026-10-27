@@ -48,6 +48,7 @@ export interface NativePluginRuntimeOptions {
   cacheDir: string;
   approveTrust: () => boolean | Promise<boolean>;
   onCrash?: (error: Error) => void;
+  onOutputBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
   onEvent?: (event: {
     owner: PluginOwner;
     entryId: string;
@@ -60,7 +61,7 @@ export interface NativePluginRuntime {
   readonly pid: number | undefined;
   checkStartup(): Promise<void>;
   activate(activation: PluginActivation): Promise<JsonValue | undefined>;
-  query(activation: PluginActivation): Promise<JsonValue | undefined>;
+  query(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   request(
     entryId: string,
     activation: PluginActivation,
@@ -110,12 +111,26 @@ class NativeEntryProcess {
       });
     });
     this.child.stdin.on("error", (error) => this.fail(error));
-    this.child.stdout.on("data", (chunk: Buffer) => this.receive(chunk));
+    this.child.stdout.on("data", (chunk: Buffer) => {
+      this.output("stdout", chunk.length);
+      this.receive(chunk);
+    });
     // stderr is diagnostic only; it can never be mistaken for a protocol reply.
-    this.child.stderr.resume();
+    this.child.stderr.on("data", (chunk: Buffer) => this.output("stderr", chunk.length));
+  }
+  private output(stream: "stdout" | "stderr", byteCount: number): void {
+    if (!this.disposing && this.options.scope.accepts(this.options.scope.owner))
+      try {
+        this.options.onOutputBytes?.(stream, byteCount);
+      } catch {
+        /* Observers do not own the native task. */
+      }
   }
   get pid() {
     return this.child.pid;
+  }
+  get failedStartupExited(): boolean {
+    return this.ended && !this.initialized;
   }
   private fail(error: Error, report = true) {
     const first = !this.fault;
@@ -227,6 +242,10 @@ class NativeEntryProcess {
       };
       this.pending.set(requestId, { resolve, reject, cleanup });
       signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
       try {
         this.send({ ...identity, ...body });
       } catch (error) {
@@ -350,18 +369,24 @@ export async function createNativePluginRuntime(
   const processes = new Map<string, NativeEntryProcess>();
   const starting = new Map<string, Promise<NativeEntryProcess>>();
   let disposed = false;
-  let queryController: AbortController | undefined;
+  const queryControllers = new Set<AbortController>();
   const defaultEntry = () => {
     if (entries.has("main")) return "main";
     if (entries.size === 1) return entries.keys().next().value!;
     throw new Error("Multiple native entries require a main entry or an explicit entry ID");
+  };
+  const forgetFailedStartup = (id: string, process: NativeEntryProcess): boolean => {
+    if (!process.failedStartupExited || processes.get(id) !== process) return false;
+    processes.delete(id);
+    starting.delete(id);
+    return true;
   };
   const processFor = async (id: string) => {
     if (options.scope.state !== "active" || disposed)
       throw new Error("Native plugin is not accepting requests");
     if (!entries.has(id)) throw new Error("Native entry ID was not declared by this plugin");
     const existing = processes.get(id);
-    if (existing) {
+    if (existing && !forgetFailedStartup(id, existing)) {
       await starting.get(id);
       return existing;
     }
@@ -371,7 +396,15 @@ export async function createNativePluginRuntime(
       throw new Error("Native entry changed after manifest validation");
     const process = new NativeEntryProcess({ ...options, pluginRoot: root }, id, descriptor);
     processes.set(id, process);
-    const ready = process.initialize().then(() => process);
+    const ready = process.initialize().then(
+      () => process,
+      (error) => {
+        // Only an exited process that never admitted business work is reusable.
+        // A timed-out close stays tracked until a later retry/stop observes exit.
+        forgetFailedStartup(id, process);
+        throw error;
+      },
+    );
     starting.set(id, ready);
     void ready.catch(() => {});
     return ready;
@@ -412,19 +445,29 @@ export async function createNativePluginRuntime(
     async activate(activation) {
       return this.request(defaultEntry(), activation);
     },
-    async query(activation) {
-      queryController?.abort();
+    async query(activation, signal) {
+      signal?.throwIfAborted();
       const controller = new AbortController();
-      queryController = controller;
-      return scopedCall("query", defaultEntry(), activation, controller.signal);
+      queryControllers.add(controller);
+      try {
+        return await scopedCall(
+          "query",
+          defaultEntry(),
+          activation,
+          signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+        );
+      } finally {
+        queryControllers.delete(controller);
+      }
     },
     async request(entryId, activation, signal) {
       return scopedCall("activate", entryId, activation, signal);
     },
     async prepareStop(reason) {
-      queryController?.abort();
+      for (const controller of queryControllers) controller.abort();
       await Promise.allSettled(starting.values());
-      for (const process of processes.values()) {
+      for (const [id, process] of processes) {
+        if (forgetFailedStartup(id, process)) continue;
         const decision = await process.prepareStop(reason);
         if (!decision.ok) return decision;
       }

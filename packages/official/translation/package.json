@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-translation",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Offline ECDICT base dictionary and explicit OpenAI-compatible translation",
   "license": "MIT",
@@ -10,6 +10,8 @@
     "backend.mjs",
     "dictionary.mjs",
     "provider.mjs",
+    "language.mjs",
+    "language.d.mts",
     "data/**",
     "README.md"
   ],

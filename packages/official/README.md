@@ -13,6 +13,11 @@ is provisional until account ownership is verified; the build does not publish.
 | `spark233.applications` | `applications`   |
 | `spark233.search`       | `search`         |
 
+All seven plugins have representative functional cases in the existing Vitest
+runner. Run `npm test`, or filter them with
+`npm test -- packages/official electron/plugins/official`. Coverage and controlled
+OS/provider boundaries are recorded in the [functional test report](../../Docs/spark233-plugin-functional-tests-2026-10-27.md).
+
 Select the repository's Node/npm runtime, install its lockfile dependencies and
 build the current shared UI source once:
 
@@ -37,8 +42,8 @@ standard `dist-plugins/index.json`. `--output` selects a dedicated output folder
 
 `npm run plugins:build` assembles the complete offline distribution and requires
 exactly seven plugins. Native payloads and the fixed dictionary are validated or
-prepared through their existing build entry points. Clipboard business code is
-bundled into `backend.mjs` before assembly. No npm install lifecycle scripts run
+prepared through their existing build entry points. Notes and clipboard business code is
+bundled into each package’s `backend.mjs` before assembly. No npm install lifecycle scripts run
 on the user's computer.
 
 The full default build also prepares `dist-host/command-matcher`: the existing

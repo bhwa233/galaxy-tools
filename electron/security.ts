@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { AppError, canonical, inside } from "./store.js";
+import { AppError, canonical, inside } from "./persistence.js";
 
 /** Paths outside application storage need a native dialog, actual dropped File, or CLI grant. */
 export class FileGrants {

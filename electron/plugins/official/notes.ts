@@ -12,7 +12,10 @@ export interface NotesRuntimeOptions {
   newNote: (activation: PluginActivation) => void | Promise<void>;
   openNote: (id: string, activation: PluginActivation) => void | Promise<void>;
   showOnDesktop: (id: string) => void | Promise<void>;
-  search?: (query: string) => JsonValue | undefined | Promise<JsonValue | undefined>;
+  search?: (
+    query: string,
+    signal?: AbortSignal,
+  ) => JsonValue | undefined | Promise<JsonValue | undefined>;
   prepare: (reason: StopReason) => StopDecision | Promise<StopDecision>;
   stop: () => void | Promise<void>;
   start: () => void | Promise<void>;
@@ -42,10 +45,18 @@ export async function createNotesRuntime(
   // The manager's subsequent on-startup activate({}) must not create a note UI.
   await options.start();
 
-  async function activate(activation: PluginActivation): Promise<JsonValue | undefined> {
+  async function activate(
+    activation: PluginActivation,
+    signal?: AbortSignal,
+    queryOnly = false,
+  ): Promise<JsonValue | undefined> {
     if (scope.state !== "active") throw new AppError("pluginDisabled", "便签插件当前不可用");
+    if (signal?.aborted) throw new Error("Notes query cancelled");
     if (!activation.commandId) return;
-    const response = await options.backend.activate(activation);
+    if (queryOnly && !["data", "search"].includes(activation.commandId))
+      throw new AppError("unknownPluginCommand", "便签查询不允许窗口操作");
+    const response = await options.backend.activate(activation, signal);
+    if (signal?.aborted) throw new Error("Notes query cancelled");
     if (!scope.accepts(scope.owner)) throw new AppError("pluginDisabled", "便签插件运行实例已失效");
     if (activation.commandId === "data") return response;
     if (
@@ -55,6 +66,8 @@ export async function createNotesRuntime(
       typeof response.action !== "string"
     )
       throw new AppError("invalidPluginResponse", "便签后台没有返回有效操作");
+    if (queryOnly && response.action !== "search")
+      throw new AppError("invalidPluginResponse", "便签查询返回了窗口操作");
     const parameters =
       activation.parameters &&
       typeof activation.parameters === "object" &&
@@ -84,7 +97,8 @@ export async function createNotesRuntime(
             : activation.context?.kind === "text"
               ? activation.context.text
               : "";
-        if (options.search) return options.search(query);
+        if (options.search) return options.search(query, signal);
+        if (queryOnly) return { items: [] };
         await options.openManager();
         return;
       }
@@ -93,12 +107,14 @@ export async function createNotesRuntime(
     }
   }
 
+  function tracked(activation: PluginActivation, signal?: AbortSignal, queryOnly = false) {
+    const operation = activate(activation, signal, queryOnly);
+    active.add(operation);
+    void operation.finally(() => active.delete(operation)).catch(() => {});
+    return operation;
+  }
   return {
-    activate(activation) {
-      const operation = activate(activation);
-      active.add(operation);
-      void operation.finally(() => active.delete(operation)).catch(() => {});
-      return operation;
-    },
+    activate: (activation) => tracked(activation),
+    query: (activation, signal) => tracked(activation, signal, true),
   };
 }

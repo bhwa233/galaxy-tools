@@ -10,3 +10,7 @@ export function inspectBackup(): Promise<BackupSelection | undefined> {
 export function restoreBackup(selectionId: string): Promise<BackupReport> {
   return invoke("backup_restore", { selectionId });
 }
+
+export function releaseBackupSelection(selectionId: string): Promise<void> {
+  return invoke("backup_selection_release", { selectionId });
+}

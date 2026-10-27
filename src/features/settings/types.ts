@@ -6,6 +6,8 @@ export type TileColorMode = "system" | "custom";
 export type BackgroundFit = "cover" | "contain" | "repeat";
 export type ImageDisplayMode = "show" | "click" | "hidden";
 export type McpPermission = "read" | "append" | "full";
+export type SuperPanelButton = "middle" | "x1" | "x2";
+export type SuperPanelTrigger = "click" | "hold";
 
 export interface AppConfig {
   locale: string;
@@ -35,6 +37,12 @@ export interface AppConfig {
   reminderSound: boolean;
   mcpEnabled: boolean;
   mcpPermission: McpPermission;
+  superPanelEnabled: boolean;
+  superPanelButton: SuperPanelButton;
+  superPanelTrigger: SuperPanelTrigger;
+  superPanelHoldMs: number;
+  superPanelExcludedApps: string[];
+  superPanelCopyFallback: boolean;
   surfaceWidth?: number;
   surfaceHeight?: number;
   toggleVisibilityShortcut: string;
@@ -47,3 +55,6 @@ export interface AppConfig {
   backgroundPositionX?: number;
   backgroundPositionY?: number;
 }
+
+/** The data root changes only through the coordinated migration transaction. */
+export type AppConfigPatch = Partial<Omit<AppConfig, "dataDir">>;

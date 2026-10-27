@@ -1,7 +1,7 @@
 /* eslint-disable no-control-regex -- Package paths must reject control characters. */
 import { z } from "zod";
 
-export const HOST_API_VERSION = "1.1.0";
+export const HOST_API_VERSION = "1.2.0";
 export const THEME_API_VERSION = "1.0.0";
 
 // Reuse Zod already present in the toolchain for one shared runtime/type schema;
@@ -13,6 +13,19 @@ const localId = z
   .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/);
 const range = z.string().min(1).max(128);
 const label = z.string().trim().min(1).max(160);
+
+/** Host-supplied source identity is an executable basename, never a path or HWND. */
+export const sourceApplicationSchema = z
+  .string()
+  .max(260)
+  .refine((value) => !/\p{Cc}/u.test(value), "Source application cannot contain control characters")
+  .transform((value) => value.trim().toLowerCase())
+  .pipe(
+    z
+      .string()
+      .min(5)
+      .regex(/^[^\\/:<>"|?*]+\.exe$/i),
+  );
 
 /** Portable package paths, before any host filesystem interpretation. */
 export function isPluginPackagePath(value: string): boolean {
@@ -64,10 +77,16 @@ const commandSchema = z.strictObject({
   keywords: z.array(z.string().min(1).max(80)).max(32).default([]),
   aliases: z.array(z.string().min(1).max(80)).max(32).default([]),
   inputs: z
-    .array(z.enum(["text", "image", "files"]))
-    .max(3)
+    .array(z.enum(["text", "image", "files", "window"]))
+    .max(4)
     .default([]),
-  match: z.enum(["word", "text", "image", "files"]).optional(),
+  match: z.enum(["word", "text", "image", "files", "window"]).optional(),
+  sourceApplications: z
+    .array(sourceApplicationSchema)
+    .min(1)
+    .max(32)
+    .transform((values) => [...new Set(values)])
+    .optional(),
   search: z.enum(["mode", "word", "default"]).optional(),
   mode: localId.optional(),
   requiresPlugins: z.array(localId).max(32).optional(),
@@ -171,6 +190,26 @@ export const pluginPackageSchema = z.object({
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;
 export type PluginCommand = PluginManifest["commands"][number];
 export type PluginPackageMetadata = z.infer<typeof pluginPackageSchema>;
+
+/** The same declaration policy is used for discovery and execution. The host
+ * must obtain sourceApplication from its own current caller context. */
+export function commandMatchesSourceApplication(
+  command: Pick<PluginCommand, "sourceApplications"> &
+    Partial<Pick<PluginCommand, "inputs" | "match">>,
+  context?: { sourceApplication?: string },
+): boolean {
+  if (
+    !command.sourceApplications &&
+    !command.inputs?.includes("window") &&
+    command.match !== "window"
+  )
+    return true;
+  const source = sourceApplicationSchema.safeParse(context?.sourceApplication);
+  return (
+    source.success &&
+    (!command.sourceApplications || command.sourceApplications.includes(source.data))
+  );
+}
 
 /** Translate presentation fields while preserving command IDs and capabilities. */
 export function localizePluginManifest(manifest: PluginManifest, locale: string): PluginManifest {

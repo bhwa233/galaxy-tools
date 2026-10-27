@@ -1,6 +1,4 @@
 import type { BrowserWindow } from "electron";
-import fs from "node:fs";
-import path from "node:path";
 import type { SmokeContext } from "./smoke.js";
 import type { Note } from "../src/features/notes/types.js";
 
@@ -25,7 +23,7 @@ export async function verifyUnifiedNoteList(
       main.webContents.executeJavaScript(`!!document.querySelector(${JSON.stringify(selector)})`),
     "New desktop note missing from unified list",
   );
-  const count = context.store.list().length;
+  const count = (await context.notes.list()).length;
   async function fromMenu() {
     await main.webContents.executeJavaScript(
       `document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:120,clientY:200}))`,
@@ -42,7 +40,7 @@ export async function verifyUnifiedNoteList(
     );
   }
   await ensureSourceEditor(main);
-  const originalModifiedAt = context.store.get(note.id).updatedAt;
+  const originalModifiedAt = (await context.notes.get(note.id)).updatedAt;
   await main.webContents.executeJavaScript(
     `document.querySelector(${JSON.stringify(selector)}).querySelector('[data-note-pin]').click()`,
   );
@@ -55,8 +53,7 @@ export async function verifyUnifiedNoteList(
   );
   // Existing fixture categories legitimately precede the uncategorized group.
   // Check pin ordering among this note's peers, without imposing global order.
-  const peerIds = context.store
-    .list()
+  const peerIds = (await context.notes.list())
     .filter((item) => item.category === note.category)
     .map((item) => item.id);
   await until(
@@ -70,7 +67,7 @@ export async function verifyUnifiedNoteList(
   if (
     !preset ||
     context.windows.has(preset[0]) ||
-    context.store.get(note.id).updatedAt !== originalModifiedAt
+    (await context.notes.get(note.id)).updatedAt !== originalModifiedAt
   )
     throw new Error("List pin opened a window or changed note content time");
   await expectNotePresence(main, note.id, "unopened");
@@ -159,9 +156,9 @@ export async function verifyUnifiedNoteList(
       ),
     "List pin did not update paper",
   );
-  const persisted = JSON.parse(
-    fs.readFileSync(path.join(context.store.dataDir, "electron-layout.json"), "utf8"),
-  );
+  const persisted = (await context.notes.getState("layout")) as unknown as {
+    windows: { noteId?: string; topmost?: boolean }[];
+  };
   if (
     !persisted.windows.some(
       (e: { noteId?: string; topmost?: boolean }) => e.noteId === note.id && e.topmost,
@@ -171,7 +168,7 @@ export async function verifyUnifiedNoteList(
   await wait(200);
   await fromMenu();
   await wait(220);
-  if (context.store.list().length !== count || context.windows.get(label) !== win)
+  if ((await context.notes.list()).length !== count || context.windows.get(label) !== win)
     throw new Error("Desktop action duplicated a note or window");
   await main.webContents.executeJavaScript(
     `document.querySelector(${JSON.stringify(selector)}).click()`,
@@ -189,7 +186,7 @@ export async function verifyUnifiedNoteList(
       "document.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true}))",
     );
     await until(
-      () => context.store.get(note.id).content === text,
+      async () => (await context.notes.get(note.id)).content === text,
       "Editor save did not reach shared Markdown file",
     );
   }

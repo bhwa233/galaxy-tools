@@ -738,6 +738,10 @@ int wmain(int argc, wchar_t** argv) {
             if (request.action == L"search" || request.action == L"service-status") {
                 if (!fs::path(request.profile).is_absolute() || (request.action == L"search" && request.mode != L"files" && request.mode != L"content")) throw std::runtime_error("Invalid search mode/profile");
                 fs::create_directories(fs::path(request.profile) / L"tmp");
+                // Instant configuration reads LOCALAPPDATA directly. Bind this
+                // helper's environment to the host-owned plugin domain too.
+                if (!SetEnvironmentVariableW(L"LOCALAPPDATA", request.profile.c_str()))
+                    throw std::runtime_error("Cannot isolate content configuration profile");
                 SetEnvironmentVariableW(L"SPARK233_SEARCH_PROFILE_ROOT", request.profile.c_str());
                 SetEnvironmentVariableW(L"SPARK233_CONTENT_TIMING_DIR", (fs::path(request.profile) / L"logs").c_str());
                 SetEnvironmentVariableW(L"SPARK233_DOCUMENT_ADMISSION_DIR", (fs::path(request.profile) / L"admission").c_str());

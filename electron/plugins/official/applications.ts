@@ -4,8 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { z } from "zod";
-import { AppError, canonical, inside } from "../../store.js";
+import { AppError, canonical, inside } from "../../persistence.js";
 import type { JsonValue } from "../../../packages/sdk/src/index.js";
+import { ordinaryDocument, sameApplicationEntryPath } from "../../application-entries.js";
 
 const launchSchema = z.strictObject({
   action: z.enum(["launchApplication", "revealApplication", "copyApplicationPath"]),
@@ -24,6 +25,8 @@ const launchSchema = z.strictObject({
       cwd: z.string().max(32768),
     }),
     z.strictObject({ kind: z.literal("shortcut"), path: z.string().min(1).max(4096) }),
+    z.strictObject({ kind: z.literal("document"), path: z.string().min(1).max(32768) }),
+    z.strictObject({ kind: z.literal("directory"), path: z.string().min(1).max(32768) }),
     z.strictObject({
       kind: z.literal("app"),
       appUserModelId: z
@@ -92,6 +95,22 @@ export async function performIndexedApplicationAction(value: unknown): Promise<v
     }
     if (target.args.length || target.cwd)
       throw new AppError("invalidApplication", "快捷方式使用其自带参数和工作目录");
+    location = real;
+  } else if (target.kind === "document" || target.kind === "directory") {
+    if (!path.isAbsolute(target.path) || /[\x00-\x1f]/.test(target.path))
+      throw new AppError("invalidApplication", "快捷入口路径不合法");
+    const real = fs.realpathSync(target.path);
+    const metadata = fs.statSync(real);
+    if (
+      !sameApplicationEntryPath(real, target.path) ||
+      (target.kind === "directory"
+        ? !metadata.isDirectory()
+        : !metadata.isFile() || !ordinaryDocument(target.path) || !ordinaryDocument(real))
+    )
+      throw new AppError(
+        "applicationUnavailable",
+        "快捷入口已移动、删除或类型发生变化，请重新选择",
+      );
     location = real;
   } else if (target.kind === "shortcut") {
     const roots = [process.env.APPDATA, process.env.ProgramData]
@@ -174,7 +193,8 @@ $packages=@{}; if(Get-Command Get-AppxPackage -ErrorAction SilentlyContinue){Get
     shell.showItemInFolder(location);
     return;
   }
-  // Shell receives the original .lnk/.url or a live-verified application ID.
+  // Shell receives an admitted document/directory, original shortcut, or a
+  // live-verified application ID. Document/directory payloads cannot carry argv.
   // Reconstructing executable commands would lose shortcut args and cwd.
   const failure = await shell.openPath(location);
   if (failure) throw new AppError("applicationLaunchFailed", failure);

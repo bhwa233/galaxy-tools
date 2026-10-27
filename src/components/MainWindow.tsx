@@ -13,7 +13,7 @@ import {
 import type { MouseEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { emit, listen, type UnlistenFn } from "../platform/desktop";
+import { listen, type UnlistenFn } from "../platform/desktop";
 import { getCurrentWindow } from "../platform/desktop";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
@@ -27,15 +27,8 @@ import {
 } from "../features/markdown/scrollSync";
 
 import { showToast } from "./Toast";
-import {
-  chooseDataDirectory,
-  getConfig,
-  migrateDataDir,
-  normalizeViewMode,
-  saveConfig,
-} from "../features/settings/api";
+import { getConfig, normalizeViewMode, openSettingsWindow } from "../features/settings/api";
 import type { AppConfig, ViewMode } from "../features/settings/types";
-import { normalizeTileColor } from "../features/settings/tileColor";
 import { getUpdateStatus } from "../features/update/api";
 import { reportClosePreparation } from "../platform/desktop";
 import {
@@ -106,15 +99,12 @@ import { ReminderPicker } from "../features/reminders/ReminderPicker";
 import { NoteReminderButton } from "../features/reminders/NoteReminderButton";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
-type SidePanelMode = "about" | "settings";
+type SidePanelMode = "about";
 
 // 侧面板只在用户主动打开时挂载，懒加载可把关于面板（贡献者数据、更新设置）
 // 和设置面板从首屏 bundle 中拆出
 const AboutPanel = lazy(() =>
   import("./AboutPanel").then((module) => ({ default: module.AboutPanel })),
-);
-const SettingsPanel = lazy(() =>
-  import("./SettingsPanel").then((module) => ({ default: module.SettingsPanel })),
 );
 
 interface NoteMenuState {
@@ -342,14 +332,10 @@ function useLoadEpoch(): LoadEpoch {
 }
 
 interface MainWindowProps {
-  initialSettingsOpen?: boolean;
   initialConfig?: AppConfig;
 }
 
-export function MainWindow({
-  initialSettingsOpen = false,
-  initialConfig = undefined,
-}: MainWindowProps = {}) {
+export function MainWindow({ initialConfig = undefined }: MainWindowProps = {}) {
   const { t } = useTranslation();
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
   const [externalFiles, setExternalFiles] = useState<ExternalFile[]>([]);
@@ -367,19 +353,22 @@ export function MainWindow({
   const [noteMenu, setNoteMenu] = useState<NoteMenuState | null>(null);
   const [noteMenuClosing, setNoteMenuClosing] = useState(false);
   const pendingTaskAnchorRef = useRef<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
-    initialSettingsOpen && initialConfig ? "settings" : null,
-  );
-  const [sidePanelContentVisible, setSidePanelContentVisible] = useState(
-    Boolean(initialSettingsOpen && initialConfig),
-  );
+  const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(null);
+  const [sidePanelContentVisible, setSidePanelContentVisible] = useState(false);
   const [aboutUpdateReminder, setAboutUpdateReminder] = useState<AboutUpdateReminderState>(() =>
     createAboutUpdateReminderState(null),
   );
   const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(initialConfig ?? null);
-  const [savedDataDir, setSavedDataDir] = useState<string | null>(initialConfig?.dataDir ?? null);
+  useEffect(() => {
+    const subscription = listen<AppConfig>("config-changed", ({ payload }) => {
+      setSettingsConfig(payload);
+      setViewMode(normalizeViewMode(payload.defaultViewMode));
+    });
+    return () => {
+      void subscription.then((stop) => stop());
+    };
+  }, []);
   const [noteTransitionKey, setNoteTransitionKey] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteExiting, setDeleteExiting] = useState(false);
@@ -601,14 +590,9 @@ export function MainWindow({
         : applyAboutUpdateStatus(current, nextStatus),
     );
   }, []);
-  const visibleSidePanel: SidePanelMode | null = aboutOpen
-    ? "about"
-    : settingsOpen && settingsConfig
-      ? "settings"
-      : null;
+  const visibleSidePanel: SidePanelMode | null = aboutOpen ? "about" : null;
   const sidePanelExpanded = visibleSidePanel !== null;
   const openAboutPanel = useCallback(() => {
-    setSettingsOpen(false);
     setAboutOpen(true);
     setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
   }, []);
@@ -755,7 +739,7 @@ export function MainWindow({
         ]);
         if (cancelled) return;
         setSettingsConfig(loadedConfig);
-        setSavedDataDir(loadedConfig.dataDir);
+
         setViewMode(normalizeViewMode(loadedConfig.defaultViewMode));
         setNotes(loadedNotes);
         setCategories(loadedCategories);
@@ -1316,105 +1300,17 @@ export function MainWindow({
   };
 
   const handleOpenSettings = async () => {
-    if (settingsOpen) {
-      setSettingsOpen(false);
-      return;
-    }
-    setSettingsOpen(true);
-    setAboutOpen(false);
-    if (settingsConfig) return;
     try {
-      const config = await getConfig();
-      setSettingsConfig(config);
-      setSavedDataDir(config.dataDir);
-      setViewMode(normalizeViewMode(config.defaultViewMode));
+      await openSettingsWindow({ page: "plugins", pluginId: "spark233.notes", tab: "config" });
     } catch (error) {
       showToast(getErrorMessage(error));
     }
   };
-
-  const handleMigrateDataDir = async () => {
-    if (!settingsConfig) return;
-    try {
-      const dir = await chooseDataDirectory();
-      if (!dir) return;
-      // 后端会在所选目录下创建 spark233 子目录存放数据；先告知用户，
-      // 避免其在文件管理器打开所选目录看到"空文件夹"而误判数据丢失
-      const confirmed = window.confirm(
-        t("settings.dataDir.confirmSubdir", {
-          dir,
-          defaultValue: "数据将存放在「{{dir}}」下的 spark233 子文件夹中，是否继续？",
-        }),
-      );
-      if (!confirmed) return;
-      const savedConfig = await migrateDataDir(dir);
-      setSettingsConfig(savedConfig);
-      setSavedDataDir(savedConfig.dataDir);
-      const loadedNotes = await refreshNotes();
-      if (loadedNotes[0]) {
-        await loadNote(loadedNotes[0].id);
-      } else {
-        clearCurrentNote();
-      }
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const persistSettings = useCallback(
-    (nextConfig: AppConfig) => {
-      if (settingsSaveTimer.current) {
-        clearTimeout(settingsSaveTimer.current);
-      }
-      settingsSaveTimer.current = setTimeout(async () => {
-        const previousDataDir = savedDataDir ?? nextConfig.dataDir;
-        const normalizedConfig = {
-          ...nextConfig,
-          defaultViewMode: normalizeViewMode(nextConfig.defaultViewMode),
-          tileColor: normalizeTileColor(nextConfig.tileColor),
-        };
-        try {
-          const savedConfig = await saveConfig(normalizedConfig);
-          setSettingsConfig(savedConfig);
-          setSavedDataDir(savedConfig.dataDir);
-          setViewMode(normalizeViewMode(savedConfig.defaultViewMode));
-
-          if (savedConfig.dataDir !== previousDataDir) {
-            const loadedNotes = await refreshNotes();
-            if (loadedNotes[0]) {
-              await loadNote(loadedNotes[0].id);
-            } else {
-              clearCurrentNote();
-            }
-          }
-        } catch (error) {
-          showToast(getErrorMessage(error));
-        }
-      }, 300);
-    },
-    [savedDataDir, refreshNotes, loadNote, clearCurrentNote],
-  );
-
-  const handleSettingsChange = useCallback(
-    (nextConfig: AppConfig) => {
-      setSettingsConfig(nextConfig);
-      void emit("config-changed", nextConfig);
-      persistSettings(nextConfig);
-    },
-    [persistSettings],
-  );
-
-  const handleCloseSettings = useCallback(() => {
-    setSettingsOpen(false);
-  }, []);
 
   const handleOpenAbout = useCallback(() => {
     setAboutOpen((open) => {
       const nextOpen = !open;
       if (nextOpen) {
-        setSettingsOpen(false);
         setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
       }
       return nextOpen;
@@ -3221,9 +3117,7 @@ export function MainWindow({
               </div>
             </div>
           </div>
-          {settingsConfig && settingsOpen && settingsOverlay && (
-            <div className="absolute inset-0 z-20" onClick={handleCloseSettings} />
-          )}
+
           <div
             className={`relative shrink-0 overflow-hidden h-full transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
               sidePanelExpanded || mountedSidePanel ? "border-l border-paper-deep/20" : "border-l-0"
@@ -3245,27 +3139,6 @@ export function MainWindow({
               {mountedSidePanel === "about" ? (
                 <Suspense fallback={null}>
                   <AboutPanel onClose={handleCloseAbout} />
-                </Suspense>
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "settings"
-                  ? sidePanelContentVisible && visibleSidePanel === "settings"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "settings" && settingsConfig ? (
-                <Suspense fallback={null}>
-                  <SettingsPanel
-                    initialGroup="notes"
-                    config={settingsConfig}
-                    onChange={handleSettingsChange}
-                    onMigrateDataDir={() => void handleMigrateDataDir()}
-                    onClose={handleCloseSettings}
-                  />
                 </Suspense>
               ) : null}
             </div>

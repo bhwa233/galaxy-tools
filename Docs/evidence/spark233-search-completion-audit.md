@@ -1,5 +1,7 @@
 # spark233 P5 搜索完成度审计
 
+> 2026-10-26 续作：下文的“当前正式字节”属于 10 月 25 日历史输入，不能绑定本次重新构建。私有数据域的动态排除、真实 native 取消以及 Search 内容配置的 profile 归属已完成新字节 14 项回归，最新资源身份与隔离失误记录见[本轮收口](spark233-notes-finalization.md)。旧 S20/ACL/WAL 等证据仍仅证明其原输入与对应范围。
+
 日期：2026-10-25；分支：`codex/spark233-refactor`。本记录按 `Docs/launcher-todo.md` P5.1–P5.10 与架构 7.3–7.6 逐条核对。源码实现、隔离 fixture 的实际证明、真实目标机验收分别记录；没有运行 UAC、真实用户盘全卷索引或用户剪贴板。本轮只强化现有生产 smoke 两个数据版本边界，不新增测试套件、框架或平台矩阵。
 
 审计发现正文结果跨原生桥接丢失文件身份/版本的实际缺口，已修复并重新原生构建。其余列出的未证明项目仍然是验收缺口，不能因固定源码包含 MFT/USN 或默认卷规则就标成已验收。旧 `048671…` 安装器是修复前候选；随后统一完整构建 40596 和当前 `3caccc96…` 安装器已包含本轮修复，精确身份与分发证据见 [当前打包记录](spark233-packaging.md)。
@@ -69,7 +71,9 @@
 
 源码：adapter 明确返回 service-not-installed/update-required/unavailable/error，设置保存先取消旧查询并清除选择/游标，stop 清理 session；`SearchServicePanel` 展示卷/进度/状态与刷新重建；上游索引加载拒绝损坏/部分 replay 后不暴露旧结果并请求重建。宿主按启用插件路由，可用来源继续工作。
 
-已证明：S20 Windows 1060、可重试拒绝授权、停用清理、状态查询不破坏前台选择。旧 scope report `12eaa8cb-3490-44e3-b491-a6727443bcce` 证明个人排除保存/重启与旧 token 撤销，但其 native 旧字节不能证明当前 native 分页。尚缺：真实 ACL 撤权、损坏索引重建、运行中服务异常的代表实机行为和其他命令并行可用 UI 验收；仅撤销配置中的目录范围不等同于操作系统 ACL 撤权。没有新增实现缺口。
+已证明：原 S20/后续 24 项包含 Windows 1060、可重试拒绝授权、停用清理、状态查询不破坏前台选择；后续[真实文件 ACL](spark233-search-acl-followup.md)补齐当前调用者文件 ReadData 撤权与精确恢复。[故障补证](spark233-search-corruption-followup.md)在当前 adaptation 7 原生字节上实际破坏私有 WAL 头，取得拒绝 replay、自动重建、恢复后 service-status 的 11 项通过；目录继承 ACL 的 7 项证明旧 preview/open 拒绝、新 Instant 查询明确失败可重试、原 ACL 精确恢复；绑定 `ui-contract-followup` ASAR 的 11 项证明搜索连接不可用后仍可切换并选择真实应用/离线词典来源。[服务面板](spark233-search-service-read-errors.md)的真实组件 5 项红/绿回归补齐读取成功清旧错、操作错误保留。按 P5.8 原文的功能范围，五类代表路径已有证据，主清单补勾选。
+
+本次为 2026-10-26 文档复核，没有重新运行上述 Windows 场景或改绑其历史输入；组件上游 IPC 返回受控，不能用它证明 SYSTEM 服务恢复。损坏拒绝来自真实原生诊断，恢复状态来自正式 Search；未捕获或宣称 renderer 显示“正在重建”。主 snapshot 任意损坏、所有 WAL 错误组合、并发挂起查询延迟和完整物理 UI 未验证。SCM/SYSTEM/UAC、全卷 MFT/USN、卷离线重连仍按 P5.3/P5.5/P5.9 原范围保留，不新增为 P5.8 勾选前提。旧 scope report `12eaa8cb-3490-44e3-b491-a6727443bcce` 仅保留其个人范围设置/旧 token 撤销证据，不冒充当前 native 分页验收。
 
 ### P5.9：默认服务、卷与排除（架构 7.4）
 

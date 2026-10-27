@@ -1,3 +1,4 @@
+import { PluginIcon } from "../plugins/PluginIcon";
 import {
   useCallback,
   useEffect,
@@ -8,24 +9,15 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  AppWindowIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
   MoreHorizontalIcon,
-  PackageIcon,
+  PinIcon,
   SettingsIcon,
   XIcon,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,17 +47,20 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { OcrWorkspace } from "../ocr/OcrWorkspace";
 import { TranslationWorkspace } from "../translation/TranslationWorkspace";
-import { SettingsPanel } from "../../components/SettingsPanel";
 import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
 import { ClipboardPanel } from "./ClipboardPanel";
-import { registerHostPreparation, prepareHostWindow } from "../windows/hostPreparation";
-import { BackupDialog } from "../backup/BackupDialog";
-import { SearchScopeDialog } from "../search/SearchScopeDialog";
+import { prepareHostWindow } from "../windows/hostPreparation";
 import { SearchPreviewDialog, type SearchPreview } from "../search/SearchPreviewDialog";
-import { PluginManagementDialog } from "../plugins/PluginManagementDialog";
-import { chooseDataDirectory, getConfig, migrateDataDir, saveConfig } from "../settings/api";
-import type { AppConfig } from "../settings/types";
 import {
+  closeContextPanel,
+  getContextPanelState,
+  returnFromContextPanel,
+  watchContextPanelState,
+} from "../context-panel/api";
+import type { ContextPanelViewState } from "../context-panel/types";
+import { openSettingsWindow } from "../settings/api";
+import {
+  cancelLauncherQuery,
   completeLauncherOnboarding,
   executeLauncherItem,
   executeLauncherAction,
@@ -74,11 +69,13 @@ import {
   pickLauncherDirectory,
   queryLauncher,
   recordLauncherMode,
+  updateLauncherPreference,
 } from "./api";
 import type {
   LauncherCommand,
   LauncherItem,
   LauncherItemAction,
+  LauncherPreferenceMutation,
   LauncherQueryResult,
   LauncherState,
 } from "./types";
@@ -97,11 +94,17 @@ const itemKey = (item: LauncherItem) => JSON.stringify([item.pluginId, item.id])
 export function Launcher() {
   const { t, i18n } = useTranslation();
   const { t: searchText } = useTranslation("search");
+  const isContextPanel = getCurrentWindow().label === "context-panel";
+  const [panelView, setPanelView] = useState<ContextPanelViewState>();
+  const panelRevision = useRef(-1);
+  const panelEvents = useRef(0);
+  const [panelBusy, setPanelBusy] = useState(false);
+  const panelOperation = useRef<{ sessionId?: string; revision: number } | undefined>(undefined);
+  const [panelReadFailed, setPanelReadFailed] = useState(false);
   const [state, setState] = useState<LauncherState>();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<{ key: string; title: string }>();
   const [directory, setDirectory] = useState<string>();
-  const [scopeOpen, setScopeOpen] = useState(false);
   const [scopeRevision, setScopeRevision] = useState(0);
   const [result, setResult] = useState<LauncherQueryResult>();
   const [selected, setSelected] = useState("");
@@ -112,6 +115,8 @@ export function Launcher() {
   const [queryError, setQueryError] = useState<string>();
   const displayError = error ?? stateError ?? queryError;
   const [actionItem, setActionItem] = useState<LauncherItem>();
+  const [preferenceBusy, setPreferenceBusy] = useState(false);
+  const [preferenceError, setPreferenceError] = useState<string>();
   const [preview, setPreview] = useState<SearchPreview>();
   const [previewOpen, setPreviewOpen] = useState(false);
   const routeParams = new URLSearchParams(window.location.search);
@@ -132,7 +137,20 @@ export function Launcher() {
       const next = value.launcherResults as LauncherQueryResult;
       setResult((previous) =>
         "append" in value && value.append && previous
-          ? { ...next, items: [...previous.items, ...next.items] }
+          ? {
+              ...next,
+              items: [
+                ...previous.items.filter(
+                  (item) =>
+                    !(
+                      item.commandId === "next-page" &&
+                      "pagePluginId" in value &&
+                      item.pluginId === value.pagePluginId
+                    ),
+                ),
+                ...next.items,
+              ],
+            }
           : next,
       );
       return;
@@ -142,45 +160,57 @@ export function Launcher() {
   };
   const [executing, setExecuting] = useState<string[]>([]);
   const [onboardingBusy, setOnboardingBusy] = useState(false);
-  const [pluginsOpen, setPluginsOpen] = useState(false);
-  const [backupOpen, setBackupOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [config, setConfig] = useState<AppConfig>();
-  const [settingsError, setSettingsError] = useState<string>();
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [migrationTarget, setMigrationTarget] = useState<string>();
-  const [migrating, setMigrating] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   const composition = useRef(false);
   const compositionEnded = useRef(0);
   const queryGeneration = useRef(0);
   const stateGeneration = useRef(0);
-  const settingsGeneration = useRef(0);
-  const writes = useRef<Promise<unknown>>(Promise.resolve());
-  useEffect(
-    () =>
-      registerHostPreparation(async () => {
-        await writes.current;
-      }),
-    [],
-  );
+  const stateSnapshot = useRef<LauncherState | undefined>(undefined);
+  const stateRequest = useRef<number | undefined>(undefined);
   const tasks = useRef(new Set<string>());
   const finishingOnboarding = useRef(false);
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => input.current?.focus());
   }, []);
+  const acceptPanelView = useCallback(
+    (next: ContextPanelViewState) => {
+      if (next.revision <= panelRevision.current) return;
+      panelRevision.current = next.revision;
+      panelOperation.current = undefined;
+      setPanelBusy(false);
+      queryGeneration.current++;
+      setPanelView(next);
+      setPanelReadFailed(false);
+      setQuery(next.suggestedQuery ?? "");
+      setMode(undefined);
+      setDirectory(undefined);
+      setWorkspace(undefined);
+      setActionItem(undefined);
+      setPreviewOpen(false);
+      setResult(undefined);
+      setSelected("");
+      setError(undefined);
+      setQueryError(undefined);
+      focusInput();
+    },
+    [focusInput],
+  );
   const refreshState = useCallback(async () => {
     const generation = ++stateGeneration.current;
+    stateRequest.current = generation;
     try {
       const next = await getLauncherState();
       if (mounted.current && generation === stateGeneration.current) {
+        stateSnapshot.current = next;
         setState(next);
         setStateError(undefined);
       }
     } catch (value) {
       if (mounted.current && generation === stateGeneration.current) setStateError(message(value));
+    } finally {
+      if (stateRequest.current === generation) stateRequest.current = undefined;
     }
   }, []);
   useEffect(() => {
@@ -188,6 +218,20 @@ export function Launcher() {
     void refreshState();
     focusInput();
     const subscriptions = [
+      listen<NonNullable<LauncherState["learning"]>>("launcher-learning-changed", ({ payload }) => {
+        // Automatic learning is metadata only: never invalidate an executing
+        // result or restart its query just because the record count changed.
+        const replacePendingSnapshot = stateRequest.current !== undefined;
+        stateGeneration.current++;
+        if (stateSnapshot.current) {
+          const next = { ...stateSnapshot.current, learning: payload };
+          stateSnapshot.current = next;
+          setState(next);
+        }
+        // Replace a now-stale full read, including the initial bootstrap, so a
+        // concurrent catalog/toggle/clear notification cannot be lost.
+        if (!stateSnapshot.current || replacePendingSnapshot) void refreshState();
+      }),
       listen("plugins-changed", () => {
         void refreshState();
       }),
@@ -201,6 +245,7 @@ export function Launcher() {
         setScopeRevision((value) => value + 1);
       }),
       listen("launcher-shown", () => {
+        setScopeRevision((value) => value + 1);
         void refreshState();
         focusInput();
       }),
@@ -223,17 +268,21 @@ export function Launcher() {
       .catch((value) => {
         if (mounted.current) setError(message(value));
       });
-    const drop = separateWorkspace
-      ? Promise.resolve(() => {})
-      : getCurrentWindow().onDragDropEvent((event) => {
-          void invoke<LauncherState>("launcher_context_files", { paths: event.payload.paths })
-            .then((next) => {
-              setWorkspace(undefined);
-              setState(next);
-              focusInput();
-            })
-            .catch((value) => setError(message(value)));
-        });
+    const drop =
+      separateWorkspace || isContextPanel
+        ? Promise.resolve(() => {})
+        : getCurrentWindow().onDragDropEvent((event) => {
+            const generation = ++stateGeneration.current;
+            void invoke<LauncherState>("launcher_context_files", { paths: event.payload.paths })
+              .then((next) => {
+                if (!mounted.current || generation !== stateGeneration.current) return;
+                setWorkspace(undefined);
+                stateSnapshot.current = next;
+                setState(next);
+                focusInput();
+              })
+              .catch((value) => setError(message(value)));
+          });
     for (const subscription of subscriptions)
       void subscription.catch((value: unknown) => {
         if (mounted.current) setError(message(value));
@@ -246,38 +295,134 @@ export function Launcher() {
         void subscription.then((stop) => stop()).catch(() => {});
       void drop.then((stop) => stop()).catch(() => {});
     };
-  }, [focusInput, refreshState, i18n.resolvedLanguage]);
+  }, [focusInput, refreshState, i18n.resolvedLanguage, isContextPanel]);
 
+  useEffect(() => {
+    if (!isContextPanel) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void watchContextPanelState((next) => {
+      if (disposed) return;
+      panelEvents.current++;
+      acceptPanelView(next);
+    })
+      .then(async (unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        stop = unlisten;
+        const revision = panelEvents.current;
+        const next = await getContextPanelState();
+        if (disposed || revision !== panelEvents.current) return;
+        if (next) acceptPanelView(next);
+        else setPanelReadFailed(true);
+      })
+      .catch(() => {
+        if (!disposed) setPanelReadFailed(true);
+      });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [isContextPanel, acceptPanelView]);
+
+  const panelAction = async (action: "close" | "return") => {
+    if (panelOperation.current) return;
+    const operation = { sessionId: panelView?.sessionId, revision: panelRevision.current };
+    panelOperation.current = operation;
+    const currentOperation = () =>
+      mounted.current &&
+      panelOperation.current === operation &&
+      panelRevision.current === operation.revision;
+    setPanelBusy(true);
+    try {
+      if (action === "close") await closeContextPanel();
+      else {
+        const result = await returnFromContextPanel();
+        if (!result.restored && currentOperation()) setError(t("contextPanel.returnFailed"));
+      }
+    } catch {
+      if (currentOperation()) setError(t("contextPanel.operationFailed"));
+    } finally {
+      if (currentOperation()) {
+        panelOperation.current = undefined;
+        setPanelBusy(false);
+      }
+    }
+  };
+
+  // Runtime cold-start notifications do not restart a live query. Catalog,
+  // capability, locale and actual input changes still create a new generation.
+  const queryStateKey = JSON.stringify([
+    state?.pluginsReady,
+    state?.catalogSignature,
+    state?.commands,
+    state?.modeOptions,
+    isContextPanel ? undefined : state?.contextLabel,
+    isContextPanel ? undefined : state?.contextRevision,
+    state?.preferenceRevision,
+    state?.learning?.enabled,
+    isContextPanel ? panelView?.revision : undefined,
+    i18n.resolvedLanguage,
+  ]);
   useEffect(() => {
     const generation = ++queryGeneration.current;
     setResult(undefined);
     setSelected("");
-    if (!state || composing || workspace || scopeOpen) {
+    if (
+      !state ||
+      composing ||
+      workspace ||
+      (isContextPanel && (!panelView || panelView.status === "capturing"))
+    ) {
       setLoading(false);
       if (workspace) setQueryError(undefined);
       return;
     }
     const sessionId = crypto.randomUUID();
+    let requestId: string | undefined;
+    let revision = -1;
+    let live = true;
+    const accept = (next: LauncherQueryResult) => {
+      if (
+        !live ||
+        !mounted.current ||
+        generation !== queryGeneration.current ||
+        next.sessionId !== sessionId
+      )
+        return;
+      if (requestId && next.requestId !== requestId) return;
+      const nextRevision = next.revision ?? 0;
+      if (nextRevision <= revision) return;
+      requestId = next.requestId;
+      revision = nextRevision;
+      setResult(next);
+      setQueryError(undefined);
+      setSelected((current) =>
+        current && next.items.some((item) => itemKey(item) === current)
+          ? current
+          : next.items[0]
+            ? itemKey(next.items[0])
+            : "",
+      );
+      setLoading(false);
+    };
+    // Subscribe before dispatch. A fast provider event may precede the initial
+    // IPC response; revision checks prevent that response rolling the UI back.
+    const subscription = listen<LauncherQueryResult>("launcher-query-updated", (event) =>
+      accept(event.payload),
+    );
     setLoading(true);
-    // A short input delay avoids dispatching every keystroke to native sources;
-    // request generations and returned session IDs isolate all late results.
     const timer = setTimeout(
       () => {
-        void queryLauncher(query, sessionId, mode?.key, directory)
-          .then((next) => {
-            if (
-              !mounted.current ||
-              generation !== queryGeneration.current ||
-              next.sessionId !== sessionId
-            )
-              return;
-            setResult(next);
-            setQueryError(undefined);
-            setSelected(next.items[0] ? itemKey(next.items[0]) : "");
-            setLoading(false);
+        void subscription
+          .then(() => {
+            if (!live) return;
+            return queryLauncher(query, sessionId, mode?.key, directory).then(accept);
           })
           .catch((value: unknown) => {
-            if (mounted.current && generation === queryGeneration.current) {
+            if (live && mounted.current && generation === queryGeneration.current) {
               setQueryError(message(value));
               setResult(undefined);
               setLoading(false);
@@ -287,10 +432,13 @@ export function Launcher() {
       query ? 100 : 0,
     );
     return () => {
+      live = false;
       clearTimeout(timer);
       queryGeneration.current++;
+      void subscription.then((stop) => stop()).catch(() => {});
+      void cancelLauncherQuery(sessionId, requestId).catch(() => {});
     };
-  }, [query, mode?.key, directory, scopeRevision, state, composing, workspace, scopeOpen]);
+  }, [query, mode?.key, directory, scopeRevision, queryStateKey, composing, workspace]);
 
   const returnFromMode = () => {
     queryGeneration.current++;
@@ -314,6 +462,10 @@ export function Launcher() {
     }
   };
   const escape = () => {
+    if (isContextPanel) {
+      void panelAction("close");
+      return;
+    }
     if (workspace || separateWorkspace) {
       void closeWorkspace().catch((value) => setError(message(value)));
     } else if (mode) returnFromMode();
@@ -331,13 +483,8 @@ export function Launcher() {
         event.defaultPrevented ||
         event.isComposing ||
         composition.current ||
-        settingsOpen ||
-        pluginsOpen ||
-        backupOpen ||
-        scopeOpen ||
         actionItem ||
-        previewOpen ||
-        migrationTarget
+        previewOpen
       )
         return;
       event.preventDefault();
@@ -364,7 +511,14 @@ export function Launcher() {
     focusInput();
   };
   const selectItem = async (item: LauncherItem) => {
-    if (composition.current || !state?.pluginsReady || settingsOpen || pluginsOpen) return;
+    if (
+      composition.current ||
+      !state?.pluginsReady ||
+      item.unavailable ||
+      panelBusy ||
+      (isContextPanel && (!panelView || panelView.status === "capturing"))
+    )
+      return;
     const command = findCommand(item);
     if (command && !command.enabled) return;
     if (!mode && command?.mode) {
@@ -376,27 +530,38 @@ export function Launcher() {
     tasks.current.add(key);
     setExecuting([...tasks.current]);
     setError(undefined);
+    const generation = ++queryGeneration.current;
     try {
-      acceptResult(await executeLauncherItem(item));
+      const value = await executeLauncherItem(item);
+      if (mounted.current && generation === queryGeneration.current) acceptResult(value);
     } catch (value) {
-      if (mounted.current) setError(message(value));
+      if (mounted.current && generation === queryGeneration.current) setError(message(value));
     } finally {
       tasks.current.delete(key);
       if (mounted.current) setExecuting([...tasks.current]);
     }
   };
   const selectAction = async (item: LauncherItem, action: LauncherItemAction) => {
-    if (!state?.pluginsReady || composition.current) return;
+    if (
+      !state?.pluginsReady ||
+      composition.current ||
+      item.unavailable ||
+      panelBusy ||
+      (isContextPanel && (!panelView || panelView.status === "capturing"))
+    )
+      return;
     const key = JSON.stringify([item.pluginId, action.id]);
     if (tasks.current.has(key)) return;
     tasks.current.add(key);
     setExecuting([...tasks.current]);
     setActionItem(undefined);
     setError(undefined);
+    const generation = ++queryGeneration.current;
     try {
-      acceptResult(await executeLauncherAction(item, action));
+      const value = await executeLauncherAction(item, action);
+      if (mounted.current && generation === queryGeneration.current) acceptResult(value);
     } catch (value) {
-      if (mounted.current) setError(message(value));
+      if (mounted.current && generation === queryGeneration.current) setError(message(value));
     } finally {
       tasks.current.delete(key);
       if (mounted.current) setExecuting([...tasks.current]);
@@ -415,10 +580,11 @@ export function Launcher() {
     }
     if ((event.key === "F10" && event.shiftKey) || (event.key === "Enter" && event.altKey)) {
       const item = result?.items.find((item) => itemKey(item) === selected);
-      if (item?.actions?.length) {
+      if (item && !item.unavailable && (item.actions?.length || item.preference)) {
         event.preventDefault();
         event.stopPropagation();
         setActionItem(item);
+        setPreferenceError(undefined);
       }
       return;
     }
@@ -433,26 +599,6 @@ export function Launcher() {
       event.stopPropagation();
       returnFromMode();
       return;
-    }
-    if (
-      event.key === "Tab" &&
-      event.target === input.current &&
-      !event.shiftKey &&
-      !mode &&
-      query.trim()
-    ) {
-      const [keyword, ...rest] = query.trim().split(/\s+/);
-      const matches = state?.commands.filter(
-        (command) =>
-          command.enabled &&
-          command.mode &&
-          command.keywords.some((word) => word.toLocaleLowerCase() === keyword.toLocaleLowerCase()),
-      );
-      if (matches?.length === 1) {
-        event.preventDefault();
-        event.stopPropagation();
-        enterMode(matches[0], rest.join(" "));
-      }
     }
   };
   const finishOnboarding = async () => {
@@ -472,61 +618,201 @@ export function Launcher() {
     }
   };
 
-  const openSettings = async () => {
-    setSettingsOpen(true);
-    setSettingsError(undefined);
-    try {
-      setConfig(await getConfig());
-    } catch (value) {
-      setSettingsError(message(value));
+  const acceptPreferenceState = (next: LauncherState, generation: number, queryVersion: number) => {
+    if (mounted.current && generation === stateGeneration.current) {
+      stateSnapshot.current = next;
+      setState(next);
+      setStateError(undefined);
+      if (queryVersion === queryGeneration.current) {
+        queryGeneration.current++;
+        setQueryError(undefined);
+        setPreferenceError(undefined);
+        setResult(undefined);
+        setSelected("");
+      }
     }
   };
-  const changeSettings = (next: AppConfig) => {
-    const generation = ++settingsGeneration.current;
-    setConfig(next);
-    setSavingSettings(true);
-    setSettingsError(undefined);
-    const operation = writes.current.catch(() => {}).then(() => saveConfig(next));
-    writes.current = operation;
-    void operation
-      .then((saved) => {
-        if (mounted.current && generation === settingsGeneration.current) setConfig(saved);
-      })
-      .catch((value: unknown) => {
-        if (mounted.current) setSettingsError(message(value));
-      })
-      .finally(() => {
-        if (mounted.current && generation === settingsGeneration.current) setSavingSettings(false);
-      });
-  };
-  const chooseMigration = async () => {
-    setSettingsError(undefined);
-    try {
-      const destination = await chooseDataDirectory();
-      if (destination) setMigrationTarget(destination);
-    } catch (value) {
-      setSettingsError(message(value));
+  const applyPreference = async (mutation: LauncherPreferenceMutation): Promise<LauncherState> => {
+    const generation = ++stateGeneration.current;
+    const queryVersion = queryGeneration.current;
+    const originalActionItem = actionItem;
+    const next = await updateLauncherPreference(mutation);
+    if (mounted.current && originalActionItem) {
+      setActionItem((current) => (current === originalActionItem ? undefined : current));
     }
+    acceptPreferenceState(next, generation, queryVersion);
+    return next;
   };
-  const migrate = async () => {
-    if (!migrationTarget || migrating) return;
-    setMigrating(true);
-    setSettingsError(undefined);
+  const mutateItemPreference = async (
+    item: LauncherItem,
+    operation: LauncherPreferenceMutation["operation"],
+  ) => {
+    if (!item.preference || preferenceBusy) return;
+    setPreferenceBusy(true);
+    setPreferenceError(undefined);
     try {
-      await writes.current;
-      setConfig(await migrateDataDir(migrationTarget));
-      setMigrationTarget(undefined);
+      const target = state?.preferences?.some((entry) => entry.key === item.preference!.key)
+        ? { key: item.preference.key }
+        : { selectionId: item.id };
+      await applyPreference({ ...target, operation });
+      focusInput();
     } catch (value) {
-      setSettingsError(message(value));
+      setPreferenceError(message(value));
     } finally {
-      setMigrating(false);
+      setPreferenceBusy(false);
     }
   };
+  const editItemAliases = (item: LauncherItem) => {
+    if (!item.preference) return;
+    setActionItem(undefined);
+    void openSettingsWindow({ page: "entries" }).catch((value) => setError(message(value)));
+  };
+  const openSettings = () => openSettingsWindow().catch((value) => setError(message(value)));
 
   const modeTitle = mode
     ? (state?.commands.find((command) => command.mode === mode.key)?.title ?? mode.title)
     : undefined;
   const modeOptions = mode ? state?.modeOptions?.[mode.key] : undefined;
+  const isHorizontalEntry = (item: LauncherItem) =>
+    item.kind === "application" ||
+    item.kind === "command" ||
+    (item.unavailable &&
+      (item.preference?.kind === "command" || item.preference?.kind === "application"));
+  const horizontalItems = result?.items.filter(isHorizontalEntry) ?? [];
+  const renderItem = (item: LauncherItem, horizontal = false) => {
+    const command = findCommand(item);
+    const key = itemKey(item);
+    const isMode = !mode && !!command?.mode;
+    return (
+      <CommandItem
+        tabIndex={0}
+        data-result-key={key}
+        onFocus={() => setSelected(key)}
+        className={
+          horizontal
+            ? "relative min-h-28 w-28 shrink-0 flex-col justify-center gap-2 rounded-xl border px-2 py-3 text-center"
+            : undefined
+        }
+        onKeyDown={(event) => {
+          if (!horizontal || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const cards = Array.from(
+            event.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[data-result-key]") ??
+              [],
+          );
+          const index = cards.indexOf(event.currentTarget);
+          cards[
+            Math.max(0, Math.min(cards.length - 1, index + (event.key === "ArrowRight" ? 1 : -1)))
+          ]?.focus();
+        }}
+        key={key}
+        value={key}
+        disabled={
+          !state?.pluginsReady ||
+          panelBusy ||
+          (isContextPanel && (!panelView || panelView.status === "capturing")) ||
+          item.unavailable ||
+          command?.enabled === false ||
+          executing.includes(key)
+        }
+        onSelect={() => {
+          void selectItem(item);
+        }}
+      >
+        {item.kind === "command" || item.preference?.kind === "command" ? (
+          <PluginIcon
+            pluginId={item.pluginId}
+            className={horizontal ? "size-9 shrink-0 text-primary" : "size-7 shrink-0 text-primary"}
+          />
+        ) : item.icon && /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(item.icon) ? (
+          <img
+            src={item.icon}
+            alt=""
+            className={
+              horizontal ? "size-9 shrink-0 object-contain" : "size-7 shrink-0 object-contain"
+            }
+            width={horizontal ? 36 : 28}
+            height={horizontal ? 36 : 28}
+          />
+        ) : horizontal ? (
+          <AppWindowIcon aria-hidden="true" className="size-9 shrink-0 text-muted-foreground" />
+        ) : null}
+        <div
+          className={
+            horizontal
+              ? "flex w-full min-w-0 flex-col gap-0.5"
+              : "flex min-w-0 flex-1 flex-col gap-0.5"
+          }
+        >
+          <span
+            className={
+              horizontal ? "block truncate text-center text-xs" : "flex items-center gap-2 truncate"
+            }
+          >
+            {item.title}
+            {item.preference?.pinned && (
+              <Badge variant="secondary">{t("launcher.preferences.pinned")}</Badge>
+            )}
+            {item.unavailable && (
+              <Badge variant="outline">{t("launcher.preferences.unavailable")}</Badge>
+            )}
+            {item.usage && (
+              <Badge variant="outline">
+                {item.usage.count > 1 ? t("launcher.frequentlyUsed") : t("launcher.recentlyUsed")}
+              </Badge>
+            )}
+          </span>
+          {item.learned && (
+            <Badge
+              variant="outline"
+              className="h-auto max-w-full self-start whitespace-normal py-0.5"
+              title={t("launcher.learning.learned")}
+            >
+              {t("launcher.learning.learned")}
+            </Badge>
+          )}
+          {!horizontal && item.description && (
+            <span className="truncate text-xs text-muted-foreground">{item.description}</span>
+          )}
+        </div>
+        {!item.unavailable && (!!item.actions?.length || item.preference) && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={horizontal ? "absolute right-0 top-0" : undefined}
+            aria-label={t("launcher.resultActions", {
+              title: item.title,
+              defaultValue: i18n.resolvedLanguage?.startsWith("en")
+                ? "Actions for {{title}}"
+                : "{{title}}的操作",
+            })}
+            title="Alt+Enter / Shift+F10"
+            aria-keyshortcuts="Alt+Enter Shift+F10"
+            onClick={(event) => {
+              event.stopPropagation();
+              setActionItem(item);
+              setPreferenceError(undefined);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+            }}
+          >
+            <MoreHorizontalIcon />
+          </Button>
+        )}
+        {executing.includes(key) ? (
+          <Spinner />
+        ) : item.unavailable ? null : isMode ? (
+          <CommandShortcut>
+            <ArrowRightIcon aria-label={t("launcher.enterMode", { defaultValue: "进入模式" })} />
+          </CommandShortcut>
+        ) : (
+          <CommandShortcut>↵</CommandShortcut>
+        )}
+      </CommandItem>
+    );
+  };
   const close = () => {
     void closeWorkspace().catch((value) => setError(message(value)));
   };
@@ -599,57 +885,117 @@ export function Launcher() {
     );
   return (
     <main className="flex h-screen flex-col gap-3 overflow-hidden bg-background p-4 text-foreground">
-      <header className="electron-title-drag flex shrink-0 items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-base font-semibold">spark233</h1>
+      <header className="electron-title-drag flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h1 className="text-base font-semibold">
+            {isContextPanel ? t("contextPanel.title") : "spark233"}
+          </h1>
           {mode && <Badge variant="secondary">{modeTitle}</Badge>}
-          {state?.contextLabel && <Badge variant="outline">{state.contextLabel}</Badge>}
-        </div>
-        <div className="flex items-center gap-1">
-          <Button size="sm" variant="ghost" onClick={() => setBackupOpen(true)}>
-            {t("launcher.backup", { defaultValue: "备份" })}
-          </Button>
-          {state?.contextLabel && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                void invoke<LauncherState>("launcher_context_clear")
-                  .then(setState)
-                  .catch((value) => setError(message(value)));
-              }}
-            >
-              {t("launcher.clearContext", { defaultValue: "清除内容" })}
-            </Button>
+          {!isContextPanel && state?.contextLabel && (
+            <Badge variant="outline">{state.contextLabel}</Badge>
           )}
-          <Button size="sm" variant="ghost" onClick={() => setPluginsOpen(true)}>
-            <PackageIcon data-icon="inline-start" />
-            {t("launcher.plugins", { defaultValue: "插件" })}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              void openSettings();
-            }}
-          >
-            <SettingsIcon data-icon="inline-start" />
-            {t("launcher.settings", { defaultValue: "设置" })}
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t("launcher.hide", { defaultValue: "隐藏启动器" })}
-            onClick={() => {
-              void hideLauncher().catch((value: unknown) => setError(message(value)));
-            }}
-          >
-            <XIcon />
-          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {isContextPanel ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={panelBusy || !panelView?.returnAvailable}
+                onClick={() => {
+                  void panelAction("return");
+                }}
+              >
+                {t("contextPanel.return")}
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={panelBusy}
+                aria-label={t("contextPanel.close")}
+                onClick={() => {
+                  void panelAction("close");
+                }}
+              >
+                <XIcon />
+              </Button>
+            </>
+          ) : (
+            <>
+              {state?.contextLabel && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const generation = ++stateGeneration.current;
+                    void invoke<LauncherState>("launcher_context_clear")
+                      .then((next) => {
+                        if (!mounted.current || generation !== stateGeneration.current) return;
+                        stateSnapshot.current = next;
+                        setState(next);
+                      })
+                      .catch((value) => {
+                        if (mounted.current && generation === stateGeneration.current)
+                          setError(message(value));
+                      });
+                  }}
+                >
+                  {t("launcher.clearContext", { defaultValue: "清除内容" })}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  void openSettings();
+                }}
+              >
+                <SettingsIcon data-icon="inline-start" />
+                {t("launcher.settings", { defaultValue: "设置" })}
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={t("launcher.hide", { defaultValue: "隐藏启动器" })}
+                onClick={() => {
+                  void hideLauncher().catch((value: unknown) => setError(message(value)));
+                }}
+              >
+                <XIcon />
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
-      {state?.firstRun && (
+      {isContextPanel && (
+        <section
+          className="shrink-0 space-y-1 rounded-lg border p-3 text-sm"
+          aria-label={t("contextPanel.contextStatus")}
+        >
+          <p role="status" aria-live="polite" className="flex items-center gap-2">
+            {(!panelView || panelView.status === "capturing") && !panelReadFailed && <Spinner />}
+            {panelReadFailed
+              ? t("contextPanel.expired")
+              : t(
+                  panelView
+                    ? `contextPanel.capture.${panelView.contextKind === "window" ? "window" : panelView.status}`
+                    : "contextPanel.capture.capturing",
+                )}
+          </p>
+          {panelView?.sourceApp && (
+            <p className="break-all text-xs text-muted-foreground">
+              {t("contextPanel.source", { app: panelView.sourceApp })}
+            </p>
+          )}
+          {panelView?.reason && (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t(`contextPanel.reason.${panelView.reason}`)}
+            </p>
+          )}
+        </section>
+      )}
+      {!isContextPanel && state?.firstRun && (
         <Card size="sm" className="shrink-0">
           <CardHeader>
             <CardTitle>
@@ -693,6 +1039,7 @@ export function Launcher() {
             onClick={() => {
               setError(undefined);
               void refreshState();
+              setScopeRevision((value) => value + 1);
             }}
           >
             {t("launcher.retry", { defaultValue: "重试" })}
@@ -765,7 +1112,17 @@ export function Launcher() {
               </>
             )}
             {mode.key.startsWith("spark233.search:") && (
-              <Button size="sm" variant="ghost" onClick={() => setScopeOpen(true)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  void openSettingsWindow({
+                    page: "plugins",
+                    pluginId: "spark233.search",
+                    tab: "config",
+                  }).catch((value) => setError(message(value)));
+                }}
+              >
                 {searchText("title")}
               </Button>
             )}
@@ -774,6 +1131,7 @@ export function Launcher() {
         <CommandInput
           ref={input}
           value={query}
+          disabled={isContextPanel && (panelBusy || !panelView || panelView.status === "capturing")}
           onValueChange={(value) => {
             setQuery(value);
             setError(undefined);
@@ -796,114 +1154,107 @@ export function Launcher() {
           }
           onCompositionStart={() => {
             composition.current = true;
+            if (!isContextPanel)
+              void invoke("launcher_composition", { active: true }).catch(() => {});
             setComposing(true);
           }}
           onCompositionEnd={(event) => {
             composition.current = false;
+            if (!isContextPanel)
+              void invoke("launcher_composition", { active: false }).catch(() => {});
             compositionEnded.current = performance.now();
             setQuery(event.currentTarget.value);
             setComposing(false);
           }}
         />
-        <CommandList className="max-h-none min-h-0 flex-1" aria-busy={loading}>
-          {loading && (
-            <div
-              className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
-              role="status"
+        <CommandList
+          className="flex max-h-none min-h-0 flex-1 flex-col overflow-hidden"
+          aria-busy={loading}
+        >
+          {!!horizontalItems.length && (
+            <CommandGroup
+              heading={t("launcher.applicationRegion")}
+              data-query-group="applications"
+              className="shrink-0 border-b pb-3 [&_[cmdk-group-items]]:flex [&_[cmdk-group-items]]:gap-2 [&_[cmdk-group-items]]:overflow-x-auto [&_[cmdk-group-items]]:pb-2"
             >
-              <Spinner />
-              {t("launcher.searching", { defaultValue: "正在查询…" })}
-            </div>
+              {horizontalItems.map((item) => renderItem(item, true))}
+            </CommandGroup>
           )}
-          {!loading && !composing && (
-            <CommandEmpty>
-              {t("launcher.empty", {
-                defaultValue: "没有匹配的入口，试试其他关键词或检查插件是否启用。",
-              })}
-            </CommandEmpty>
-          )}
-          <CommandGroup
-            heading={modeTitle ?? t("launcher.results", { defaultValue: "入口与本地结果" })}
+          <div
+            className="min-h-0 flex-1 overflow-y-auto"
+            aria-label={t("launcher.informationRegion")}
           >
-            {result?.items.map((item) => {
-              const command = findCommand(item);
-              const key = itemKey(item);
-              const isMode = !mode && !!command?.mode;
-              return (
-                <CommandItem
-                  key={key}
-                  value={key}
-                  disabled={
-                    !state?.pluginsReady || command?.enabled === false || executing.includes(key)
-                  }
-                  onSelect={() => {
-                    void selectItem(item);
-                  }}
+            {loading && (
+              <div
+                className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
+                role="status"
+              >
+                <Spinner />
+                {t("launcher.searching", { defaultValue: "正在查询…" })}
+              </div>
+            )}
+            {!loading && !composing && !result?.pending && (
+              <CommandEmpty>
+                {t("launcher.empty", {
+                  defaultValue: "没有匹配的入口，试试其他关键词或检查插件是否启用。",
+                })}
+              </CommandEmpty>
+            )}
+            {(
+              result?.groups ?? [
+                {
+                  id: "results",
+                  title: modeTitle ?? t("launcher.results", { defaultValue: "入口与本地结果" }),
+                  status: "ready",
+                  items: result?.items ?? [],
+                },
+              ]
+            )
+              .map((group) => ({
+                ...group,
+                items: group.items.filter((item) => !isHorizontalEntry(item)),
+              }))
+              .filter((group) => group.items.length || group.status !== "ready" || group.hint)
+              .map((group) => (
+                <CommandGroup
+                  key={group.id}
+                  heading={group.title}
+                  data-query-group={group.id}
+                  aria-busy={group.status === "pending" && !group.items.length}
                 >
-                  {item.icon && /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(item.icon) && (
-                    <img
-                      src={item.icon}
-                      alt=""
-                      className="size-7 shrink-0 object-contain"
-                      width={28}
-                      height={28}
-                    />
+                  {group.status === "pending" && (
+                    <div
+                      className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
+                      role="status"
+                    >
+                      <Spinner />
+                      {t("launcher.searching", { defaultValue: "正在查询…" })}
+                    </div>
                   )}
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="flex items-center gap-2 truncate">
-                      {item.title}
-                      {item.usage && (
-                        <Badge variant="outline">
-                          {item.usage.count > 1
-                            ? t("launcher.frequentlyUsed")
-                            : t("launcher.recentlyUsed")}
-                        </Badge>
-                      )}
-                    </span>
-                    {item.description && (
-                      <span className="truncate text-xs text-muted-foreground">
-                        {item.description}
-                      </span>
-                    )}
-                  </div>
-                  {!!item.actions?.length && (
+                  {group.hint && (
+                    <p
+                      role="status"
+                      className="break-words px-3 py-2 text-xs text-muted-foreground"
+                    >
+                      {group.hint}
+                    </p>
+                  )}
+                  {group.status === "error" && (
                     <Button
                       variant="ghost"
-                      size="icon-sm"
-                      aria-label={t("launcher.resultActions", {
-                        title: item.title,
-                        defaultValue: i18n.resolvedLanguage?.startsWith("en")
-                          ? "Actions for {{title}}"
-                          : "{{title}}的操作",
-                      })}
-                      title="Alt+Enter / Shift+F10"
-                      aria-keyshortcuts="Alt+Enter Shift+F10"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setActionItem(item);
-                      }}
+                      size="sm"
+                      onClick={() => setScopeRevision((value) => value + 1)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") event.stopPropagation();
                       }}
                     >
-                      <MoreHorizontalIcon />
+                      {t("launcher.retry", { defaultValue: "重试" })}
                     </Button>
                   )}
-                  {executing.includes(key) ? (
-                    <Spinner />
-                  ) : isMode ? (
-                    <CommandShortcut>
-                      <ArrowRightIcon
-                        aria-label={t("launcher.enterMode", { defaultValue: "进入模式" })}
-                      />
-                    </CommandShortcut>
-                  ) : (
-                    <CommandShortcut>↵</CommandShortcut>
-                  )}
-                </CommandItem>
-              );
-            })}
-          </CommandGroup>
+                  {group.items.map((item) => renderItem(item))}
+                </CommandGroup>
+              ))}
+          </div>
         </CommandList>
       </Command>
       <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -911,16 +1262,8 @@ export function Launcher() {
           {result?.hint ??
             t("launcher.navigation", { defaultValue: "↑ ↓ 选择 · Enter 执行 · Esc 返回或隐藏" })}
         </span>
-        {!mode && <span>{t("launcher.modeHint", { defaultValue: "关键词 + Tab 进入模式" })}</span>}
       </footer>
 
-      <SearchScopeDialog
-        open={scopeOpen}
-        onOpenChange={(value) => {
-          setScopeOpen(value);
-          if (!value) focusInput();
-        }}
-      />
       <Dialog
         open={!!actionItem}
         onOpenChange={(open) => {
@@ -930,9 +1273,9 @@ export function Launcher() {
           }
         }}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{actionItem?.title}</DialogTitle>
+        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden">
+          <DialogHeader className="shrink-0 pr-8">
+            <DialogTitle className="break-words">{actionItem?.title}</DialogTitle>
             <DialogDescription>
               {t("launcher.chooseAction", {
                 defaultValue: i18n.resolvedLanguage?.startsWith("en")
@@ -941,7 +1284,61 @@ export function Launcher() {
               })}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-2">
+          {preferenceError && (
+            <Alert variant="destructive">
+              <AlertDescription className="break-words">{preferenceError}</AlertDescription>
+            </Alert>
+          )}
+          <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">
+            {actionItem?.preference && (
+              <>
+                <Button
+                  variant="outline"
+                  className="justify-start"
+                  disabled={preferenceBusy || !state?.pluginsReady}
+                  onClick={() =>
+                    void mutateItemPreference(
+                      actionItem,
+                      actionItem.preference!.pinned ? "unpin" : "pin",
+                    )
+                  }
+                >
+                  <PinIcon aria-hidden="true" />
+                  {t(
+                    actionItem.preference.pinned
+                      ? "launcher.preferences.unpin"
+                      : "launcher.preferences.pin",
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-start"
+                  disabled={preferenceBusy || !state?.pluginsReady}
+                  onClick={() => editItemAliases(actionItem)}
+                >
+                  {t("launcher.preferences.editAliases")}
+                </Button>
+                {actionItem.preference.kind === "command" && actionItem.kind !== "application" && (
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    disabled={preferenceBusy || !state?.pluginsReady}
+                    onClick={() =>
+                      void mutateItemPreference(
+                        actionItem,
+                        actionItem.preference!.hidden ? "show" : "hide",
+                      )
+                    }
+                  >
+                    {t(
+                      actionItem.preference.hidden
+                        ? "launcher.preferences.show"
+                        : "launcher.preferences.hide",
+                    )}
+                  </Button>
+                )}
+              </>
+            )}
             {actionItem?.actions?.map((action) => (
               <Button
                 key={action.id}
@@ -949,6 +1346,7 @@ export function Launcher() {
                 className="justify-start"
                 disabled={
                   !state?.pluginsReady ||
+                  preferenceBusy ||
                   executing.includes(JSON.stringify([actionItem.pluginId, action.id]))
                 }
                 onClick={() => void selectAction(actionItem, action)}
@@ -967,106 +1365,6 @@ export function Launcher() {
           if (!open) focusInput();
         }}
       />
-      <PluginManagementDialog
-        open={pluginsOpen}
-        onOpenChange={(value) => {
-          setPluginsOpen(value);
-          if (!value) {
-            void refreshState();
-            focusInput();
-          }
-        }}
-      />
-      <Dialog
-        open={settingsOpen}
-        onOpenChange={(value) => {
-          if (!migrationTarget) {
-            setSettingsOpen(value);
-            if (!value) focusInput();
-          }
-        }}
-      >
-        <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden p-0 sm:max-w-[360px]">
-          <DialogHeader className="sr-only">
-            <DialogTitle>{t("launcher.settings", { defaultValue: "设置" })}</DialogTitle>
-            <DialogDescription>
-              {t("launcher.settingsDescription", { defaultValue: "修改应用设置并保存到宿主。" })}
-            </DialogDescription>
-          </DialogHeader>
-          {settingsError && (
-            <Alert variant="destructive">
-              <AlertDescription>{settingsError}</AlertDescription>
-            </Alert>
-          )}
-          {savingSettings && (
-            <div className="flex items-center gap-2 px-4 py-2 text-sm" role="status">
-              <Spinner />
-              {t("launcher.savingSettings", { defaultValue: "正在保存设置" })}
-            </div>
-          )}
-          <div className="h-[min(72vh,680px)] overflow-hidden">
-            {config ? (
-              <SettingsPanel
-                config={config}
-                onChange={changeSettings}
-                onMigrateDataDir={() => {
-                  void chooseMigration();
-                }}
-                onClose={() => {
-                  setSettingsOpen(false);
-                  focusInput();
-                }}
-              />
-            ) : (
-              <div className="flex items-center gap-2 p-4">
-                <Spinner />
-                {t("launcher.loadingSettings", { defaultValue: "正在读取设置" })}
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-      <AlertDialog
-        open={!!migrationTarget}
-        onOpenChange={(value) => {
-          if (!value && !migrating) setMigrationTarget(undefined);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("launcher.migrate.title", { defaultValue: "迁移数据目录" })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("launcher.migrate.description", {
-                defaultValue: "确认将现有便签数据迁移到所选位置。迁移期间请等待完成。",
-              })}
-              <span className="mt-2 block break-all">{migrationTarget}</span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {settingsError && (
-            <Alert variant="destructive">
-              <AlertDescription>{settingsError}</AlertDescription>
-            </Alert>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={migrating}>
-              {t("launcher.cancel", { defaultValue: "取消" })}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={migrating || savingSettings}
-              onClick={(event) => {
-                event.preventDefault();
-                void migrate();
-              }}
-            >
-              {migrating && <Spinner data-icon="inline-start" />}
-              {t("launcher.migrate.confirm", { defaultValue: "确认迁移" })}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <BackupDialog open={backupOpen} onOpenChange={setBackupOpen} />
     </main>
   );
 }

@@ -1,0 +1,249 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, test, vi } from "vitest";
+import { dialog, type BrowserWindow } from "electron";
+import { DesktopPluginHost } from "./desktop-host.js";
+import { PluginBackupService } from "./backup.js";
+import { resolveRegistryPluginPackage } from "./package-source.js";
+import { HostConfigStore } from "../host-config.js";
+import type {
+  InstallPreview,
+  PackageTaskSnapshot,
+  PluginManagementState,
+} from "../../src/features/plugins/types.js";
+
+vi.mock("electron", () => ({
+  app: {},
+  BrowserWindow: {},
+  protocol: {},
+  session: {},
+  utilityProcess: {},
+  clipboard: {},
+  dialog: { showOpenDialog: vi.fn() },
+  globalShortcut: {},
+  Notification: {},
+}));
+vi.mock("./package-source.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./package-source.js")>()),
+  resolveRegistryPluginPackage: vi.fn(),
+}));
+
+const directories: string[] = [];
+const hosts: DesktopPluginHost[] = [];
+const parent = { webContents: { id: 1 } } as BrowserWindow;
+const caller = "restore-test:document";
+
+afterEach(async () => {
+  for (const host of hosts.splice(0)) await host.shutdown();
+  for (const directory of directories.splice(0))
+    fs.rmSync(directory, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  vi.mocked(dialog.showOpenDialog).mockReset();
+  vi.mocked(resolveRegistryPluginPackage).mockReset();
+});
+
+async function fixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-host-restore-"));
+  directories.push(root);
+  const hostRoot = path.join(root, "host");
+  const pluginRoot = path.join(root, "plugins");
+  const notesRoot = path.join(root, "notes");
+  for (const directory of [hostRoot, notesRoot, path.join(root, "snapshots")])
+    fs.mkdirSync(directory, { recursive: true });
+  const config = new HostConfigStore(hostRoot, notesRoot);
+  config.save(config.value);
+  const onPackageTaskChanged = vi.fn();
+  const host = new DesktopPluginHost({
+    root: pluginRoot,
+    hostVersion: "1.2.0",
+    getTheme: () => ({ version: "1.0.0", preference: "light", effective: "light" }),
+    onPackageTaskChanged,
+  });
+  hosts.push(host);
+  await host.initialize();
+  const handle = (command: string, args: unknown = {}) =>
+    host.handle(command, args, parent, caller);
+  const view = async () => (await handle("plugins_list")) as PluginManagementState;
+  // No installed registry plugins: synchronize initialization without network or runtimes.
+  await handle("plugins_check_updates");
+  const importPreview = async (name: string) => {
+    const source = path.join(root, "source", name);
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(
+      path.join(source, "package.json"),
+      JSON.stringify({
+        name: `@fixture/restore-${name}`,
+        version: "1.0.0",
+        type: "module",
+        spark233: {
+          schemaVersion: 1,
+          id: `fixture.restore-${name}`,
+          displayName: `Restore ${name}`,
+          api: "^1.2.0",
+          host: "^1.2.0",
+          platforms: [process.platform],
+          architectures: [process.arch],
+          entry: "index.html",
+          capabilities: [],
+          commands: [{ id: "open", title: "Open" }],
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(source, "index.html"), "<p>Inert owned fixture</p>");
+    vi.mocked(dialog.showOpenDialog).mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [source],
+    });
+    return (await handle("plugins_import_directory")) as InstallPreview;
+  };
+  return {
+    root,
+    hostRoot,
+    pluginRoot,
+    notesRoot,
+    host,
+    handle,
+    view,
+    importPreview,
+    onPackageTaskChanged,
+  };
+}
+
+test("restore reload waits for the host mutation queue to drain and loses authority on resume", async () => {
+  const { host } = await fixture();
+  // maintenance=true previously allowed reload while an accepted operation was still running.
+  const queuedHost = host as unknown as { serial(operation: () => Promise<void>): Promise<void> };
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const operation = queuedHost.serial(async () => {
+    entered();
+    await gate;
+  });
+  await started;
+  const pausing = host.pauseMutations();
+  try {
+    expect(() => host.reloadAfterRestore()).toThrow(/暂停|排空/);
+  } finally {
+    release();
+  }
+  await operation;
+  const resume = await pausing;
+  try {
+    expect(() => host.reloadAfterRestore()).not.toThrow();
+  } finally {
+    resume();
+  }
+  expect(() => host.reloadAfterRestore()).toThrow(/暂停|排空/);
+});
+
+test("real backup restore and rollback reload pending state without resurrecting retired tasks", async () => {
+  const {
+    root,
+    hostRoot,
+    pluginRoot,
+    notesRoot,
+    host,
+    handle,
+    view,
+    importPreview,
+    onPackageTaskChanged,
+  } = await fixture();
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+  await handle("plugins_check_updates");
+  const checkedA = (await view()).lastChecked;
+  let failReload = false;
+  const service = new PluginBackupService({
+    manager: host.manager,
+    hostVersion: "1.2.0",
+    hostRoot,
+    pluginRoot,
+    externalDataRoots: () => ({ "spark233.notes": notesRoot }),
+    recoveryRoot: path.join(root, "recovery"),
+    pauseHost: () => host.pauseMutations(),
+    rewriteHostConfig: (value, roots) => ({
+      ...(value as Record<string, unknown>),
+      dataDir: roots["spark233.notes"],
+    }),
+    reloadHost: () => {
+      host.reloadAfterRestore();
+      if (failReload) {
+        failReload = false;
+        throw new Error("OWN_RELOAD_FAILURE");
+      }
+    },
+  });
+  const a = await importPreview("a");
+  const snapshot = (await service.create(path.join(root, "snapshots"))).snapshotDirectory;
+  const inspection = await service.inspect(snapshot);
+  await handle("plugins_cancel_install", { previewId: a.previewId });
+  const b = await importPreview("b");
+  now.mockReturnValue(1_800_000_001_000);
+  await handle("plugins_check_updates");
+
+  // Keep the actual task pending in registry resolution; pause aborts and drains it.
+  vi.mocked(resolveRegistryPluginPackage).mockImplementationOnce(
+    ({ signal }) =>
+      new Promise((_resolve, reject) => {
+        signal!.throwIfAborted();
+        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+      }),
+  );
+  const taskPromise = handle("plugins_prepare_registry", { name: "@fixture/retired-download" });
+  interface HeldTask {
+    snapshot: PackageTaskSnapshot;
+  }
+  const tasks = host as unknown as {
+    packageTasks: Map<string, HeldTask>;
+    taskChanged(task: HeldTask, change: Partial<PackageTaskSnapshot>): void;
+  };
+  const retired = [...tasks.packageTasks.values()][0];
+  expect(retired).toBeDefined();
+  await service.restore(snapshot, inspection.manifestFingerprint);
+  await expect(taskPromise).resolves.toBeUndefined();
+
+  // The original bug left memory B over disk A; cancelling B then erased A's ownership.
+  const previewsFile = path.join(pluginRoot, "previews.json");
+  const restoredBytes = fs.readFileSync(previewsFile);
+  expect((await view()).pending.map((item) => item.previewId)).toEqual([a.previewId]);
+  expect(
+    JSON.parse(restoredBytes.toString()).pending.map(
+      (item: { previewId: string }) => item.previewId,
+    ),
+  ).toEqual([a.previewId]);
+  expect((await view()).lastChecked).toBe(checkedA);
+  expect((await view()).tasks).toEqual([]);
+  await expect(handle("plugins_cancel_install", { previewId: b.previewId })).rejects.toThrow(
+    /does not exist/,
+  );
+  expect(fs.readFileSync(previewsFile)).toEqual(restoredBytes);
+  onPackageTaskChanged.mockClear();
+  const retiredRevision = retired.snapshot.revision;
+  tasks.taskChanged(retired, { stage: "failed", error: "late progress" });
+  expect(retired.snapshot.revision).toBe(retiredRevision);
+  expect(onPackageTaskChanged).not.toHaveBeenCalled();
+  await expect(
+    handle("plugins_cancel_package_task", { taskId: retired.snapshot.taskId }),
+  ).rejects.toThrow(/no longer exists/);
+  await handle("plugins_cancel_install", { previewId: a.previewId });
+  const reimported = await importPreview("a");
+  expect(reimported.previewId).not.toBe(a.previewId);
+
+  await handle("plugins_cancel_install", { previewId: reimported.previewId });
+  const rollbackB = await importPreview("b");
+  now.mockReturnValue(1_800_000_002_000);
+  await handle("plugins_check_updates");
+  const checkedB = (await view()).lastChecked;
+  const previousBytes = fs.readFileSync(previewsFile);
+  failReload = true;
+  await expect(service.restore(snapshot, inspection.manifestFingerprint)).rejects.toThrow(
+    "OWN_RELOAD_FAILURE",
+  );
+  expect((await view()).pending.map((item) => item.previewId)).toEqual([rollbackB.previewId]);
+  expect(fs.readFileSync(previewsFile)).toEqual(previousBytes);
+  expect((await view()).lastChecked).toBe(checkedB);
+  expect((await view()).updates).toEqual([]);
+  expect((await view()).tasks).toEqual([]);
+});

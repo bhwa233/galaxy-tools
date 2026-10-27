@@ -62,7 +62,7 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ($manifest.commit -ne $commit -or $manifest.adaptation -notin 1, 2, 3, 4, 5, 6, 7) { throw 'Prepared source manifest mismatch' }
+if ($manifest.commit -ne $commit -or $manifest.adaptation -notin 1, 2, 3, 4, 5, 6, 7, 8) { throw 'Prepared source manifest mismatch' }
 if ($manifest.adaptation -eq 1) {
     # SHGetFolderPath ignores LOCALAPPDATA/PROGRAMDATA environment overrides.
     # Give the native boundary explicit data-root overrides for isolated runs.
@@ -166,6 +166,103 @@ if ($manifest.adaptation -eq 6) {
         [IO.File]::WriteAllText($filename, $original.Replace($patch[1], $patch[2]), [Text.UTF8Encoding]::new($false))
     }
     $manifest.adaptation = 7
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+}
+if ($manifest.adaptation -eq 7) {
+    # A normal hit cap cancels outstanding synchronous worker I/O during Join.
+    # Keep genuine version/read failures, but preserve cancellation identity so
+    # that teardown cannot turn a successful truncated page into error 995/1237.
+    $patches = @(
+        @('src/index/text_task_reader.cpp', @'
+bool Stable(HANDLE file, const std::wstring& path, const BY_HANDLE_FILE_INFORMATION& before,
+            const FILE_BASIC_INFO& before_basic) {
+    BY_HANDLE_FILE_INFORMATION after{}, current{};
+    FILE_BASIC_INFO after_basic{}, current_basic{};
+    if (!GetFileInformationByHandle(file, &after) || before.nFileSizeHigh != after.nFileSizeHigh ||
+        before.nFileSizeLow != after.nFileSizeLow || CompareFileTime(&before.ftLastWriteTime, &after.ftLastWriteTime) ||
+        !GetFileInformationByHandleEx(file, FileBasicInfo, &after_basic, sizeof(after_basic)) ||
+        before_basic.ChangeTime.QuadPart != after_basic.ChangeTime.QuadPart)
+        return false;
+    File path_file{CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    return path_file.handle != INVALID_HANDLE_VALUE && GetFileInformationByHandle(path_file.handle, &current) &&
+        GetFileInformationByHandleEx(path_file.handle, FileBasicInfo, &current_basic, sizeof(current_basic)) &&
+        current.nFileIndexHigh == before.nFileIndexHigh && current.nFileIndexLow == before.nFileIndexLow &&
+        current.dwVolumeSerialNumber == before.dwVolumeSerialNumber &&
+        current_basic.ChangeTime.QuadPart == before_basic.ChangeTime.QuadPart;
+}
+'@, @'
+DWORD Stable(HANDLE file, const std::wstring& path, const BY_HANDLE_FILE_INFORMATION& before,
+             const FILE_BASIC_INFO& before_basic) {
+    BY_HANDLE_FILE_INFORMATION after{}, current{};
+    FILE_BASIC_INFO after_basic{}, current_basic{};
+    if (!GetFileInformationByHandle(file, &after) ||
+        !GetFileInformationByHandleEx(file, FileBasicInfo, &after_basic, sizeof(after_basic))) {
+        const auto code = GetLastError();
+        return code ? code : ERROR_READ_FAULT;
+    }
+    if (before.nFileSizeHigh != after.nFileSizeHigh || before.nFileSizeLow != after.nFileSizeLow ||
+        CompareFileTime(&before.ftLastWriteTime, &after.ftLastWriteTime) ||
+        before_basic.ChangeTime.QuadPart != after_basic.ChangeTime.QuadPart)
+        return ERROR_RETRY;
+    File path_file{CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    if (path_file.handle == INVALID_HANDLE_VALUE ||
+        !GetFileInformationByHandle(path_file.handle, &current) ||
+        !GetFileInformationByHandleEx(path_file.handle, FileBasicInfo, &current_basic, sizeof(current_basic))) {
+        const auto code = GetLastError();
+        return code ? code : ERROR_READ_FAULT;
+    }
+    return current.nFileIndexHigh == before.nFileIndexHigh && current.nFileIndexLow == before.nFileIndexLow &&
+        current.dwVolumeSerialNumber == before.dwVolumeSerialNumber &&
+        current_basic.ChangeTime.QuadPart == before_basic.ChangeTime.QuadPart ? ERROR_SUCCESS : ERROR_RETRY;
+}
+'@),
+        @('src/index/text_task_reader.cpp', @'
+    result = {};
+    auto fail = [&](DWORD code) {
+        result.body.clear(); result.version.clear(); result.skipped_lines = 0;
+'@, @'
+    result = {};
+    auto stopped = [&] { return cancelled && cancelled(); };
+    auto fail = [&](DWORD code) {
+        // Only an I/O abort after our cancellation signal is a cancellation.
+        // Real short reads, identity changes and unrelated errors stay failures.
+        if (code == ERROR_OPERATION_ABORTED && stopped()) code = ERROR_CANCELLED;
+        result.body.clear(); result.version.clear(); result.skipped_lines = 0;
+'@),
+        @('src/index/text_task_reader.cpp', @'
+    };
+    auto stopped = [&] { return cancelled && cancelled(); };
+    if (stopped()) return fail(ERROR_CANCELLED);
+'@, @'
+    };
+    if (stopped()) return fail(ERROR_CANCELLED);
+'@),
+        @('src/index/text_task_reader.cpp',
+            '    if (!Stable(file.handle, path, before, before_basic)) return fail(ERROR_RETRY);',
+            '    if (const auto version_error = Stable(file.handle, path, before, before_basic)) return fail(version_error);'),
+        @('src/index/content_task_search.cpp', @'
+                                if (read_error && read_error != ERROR_CANCELLED)
+                                    error = read_error;
+'@, @'
+                                if (read_error && read_error != ERROR_CANCELLED &&
+                                    !(read_error == ERROR_OPERATION_ABORTED && interrupted()))
+                                    error = read_error;
+'@)
+    )
+    foreach ($patch in $patches) {
+        $filename = Join-Path $sourceRoot $patch[0]
+        $original = [IO.File]::ReadAllText($filename).Replace("`r`n", "`n")
+        if (-not $original.Contains($patch[1]) -or $original.IndexOf($patch[1]) -ne $original.LastIndexOf($patch[1])) {
+            throw "Pinned hit-limit cancellation adapter does not uniquely match: $($patch[0])"
+        }
+        [IO.File]::WriteAllText($filename, $original.Replace($patch[1], $patch[2]), [Text.UTF8Encoding]::new($false))
+    }
+    $manifest.modifiedFiles = @($manifest.modifiedFiles + @('src/index/text_task_reader.cpp', 'src/index/content_task_search.cpp') | Sort-Object -Unique)
+    $manifest.adaptation = 8
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
 if ($PrepareOnly) { Write-Output "Prepared pinned, namespaced source: $sourceRoot"; return }

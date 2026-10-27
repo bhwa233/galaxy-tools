@@ -21,10 +21,10 @@ export interface BackendContext {
   /** Scoped platform effect; once issued, await its final result before committing data. */
   callHost: (call: BackendHostCall) => Promise<void>;
 }
-export interface BackendHostCall {
-  operation: "file.trash";
+export type BackendHostCall = {
+  operation: "file.trash" | "storage.protectRoot";
   path: string;
-}
+};
 export interface BackendPlugin {
   activate?: (
     activation: PluginActivation,
@@ -34,6 +34,7 @@ export interface BackendPlugin {
     reason: StopReason,
     context: BackendContext,
   ) => StopDecision | Promise<StopDecision>;
+  cancelStop?: (context: BackendContext) => void | Promise<void>;
   stop?: (context: BackendContext) => void | Promise<void>;
 }
 export type BackendRequest = { owner: PluginOwner; requestId: string } & (
@@ -47,6 +48,7 @@ export type BackendRequest = { owner: PluginOwner; requestId: string } & (
     }
   | { type: "activate"; activation: PluginActivation }
   | { type: "prepareStop"; reason: StopReason }
+  | { type: "cancelStop" }
   | { type: "cancel" }
   | { type: "stop" }
   | { type: "exit" }
@@ -191,6 +193,7 @@ if (port) {
         case "prepareStop": {
           if (!initialized || stopping) throw new Error("Backend cannot prepare shutdown");
           // Do not abort tasks here: a save refusal must leave the live instance intact.
+          saveAcknowledged = false;
           const decision = await plugin!.prepareStop(message.reason, lifetime!);
           if (
             !decision ||
@@ -200,6 +203,12 @@ if (port) {
             throw new Error("Invalid backend prepareStop response");
           saveAcknowledged = decision.ok;
           value = decision;
+          break;
+        }
+        case "cancelStop": {
+          if (!initialized || stopping) throw new Error("Backend cannot resume shutdown");
+          saveAcknowledged = false;
+          await plugin!.cancelStop?.(lifetime!);
           break;
         }
         case "stop": {

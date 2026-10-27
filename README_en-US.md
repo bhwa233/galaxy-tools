@@ -1,11 +1,40 @@
 # spark233
 
+Current work follows the [implementation baseline](Docs/spark233-remaining-implementation-2026-10-27.md): finish documentation, implement the complete batch, then verify it together. Historical candidates do not cover the current API 1.2, document allowlist and restore-boundary drafts.
+
 spark233 is a Windows desktop launcher and plugin toolkit evolved from
 [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper). It uses
 Electron 45, TypeScript, React 19, Vite 8 and shadcn/ui, targeting Windows 11 x64.
-The current implementation and requirement audit are complete; final manual acceptance
-remains scheduled separately. The supported interface languages
+Implementation continues against the requirement audit. The Windows candidate
+has passed its complete GUI smoke; final manual acceptance remains pending. The supported interface languages
 are Simplified Chinese (`zh-CN`) and English (`en-US`).
+
+The 2026-10-26 work integrates the notes utility engine, generic external-data
+backup, private-root protection, crash recovery and field-only settings patches.
+Type checks, lint, 33 test files/163 tests, real utility checks, seven main-process
+checks and seven backup checks have passed. Windows `dist:win` also produced the
+directory package and NSIS installer, resolving the earlier missing-native-payload
+blocker. The same final input passed both the fixed-data run
+`seeded-smoke-pQcL2D` and complete Windows GUI smoke
+`c94c7be6-ea9b-4abe-a711-da40a9378cf0`, with actual process exit code 0.
+The fixed ID, Markdown, attachments, reminders and layout were preserved,
+completing P3.1 within its original scope. That checkpoint recorded 47/98
+complete items. The current checklist includes ten newly adopted requirements and
+records 60/108 complete items and 48 partial, unimplemented or pending items. Plugin release notes, download progress, per-task cancellation and bounded diagnostics are complete; see the [update feedback record](Docs/evidence/spark233-package-tasks-followup.md). IME, multiple displays, clean
+installation and SYSTEM-service acceptance remain pending. See the
+[current finalization record](Docs/evidence/spark233-notes-finalization.md) for
+artifact identity and evidence boundaries.
+
+Incremental queries, pinned entries, personal aliases, command hiding and optional keyword learning are now complete. Learning has a separate [finalization record](Docs/evidence/spark233-keyword-learning-followup.md): 175 tests, 66 artifact checks and complete Windows smoke passed. The earlier context-panel capture, resource and lifecycle checks passed: 20 scoped main/UI checks and their Windows candidate’s 179 tests, 74 artifact checks, fixed-data/full smoke and binder passed. Physical mouse, OS selection, focus return, IME and multiple displays remain pending; P3.17 stays unchecked. See the [context-panel record](Docs/evidence/spark233-context-panel-followup.md).
+The new candidate passed 39 artifact checks, 167 tests, fixed-data smoke and a full Windows
+smoke with actual exit 0. See the [preference finalization](Docs/evidence/spark233-launcher-preferences-followup.md).
+
+Additional evidence covers native trust confirmation, notes disable/re-enable,
+dictionary package updates, and clipboard editing/favorites/cleanup; see the
+[workspace follow-up](Docs/evidence/spark233-workspace-lifecycle-followup.md).
+Settings zoom, focus and accessible-control fixes have a separate
+[UI record](Docs/evidence/spark233-settings-zoom-followup.md); complete manual
+acceptance remains pending.
 
 The default entry is a uTools-style launcher with keyword commands and dedicated
 plugin modes. First launch presents onboarding without creating an empty note.
@@ -35,10 +64,10 @@ cleanup. The host coordinates consistent backup and recovery.
 
 The [architecture](Docs/launcher-architecture.md) and
 [implementation checklist](Docs/launcher-todo.md) define the complete first
-release scope. Technology upgrades, plugin and business integration, the Windows
-directory package and NSIS installer have passed the current automated checks.
+release scope. The historical 2026-10-25 candidate passed its technology, plugin,
+business integration, Windows directory-package and NSIS checks.
 Controlled Markdown/image preservation and an unavailable-network run of all
-seven plugins, the dictionary and OCR have evidence. The installer is about
+seven plugins, the dictionary and OCR have evidence for that historical input. Its installer is about
 200.33 MiB; application files plus expanded plugins total about 614.79 MiB before
 user data, indexes and caches. See the [distribution record](Docs/evidence/spark233-packaging.md)
 for exact hashes and measurement scope. Manual UI/IME/multi-display acceptance,

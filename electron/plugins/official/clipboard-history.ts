@@ -25,7 +25,7 @@ export interface ClipboardSource {
 const MAX_BYTES = 64 * 1024 * 1024;
 const registered = new Set(["HTML Format", "Rich Text Format", "PNG"]);
 const builtin = new Set([13, 15, 8, 17]);
-const settingsSchema = z.object({
+export const settingsSchema = z.strictObject({
   paused: z.boolean(),
   excludedApps: z
     .array(z.string().trim().min(1).max(4096))
@@ -41,7 +41,7 @@ const settingsSchema = z.object({
   quickAction: z.enum(["copy", "paste"]).default("copy"),
   compactPosition: z.enum(["cursor", "edge"]).default("cursor"),
 });
-const defaults: ClipboardSettings = {
+export const defaults: ClipboardSettings = {
   paused: false,
   excludedApps: [],
   excludedText: [],

@@ -78,6 +78,7 @@ Docs/windows-install-chain-code-review.md
 dist-electron/
 release-electron/
 .electron-smoke/
+/.vitest/
 
 dist-plugins/
 dist-host/
@@ -85,3 +86,6 @@ packages/official/*/native/
 packages/official/translation/data/*.sqlite
 packages/official/clipboard/backend.mjs
 packages/ui/dist/
+
+# Local agent state
+/.workbuddy/

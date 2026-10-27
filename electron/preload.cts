@@ -16,4 +16,8 @@ contextBridge.exposeInMainWorld("spark233Desktop", {
     const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     return ipcRenderer.invoke("spark233:drop", paths);
   },
+  droppedApplicationEntries: (files: File[]) => {
+    const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
+    return ipcRenderer.invoke("spark233:application-drop", paths);
+  },
 });

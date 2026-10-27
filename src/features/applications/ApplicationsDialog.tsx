@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useUnsavedChanges } from "../settings/useUnsavedChanges";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { droppedApplicationEntries } from "../../platform/desktop";
 import {
   Dialog,
   DialogContent,
@@ -9,7 +12,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/ManagementSurface";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -20,16 +23,29 @@ import {
   pickCustomApplication,
   saveCustomApplications,
 } from "./api";
-import type { CustomApplicationEntry } from "./types";
+import type {
+  CustomApplicationEntry,
+  CustomApplicationKind,
+  CustomApplicationTarget,
+} from "./types";
 
 export interface ApplicationsDialogProps {
+  embedded?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 /** Compose existing shadcn form primitives; launch arguments stay an argv list. */
-export function ApplicationsDialog({ open, onOpenChange }: ApplicationsDialogProps) {
+export function ApplicationsDialog({
+  open,
+  onOpenChange,
+  embedded = false,
+}: ApplicationsDialogProps) {
   const { t } = useTranslation("applications");
+  const [baseline, setBaseline] = useState<{
+    entries: CustomApplicationEntry[];
+    arguments: Record<string, string>;
+  }>();
   const [entries, setEntries] = useState<CustomApplicationEntry[]>([]);
   const [argumentsById, setArgumentsById] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
@@ -37,8 +53,15 @@ export function ApplicationsDialog({ open, onOpenChange }: ApplicationsDialogPro
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string>();
   const operating = useRef(false);
+  const [supportedKinds, setSupportedKinds] = useState<CustomApplicationKind[]>([
+    "program",
+    "shortcut",
+  ]);
+  const [revision, setRevision] = useState("");
   const selected = entries.find((entry) => entry.id === selectedId);
-  const executable = !!selected && /\.exe$/i.test(selected.path);
+  const executable = selected?.kind === "program";
+  const foldersSupported = supportedKinds.includes("directory");
+  const canAddFile = supportedKinds.some((kind) => kind !== "directory");
   useEffect(() => {
     if (!open) return;
     let active = true;
@@ -49,6 +72,14 @@ export function ApplicationsDialog({ open, onOpenChange }: ApplicationsDialogPro
       .then((settings) => {
         if (!active) return;
         setEntries(settings.entries);
+        setRevision(settings.revision);
+        setBaseline({
+          entries: settings.entries,
+          arguments: Object.fromEntries(
+            settings.entries.map((entry) => [entry.id, JSON.stringify(entry.args, null, 2)]),
+          ),
+        });
+        setSupportedKinds(settings.supportedKinds ?? ["program", "shortcut"]);
         setArgumentsById(
           Object.fromEntries(
             settings.entries.map((entry) => [entry.id, JSON.stringify(entry.args, null, 2)]),
@@ -75,52 +106,55 @@ export function ApplicationsDialog({ open, onOpenChange }: ApplicationsDialogPro
     );
     setError(undefined);
   }
-  async function run(action: "add" | "path" | "cwd" | "save") {
+  function assertSupported(targets: CustomApplicationTarget[]) {
+    const unsupported = targets.find((target) => !supportedKinds.includes(target.kind));
+    if (unsupported)
+      throw new Error(t("unsupportedKind", { kind: t(`kinds.${unsupported.kind}`) }));
+  }
+  function addTargets(targets: CustomApplicationTarget[]) {
+    assertSupported(targets);
+    if (!targets.length) throw new Error(t("dropUnavailable"));
+    if (entries.length + targets.length > 200) throw new Error(t("tooMany"));
+    const added = targets.map((target) => {
+      const name =
+        target.path
+          .replace(/[\\/]+$/, "")
+          .split(/[\\/]/)
+          .pop() || target.path;
+      return {
+        id: crypto.randomUUID(),
+        title: (target.kind === "program" || target.kind === "shortcut"
+          ? name.replace(/\.(exe|lnk|url)$/i, "")
+          : name
+        ).slice(0, 160),
+        path: target.path,
+        kind: target.kind,
+        args: [],
+        cwd: "",
+      };
+    });
+    setEntries((current) => [...current, ...added]);
+    setArgumentsById((current) => ({
+      ...current,
+      ...Object.fromEntries(added.map((entry) => [entry.id, "[]"])),
+    }));
+    setSelectedId(added[0].id);
+  }
+  async function drop(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
     if (operating.current || busy || !loaded) return;
+    const files = Array.from(event.dataTransfer.files);
+    if (!files.length) return;
+    if (files.length > 200 - entries.length) {
+      setError(t("tooMany"));
+      return;
+    }
     operating.current = true;
-    setBusy(action === "save" ? "save" : "pick");
+    setBusy("pick");
     setError(undefined);
     try {
-      if (action === "save") {
-        const next = entries.map((entry) => {
-          const args: unknown = JSON.parse(argumentsById[entry.id]?.trim() || "[]");
-          if (!Array.isArray(args) || args.some((argument) => typeof argument !== "string"))
-            throw new Error(t("invalidArguments", { name: entry.title }));
-          return { ...entry, args: args as string[] };
-        });
-        await saveCustomApplications(next);
-        onOpenChange(false);
-      } else if (action === "cwd") {
-        const directory = await pickApplicationDirectory(t("pickDirectory"));
-        if (directory) update({ cwd: directory });
-      } else {
-        const location = await pickCustomApplication(t("pickApplication"));
-        if (!location) return;
-        if (action === "add") {
-          const id = crypto.randomUUID();
-          setEntries((current) => [
-            ...current,
-            {
-              id,
-              title:
-                location
-                  .split(/[\\/]/)
-                  .pop()
-                  ?.replace(/\.(exe|lnk|url)$/i, "") || location,
-              path: location,
-              args: [],
-              cwd: "",
-            },
-          ]);
-          setArgumentsById((current) => ({ ...current, [id]: "[]" }));
-          setSelectedId(id);
-        } else {
-          const isExe = /\.exe$/i.test(location);
-          update({ path: location, ...(isExe ? {} : { args: [], cwd: "" }) });
-          if (!isExe && selected)
-            setArgumentsById((current) => ({ ...current, [selected.id]: "[]" }));
-        }
-      }
+      addTargets(await droppedApplicationEntries(files));
     } catch (value) {
       setError(errorMessage(value));
     } finally {
@@ -128,169 +162,302 @@ export function ApplicationsDialog({ open, onOpenChange }: ApplicationsDialogPro
       setBusy(undefined);
     }
   }
+  async function run(
+    action: "add-file" | "add-directory" | "path-file" | "path-directory" | "cwd" | "save",
+    propagate = false,
+  ) {
+    if (operating.current || busy || !loaded) return;
+    operating.current = true;
+    setBusy(action === "save" ? "save" : "pick");
+    setError(undefined);
+    try {
+      if (action === "save") {
+        assertSupported(entries);
+        const next = entries.map((entry) => {
+          if (entry.kind !== "program") return { ...entry, args: [], cwd: "" };
+          const args: unknown = JSON.parse(argumentsById[entry.id]?.trim() || "[]");
+          if (!Array.isArray(args) || args.some((argument) => typeof argument !== "string"))
+            throw new Error(t("invalidArguments", { name: entry.title }));
+          return { ...entry, args: args as string[] };
+        });
+        const saved = await saveCustomApplications(next, revision);
+        setRevision(saved.revision);
+        const args = Object.fromEntries(
+          saved.entries.map((entry) => [entry.id, JSON.stringify(entry.args, null, 2)]),
+        );
+        setEntries(saved.entries);
+        setArgumentsById(args);
+        setBaseline({ entries: saved.entries, arguments: args });
+        if (!embedded) onOpenChange(false);
+      } else if (action === "cwd") {
+        const directory = await pickApplicationDirectory();
+        if (directory) update({ cwd: directory });
+      } else {
+        const target = await pickCustomApplication(action.endsWith("directory"));
+        if (!target) return;
+        assertSupported([target]);
+        if (action.startsWith("add")) addTargets([target]);
+        else {
+          update({ ...target, ...(target.kind === "program" ? {} : { args: [], cwd: "" }) });
+          if (target.kind !== "program" && selected)
+            setArgumentsById((current) => ({ ...current, [selected.id]: "[]" }));
+        }
+      }
+    } catch (value) {
+      setError(errorMessage(value));
+      if (propagate) throw value;
+    } finally {
+      operating.current = false;
+      setBusy(undefined);
+    }
+  }
 
+  const dirty =
+    !!baseline &&
+    (JSON.stringify(entries) !== JSON.stringify(baseline.entries) ||
+      JSON.stringify(argumentsById) !== JSON.stringify(baseline.arguments));
+  const discard = () => {
+    if (baseline) {
+      setEntries(baseline.entries);
+      setArgumentsById(baseline.arguments);
+    }
+  };
+  const guard = useUnsavedChanges(dirty, () => run("save", true), discard, open);
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!operating.current) onOpenChange(next);
-      }}
-    >
-      <DialogContent
-        className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-3xl"
-        showCloseButton={!operating.current}
-        onEscapeKeyDown={(event) => {
-          if (operating.current) event.preventDefault();
-        }}
-        onInteractOutside={(event) => {
-          if (operating.current) event.preventDefault();
+    <>
+      <>{guard.dialog}</>
+      <Dialog
+        embedded={embedded}
+        open={open}
+        onOpenChange={(next) => {
+          if (!operating.current) onOpenChange(next);
         }}
       >
-        <DialogHeader>
-          <DialogTitle>{t("title")}</DialogTitle>
-          <DialogDescription>{t("description")}</DialogDescription>
-        </DialogHeader>
-        {error && (
-          <Alert variant="destructive">
-            <AlertTitle>{t("error")}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        <div className="grid min-h-0 gap-4 overflow-y-auto p-1 sm:grid-cols-[12rem_1fr]">
-          <div className="flex flex-col gap-2">
-            <Button
-              variant="outline"
-              disabled={!!busy || !loaded || entries.length >= 200}
-              onClick={() => {
-                void run("add");
-              }}
+        <DialogContent
+          className="flex max-h-[85vh] min-h-0 flex-col overflow-hidden sm:max-w-3xl"
+          data-application-entry-drop
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = loaded && !busy ? "copy" : "none";
+            }
+          }}
+          onDrop={(event) => {
+            void drop(event);
+          }}
+          showCloseButton={!operating.current}
+          onEscapeKeyDown={(event) => {
+            if (operating.current) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (operating.current) event.preventDefault();
+          }}
+        >
+          <DialogHeader className="shrink-0 pr-8">
+            <DialogTitle>{t("title")}</DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-1">
+            <DialogDescription>{t("description")}</DialogDescription>
+            {error && (
+              <Alert variant="destructive">
+                <AlertTitle>{t("error")}</AlertTitle>
+                <AlertDescription className="break-words">{error}</AlertDescription>
+              </Alert>
+            )}
+            <section
+              aria-label={t("dropTitle")}
+              className="space-y-2 rounded-lg border border-dashed border-border bg-muted/25 p-3"
             >
-              {t("add")}
-            </Button>
-            {!entries.length && loaded && <p className="text-muted-foreground">{t("empty")}</p>}
-            {entries.map((entry) => (
-              <Button
-                key={entry.id}
-                variant={entry.id === selectedId ? "secondary" : "ghost"}
-                className="justify-start truncate"
-                disabled={!!busy}
-                onClick={() => setSelectedId(entry.id)}
-              >
-                {entry.title}
-              </Button>
-            ))}
-          </div>
-          {selected && (
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="application-title">{t("name")}</FieldLabel>
-                <Input
-                  id="application-title"
-                  value={selected.title}
-                  maxLength={160}
-                  disabled={!!busy}
-                  onChange={(event) => update({ title: event.target.value })}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="application-path">{t("path")}</FieldLabel>
-                <div className="flex gap-2">
-                  <Input id="application-path" value={selected.path} readOnly />
+              <p className="text-sm font-medium">{t("dropTitle")}</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">{t("dropHelp")}</p>
+              <p className="text-xs text-muted-foreground">
+                {t("supportedKinds", {
+                  kinds: supportedKinds.map((kind) => t(`kinds.${kind}`)).join(" · "),
+                })}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={!!busy || !loaded || !canAddFile || entries.length >= 200}
+                  onClick={() => void run("add-file")}
+                >
+                  {t("addFile")}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!!busy || !loaded || !foldersSupported || entries.length >= 200}
+                  onClick={() => void run("add-directory")}
+                >
+                  {t("addDirectory")}
+                </Button>
+              </div>
+            </section>
+            <div className="grid min-w-0 gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+              <div className="flex min-w-0 flex-col gap-2">
+                {!entries.length && loaded && <p className="text-muted-foreground">{t("empty")}</p>}
+                {entries.map((entry) => (
                   <Button
-                    variant="outline"
+                    key={entry.id}
+                    variant={entry.id === selectedId ? "secondary" : "ghost"}
+                    className="h-auto min-h-8 min-w-0 justify-between gap-2 text-left"
+                    disabled={!!busy}
+                    onClick={() => setSelectedId(entry.id)}
+                  >
+                    <span className="min-w-0 truncate">{entry.title}</span>
+                    <Badge variant="outline" className="shrink-0">
+                      {t(`kinds.${entry.kind}`)}
+                    </Badge>
+                  </Button>
+                ))}
+              </div>
+              {selected && (
+                <FieldGroup className="min-w-0">
+                  <Field>
+                    <FieldLabel>{t("kind")}</FieldLabel>
+                    <p className="text-sm">{t(`kinds.${selected.kind}`)}</p>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="application-title">{t("name")}</FieldLabel>
+                    <Input
+                      id="application-title"
+                      value={selected.title}
+                      maxLength={160}
+                      disabled={!!busy}
+                      onChange={(event) => update({ title: event.target.value })}
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="application-path">{t("path")}</FieldLabel>
+                    <div className="space-y-2">
+                      <Input id="application-path" value={selected.path} readOnly />
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          disabled={!!busy || !canAddFile}
+                          onClick={() => {
+                            void run("path-file");
+                          }}
+                        >
+                          {t("chooseFile")}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={!!busy || !foldersSupported}
+                          onClick={() => void run("path-directory")}
+                        >
+                          {t("chooseDirectory")}
+                        </Button>
+                      </div>
+                    </div>
+                    <FieldDescription>{t("pathHelp")}</FieldDescription>
+                  </Field>
+                  {executable ? (
+                    <>
+                      <Field>
+                        <FieldLabel htmlFor="application-args">{t("arguments")}</FieldLabel>
+                        <Textarea
+                          id="application-args"
+                          rows={3}
+                          value={argumentsById[selected.id] ?? "[]"}
+                          disabled={!!busy}
+                          onChange={(event) => {
+                            setArgumentsById((current) => ({
+                              ...current,
+                              [selected.id]: event.target.value,
+                            }));
+                            setError(undefined);
+                          }}
+                        />
+                        <FieldDescription>{t("argumentsHelp")}</FieldDescription>
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="application-cwd">{t("directory")}</FieldLabel>
+                        <div className="space-y-2">
+                          <Input id="application-cwd" value={selected.cwd} readOnly />
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              variant="outline"
+                              disabled={!!busy}
+                              onClick={() => {
+                                void run("cwd");
+                              }}
+                            >
+                              {t("choose")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              disabled={!!busy || !selected.cwd}
+                              onClick={() => update({ cwd: "" })}
+                            >
+                              {t("clearDirectory")}
+                            </Button>
+                          </div>
+                        </div>
+                        <FieldDescription>{t("directoryHelp")}</FieldDescription>
+                      </Field>
+                    </>
+                  ) : (
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {t(
+                        selected.kind === "shortcut"
+                          ? "shortcutHelp"
+                          : selected.kind === "directory"
+                            ? "folderHelp"
+                            : "documentHelp",
+                      )}
+                    </p>
+                  )}
+                  <Button
+                    variant="destructive"
                     disabled={!!busy}
                     onClick={() => {
-                      void run("path");
+                      const remaining = entries.filter((entry) => entry.id !== selected.id);
+                      setEntries(remaining);
+                      setSelectedId(remaining[0]?.id);
+                      setArgumentsById((current) => {
+                        const next = { ...current };
+                        delete next[selected.id];
+                        return next;
+                      });
+                      setError(undefined);
                     }}
                   >
-                    {t("choose")}
+                    {t("remove")}
                   </Button>
-                </div>
-                <FieldDescription>{t("pathHelp")}</FieldDescription>
-              </Field>
-              {executable ? (
-                <>
-                  <Field>
-                    <FieldLabel htmlFor="application-args">{t("arguments")}</FieldLabel>
-                    <Textarea
-                      id="application-args"
-                      rows={3}
-                      value={argumentsById[selected.id] ?? "[]"}
-                      disabled={!!busy}
-                      onChange={(event) => {
-                        setArgumentsById((current) => ({
-                          ...current,
-                          [selected.id]: event.target.value,
-                        }));
-                        setError(undefined);
-                      }}
-                    />
-                    <FieldDescription>{t("argumentsHelp")}</FieldDescription>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="application-cwd">{t("directory")}</FieldLabel>
-                    <div className="flex gap-2">
-                      <Input
-                        id="application-cwd"
-                        value={selected.cwd}
-                        disabled={!!busy}
-                        onChange={(event) => update({ cwd: event.target.value })}
-                      />
-                      <Button
-                        variant="outline"
-                        disabled={!!busy}
-                        onClick={() => {
-                          void run("cwd");
-                        }}
-                      >
-                        {t("choose")}
-                      </Button>
-                    </div>
-                    <FieldDescription>{t("directoryHelp")}</FieldDescription>
-                  </Field>
-                </>
-              ) : (
-                <p className="text-muted-foreground">{t("shortcutHelp")}</p>
+                </FieldGroup>
               )}
-              <Button
-                variant="destructive"
-                disabled={!!busy}
-                onClick={() => {
-                  const remaining = entries.filter((entry) => entry.id !== selected.id);
-                  setEntries(remaining);
-                  setSelectedId(remaining[0]?.id);
-                }}
-              >
-                {t("remove")}
-              </Button>
-            </FieldGroup>
+            </div>
+          </div>
+          {busy && (
+            <p role="status">
+              {busy === "load" ? t("loading") : busy === "save" ? t("saving") : t("picking")}
+            </p>
           )}
-        </div>
-        {busy && (
-          <p role="status">
-            {busy === "load" ? t("loading") : busy === "save" ? t("saving") : t("picking")}
-          </p>
-        )}
-        <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={operating.current}
-            onClick={() => onOpenChange(false)}
-          >
-            {t("cancel")}
-          </Button>
-          <Button
-            disabled={!!busy || !loaded}
-            onClick={() => {
-              void run("save");
-            }}
-          >
-            {busy === "save" && <Spinner data-icon="inline-start" />}
-            {t("save")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <DialogFooter className="shrink-0 flex-row flex-wrap justify-end">
+            <Button
+              variant="outline"
+              disabled={operating.current}
+              onClick={() => {
+                if (embedded) discard();
+                else onOpenChange(false);
+              }}
+            >
+              {embedded ? t("discard", { defaultValue: "放弃更改" }) : t("cancel")}
+            </Button>
+            <Button
+              disabled={!!busy || !loaded}
+              onClick={() => {
+                void guard.save().catch(() => {});
+              }}
+            >
+              {busy === "save" && <Spinner data-icon="inline-start" />}
+              {t("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

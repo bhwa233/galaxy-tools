@@ -1,5 +1,11 @@
 import { invoke, listen } from "../../platform/desktop";
-import type { InstallPreview, PluginCommandArguments, PluginManagementState } from "./types";
+import type {
+  InstallPreview,
+  PackageTaskSnapshot,
+  PluginCommandArguments,
+  PluginManagementState,
+  PluginReleaseNotes,
+} from "./types";
 
 export function listPlugins(): Promise<PluginManagementState> {
   return invoke("plugins_list");
@@ -12,7 +18,7 @@ export function importPluginDirectory(): Promise<InstallPreview | undefined> {
 }
 export function prepareRegistryPlugin(
   input: PluginCommandArguments["plugins_prepare_registry"],
-): Promise<InstallPreview> {
+): Promise<InstallPreview | undefined> {
   return invoke("plugins_prepare_registry", input);
 }
 export function confirmPluginInstall(
@@ -45,12 +51,38 @@ export function uninstallPlugin(
 export function checkPluginUpdates(): Promise<PluginManagementState> {
   return invoke("plugins_check_updates");
 }
-export function preparePluginUpdate(pluginId: string): Promise<InstallPreview> {
+export function preparePluginUpdate(pluginId: string): Promise<InstallPreview | undefined> {
   return invoke("plugins_prepare_update", { pluginId });
 }
-export function prepareBundledPlugin(pluginId: string): Promise<InstallPreview> {
+export function prepareBundledPlugin(pluginId: string): Promise<InstallPreview | undefined> {
   return invoke("plugins_prepare_bundled", { pluginId });
 }
 export function watchPluginsChanged(callback: () => void): Promise<() => void> {
   return listen("plugins-changed", callback);
+}
+export function cancelPluginPackageTask(taskId: string): Promise<PackageTaskSnapshot> {
+  return invoke("plugins_cancel_package_task", { taskId });
+}
+export function getPluginReleaseNotes(pluginId: string): Promise<PluginReleaseNotes> {
+  return invoke("plugins_release_notes", { pluginId });
+}
+export function watchPluginPackageTasks(
+  callback: (snapshot: PackageTaskSnapshot) => void,
+): Promise<() => void> {
+  return listen<PackageTaskSnapshot>("plugin-package-task-changed", ({ payload }) =>
+    callback(payload),
+  );
+}
+
+export function getPluginSettings(
+  pluginId: string,
+): Promise<import("./settingsTypes").PluginSettingsSnapshot> {
+  return invoke("plugin_settings_get", { pluginId });
+}
+export function savePluginSettings(
+  pluginId: string,
+  revision: string,
+  patch: Record<string, unknown>,
+): Promise<import("./settingsTypes").PluginSettingsSnapshot> {
+  return invoke("plugin_settings_save", { pluginId, revision, patch });
 }

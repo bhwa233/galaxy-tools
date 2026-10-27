@@ -20,9 +20,16 @@ export interface PluginBackupServiceOptions {
   hostVersion: string;
   hostRoot: string;
   pluginRoot: string;
-  notesRoot: () => string;
+  /** Authorized plugin data domains, including retained/uninstalled plugins. */
+  externalDataRoots: () => Readonly<Record<string, string>>;
+  /** Compatibility aliases are product wiring, never business knowledge here. */
+  legacyMountAliases?: Readonly<Record<string, string>>;
+  /** Restore host-owned root pointers without interpreting a plugin's files. */
+  rewriteHostConfig?: (value: unknown, roots: Readonly<Record<string, string>>) => unknown;
   recoveryRoot: string;
   configFile?: string;
+  /** Persist exclusions and drain in-flight search before creating private copies. */
+  protectRoots?: (roots: readonly string[]) => Promise<void>;
   /** Fence new host/config/CLI/admin writes while allowing existing save acks. */
   pauseHost: () => Promise<() => void | Promise<void>>;
   /** Reload host/store/layout memory from the restored files, before restart. */
@@ -44,13 +51,13 @@ const mountSchema = z.strictObject({
   exists: z.boolean(),
 });
 const manifestSchema = z.strictObject({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   product: z.literal("com.spark233.desktop"),
   hostVersion: z.string().refine((value) => !!semver.valid(value)),
   platform: z.string(),
   arch: z.string(),
   createdAt: z.iso.datetime(),
-  mounts: z.array(mountSchema).min(3).max(256),
+  mounts: z.array(mountSchema).min(2).max(256),
   entries: z.array(entrySchema).max(200_000),
   manager: z.unknown(),
 });
@@ -64,27 +71,17 @@ interface Mount {
 interface VerifiedBackupInspection extends BackupInspection {
   manifestFingerprint: string;
 }
-interface RestoreTarget {
-  target: string;
-  stage: string;
-  previous: string;
-  failed: string;
-  existed: boolean;
-}
-interface RestoreJournal {
-  schemaVersion: 1;
-  id: string;
-  phase: "prepared" | "switching" | "applied" | "committed" | "rolled-back";
-  roots: { host: string; plugins: string; notes: string };
-  previous: PluginManagerSnapshot;
-  targets: RestoreTarget[];
-}
-const journalSchema = z.strictObject({
-  schemaVersion: z.literal(1),
+const pluginIdSchema = z
+  .string()
+  .max(80)
+  .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/);
+const externalRootsSchema = z
+  .record(pluginIdSchema, z.string())
+  .refine((roots) => Object.keys(roots).length <= 254, "Too many external plugin data roots");
+const journalBaseSchema = z.strictObject({
   id: z.uuid(),
   phase: z.enum(["prepared", "switching", "applied", "committed", "rolled-back"]),
   previous: z.unknown(),
-  roots: z.strictObject({ host: z.string(), plugins: z.string(), notes: z.string() }),
   targets: z
     .array(
       z.strictObject({
@@ -98,6 +95,39 @@ const journalSchema = z.strictObject({
     .min(1)
     .max(256),
 });
+const journalSchema = z.discriminatedUnion("schemaVersion", [
+  journalBaseSchema.extend({
+    schemaVersion: z.literal(1),
+    roots: z.record(z.string(), z.string()).refine((value) => !!value.host && !!value.plugins),
+  }),
+  journalBaseSchema.extend({
+    schemaVersion: z.literal(2),
+    roots: z.strictObject({
+      host: z.string(),
+      plugins: z.string(),
+      externalData: externalRootsSchema,
+    }),
+  }),
+]);
+type RestoreJournal = Omit<z.infer<typeof journalSchema>, "previous"> & {
+  previous: PluginManagerSnapshot;
+};
+
+function journalDataRoots(
+  journal: z.infer<typeof journalSchema>,
+  aliases: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  if (journal.schemaVersion === 2) return externalRootsSchema.parse(journal.roots.externalData);
+  const roots: Record<string, string> = {};
+  for (const [mount, root] of Object.entries(journal.roots)) {
+    if (mount === "host" || mount === "plugins") continue;
+    const pluginId = aliases[mount];
+    if (!pluginId || Object.hasOwn(roots, pluginId))
+      throw new AppError("invalidBackup", "旧恢复日志缺少已授权的数据域别名或存在重复身份");
+    roots[pluginIdSchema.parse(pluginId)] = root;
+  }
+  return roots;
+}
 
 function checkedRoot(root: string, missing = false): string {
   if (!path.isAbsolute(root) || path.resolve(root) === path.parse(root).root)
@@ -126,13 +156,16 @@ export interface PendingBackupRootsOptions {
   hostRoot: string;
   pluginRoot: string;
   recoveryRoot: string;
-  /** The known default or explicitly configured environment path, used only
-   * when no host config had ever been persisted before the interrupted swap. */
-  defaultNotesRoot: string;
+  defaultDataRoots: Readonly<Record<string, string>>;
+  /** Host adapter validates its own configuration format and pointer fields. */
+  readHostDataRoots: (hostDirectory: string) => Readonly<Record<string, string>>;
+  legacyMountAliases?: Readonly<Record<string, string>>;
 }
 /** Read before constructing host preferences: a power loss can leave their
  * directory temporarily at its recorded sibling. This does not move any data. */
-export function readPendingBackupNotesRoot(options: PendingBackupRootsOptions): string | undefined {
+export function readPendingBackupDataRoots(
+  options: PendingBackupRootsOptions,
+): Record<string, string> | undefined {
   const root = checkedRoot(options.recoveryRoot, true);
   const active = confined(root, "active.json");
   if (!fs.existsSync(active)) return;
@@ -144,10 +177,20 @@ export function readPendingBackupNotesRoot(options: PendingBackupRootsOptions): 
     checkedRoot(journal.roots.plugins, true) !== checkedRoot(options.pluginRoot, true)
   )
     throw new AppError("unsafeBackupPath", "恢复日志与当前宿主目录不匹配");
-  const notes = checkedRoot(journal.roots.notes, true);
-  for (const other of [root, options.hostRoot, options.pluginRoot])
-    if (inside(canonical(other), notes) || inside(notes, canonical(other)))
-      throw new AppError("unsafeBackupPath", "恢复便签目录与宿主范围重叠");
+  const roots = journalDataRoots(journal, options.legacyMountAliases);
+  const checkedDataRoots = Object.values(roots).map((value) => checkedRoot(value, true));
+  for (const [index, checked] of checkedDataRoots.entries()) {
+    if (
+      checkedDataRoots.some(
+        (other, otherIndex) =>
+          otherIndex !== index && (inside(other, checked) || inside(checked, other)),
+      )
+    )
+      throw new AppError("unsafeBackupPath", "恢复插件数据域不能相互包含");
+    for (const other of [root, options.hostRoot, options.pluginRoot])
+      if (inside(canonical(other), checked) || inside(checked, canonical(other)))
+        throw new AppError("unsafeBackupPath", "恢复插件数据目录与宿主范围重叠");
+  }
   const index = journal.targets.findIndex(
     (target) => canonical(target.target) === canonical(options.hostRoot),
   );
@@ -160,17 +203,26 @@ export function readPendingBackupNotesRoot(options: PendingBackupRootsOptions): 
     target.failed !== `${base}-failed`
   )
     throw new AppError("unsafeBackupPath", "宿主恢复目录名称不匹配");
+  const candidates: Readonly<Record<string, string>>[] = [];
   for (const directory of [target.previous, target.target, target.stage]) {
     checkedRoot(directory, true);
-    const file = confined(directory, "config.json");
-    if (!fs.existsSync(file)) continue;
-    if (fs.lstatSync(file).isSymbolicLink() || fs.statSync(file).size > 1024 * 1024)
-      throw new AppError("unsafeBackupPath", "恢复配置文件不合法");
-    const config = z.object({ dataDir: z.string() }).passthrough().parse(readJson(file));
-    if (path.isAbsolute(config.dataDir) && canonical(config.dataDir) === notes) return notes;
+    candidates.push(options.readHostDataRoots(directory));
   }
-  if (checkedRoot(options.defaultNotesRoot, true) === notes) return notes;
-  throw new AppError("invalidBackup", "恢复日志中的便签目录缺少匹配的宿主配置");
+  for (const [pluginId, dataRoot] of Object.entries(roots)) {
+    const checked = checkedRoot(dataRoot, true);
+    const configured = candidates.filter((candidate) => Object.hasOwn(candidate, pluginId));
+    // A known default is authority only when no persisted host configuration
+    // candidate carries a pointer for this domain.
+    const authorizedCandidates = configured.length ? configured : [options.defaultDataRoots];
+    if (
+      !authorizedCandidates.some((candidate) => {
+        const authorized = Object.hasOwn(candidate, pluginId) ? candidate[pluginId] : undefined;
+        return authorized && checkedRoot(authorized, true) === checked;
+      })
+    )
+      throw new AppError("invalidBackup", "恢复日志中的插件数据目录缺少匹配的宿主配置");
+  }
+  return roots;
 }
 
 /** Reuses manager save/release ownership, standard directory copies and SHA-256.
@@ -182,7 +234,7 @@ export class PluginBackupService {
       options.hostRoot,
       options.pluginRoot,
       options.recoveryRoot,
-      options.notesRoot(),
+      ...Object.values(options.externalDataRoots()),
     ])
       this.safeRoot(root, true);
     this.disjoint(
@@ -235,7 +287,12 @@ export class PluginBackupService {
     const initial = [
       { id: "host", root: this.safeRoot(this.options.hostRoot, true) },
       { id: "plugins", root: this.safeRoot(this.options.pluginRoot, true) },
-      { id: "notes", root: this.safeRoot(this.options.notesRoot(), true) },
+      ...Object.entries(externalRootsSchema.parse(this.options.externalDataRoots())).map(
+        ([pluginId, root]) => ({
+          id: `plugin-data-${pluginId}`,
+          root: this.safeRoot(root, true),
+        }),
+      ),
     ];
     for (let left = 0; left < initial.length; left++)
       for (let right = left + 1; right < initial.length; right++) {
@@ -243,15 +300,18 @@ export class PluginBackupService {
           inside(initial[left].root, initial[right].root) ||
           inside(initial[right].root, initial[left].root)
         )
-          throw new AppError("unsafeBackupPath", "宿主、插件与便签必须使用互不包含的独立目录");
+          throw new AppError(
+            "unsafeBackupPath",
+            "宿主、插件与外置数据域必须使用互不包含的独立目录",
+          );
       }
     for (const record of records) {
       const root = this.safeRoot(this.options.manager.dataDirectory(record.pluginId), true);
-      if (!initial.some((item) => inside(item.root, root))) {
-        if (initial.some((item) => inside(root, item.root)))
-          throw new AppError("unsafeBackupPath", "插件外置数据不能包含其他应用目录");
-        initial.push({ id: `plugin-data-${record.pluginId}`, root });
-      }
+      if (
+        !inside(canonical(this.options.pluginRoot), root) &&
+        !initial.some((item) => item.id === `plugin-data-${record.pluginId}` && item.root === root)
+      )
+        throw new AppError("invalidBackupLayout", "插件外置数据根必须由宿主登记后才能备份恢复");
     }
     const layout = this.options.manager.getBackupLayout();
     for (const file of [layout.stateFile, layout.packages.versionsRoot, layout.dataRoot])
@@ -273,18 +333,17 @@ export class PluginBackupService {
   private targetFor(id: string, manifest: Manifest): string {
     if (id === "host") return this.safeRoot(this.options.hostRoot, true);
     if (id === "plugins") return this.safeRoot(this.options.pluginRoot, true);
-    if (id === "notes") return this.safeRoot(this.options.notesRoot(), true);
-    const pluginId = id.replace(/^plugin-data-/, "");
-    const previous = z
-      .object({ plugins: z.array(z.object({ pluginId: z.string() })) })
-      .parse(manifest.manager);
-    if (
-      !id.startsWith("plugin-data-") ||
-      !previous.plugins.some((record) => record.pluginId === pluginId)
-    )
-      throw new AppError("invalidBackup", "备份的数据挂载身份不合法");
-    return this.safeRoot(this.options.manager.dataDirectory(pluginId), true);
+    const alias = manifest.schemaVersion === 1 ? this.options.legacyMountAliases?.[id] : undefined;
+    const pluginId = alias ?? id.replace(/^plugin-data-/, "");
+    const externalRoots = this.options.externalDataRoots();
+    const externalRoot = Object.hasOwn(externalRoots, pluginId)
+      ? externalRoots[pluginId]
+      : undefined;
+    if ((alias || id === `plugin-data-${pluginId}`) && externalRoot)
+      return this.safeRoot(externalRoot, true);
+    throw new AppError("invalidBackup", "备份的数据挂载身份未绑定当前授权的插件外置目录");
   }
+
   private async hash(file: string): Promise<string> {
     const digest = createHash("sha256");
     for await (const chunk of fs.createReadStream(file)) digest.update(chunk);
@@ -347,16 +406,29 @@ export class PluginBackupService {
     if (semver.gt(manifest.hostVersion, this.options.hostVersion))
       throw new AppError("incompatibleBackup", "备份由较新版本创建，请先升级 spark233");
     const ids = new Set(manifest.mounts.map((mount) => mount.id));
-    if (
-      ids.size !== manifest.mounts.length ||
-      !["host", "plugins", "notes"].every((id) => ids.has(id))
-    )
+    if (ids.size !== manifest.mounts.length || !["host", "plugins"].every((id) => ids.has(id)))
       throw new AppError("invalidBackup", "备份挂载重复或不完整");
     const previous = z
       .object({ plugins: z.array(z.object({ pluginId: z.string() })) })
       .parse(manifest.manager);
-    const expectedMounts = this.mounts(previous.plugins);
-    if (ids.size !== expectedMounts.length || expectedMounts.some((mount) => !ids.has(mount.id)))
+    const aliases = this.options.legacyMountAliases ?? {};
+    const logicalIds = new Set(
+      manifest.mounts.map((mount) =>
+        manifest.schemaVersion === 1 && aliases[mount.id]
+          ? `plugin-data-${aliases[mount.id]}`
+          : mount.id,
+      ),
+    );
+    if (logicalIds.size !== ids.size) throw new AppError("invalidBackup", "备份包含重复插件数据域");
+    const expectedMounts = this.mounts(previous.plugins).filter((mount) => {
+      if (!mount.id.startsWith("plugin-data-")) return true;
+      const pluginId = mount.id.slice("plugin-data-".length);
+      return (
+        previous.plugins.some((record) => record.pluginId === pluginId) ||
+        (manifest.schemaVersion === 1 && Object.values(aliases).includes(pluginId))
+      );
+    });
+    if (expectedMounts.some((mount) => !logicalIds.has(mount.id)))
       throw new AppError("invalidBackup", "备份挂载与插件数据范围不一致");
     for (const mount of manifest.mounts) {
       if (!path.isAbsolute(mount.originalPath))
@@ -413,6 +485,7 @@ export class PluginBackupService {
   async inspect(directory: string): Promise<VerifiedBackupInspection> {
     const root = this.safeRoot(directory);
     const manifest = this.readManifest(root);
+    await this.options.protectRoots?.([root]);
     const inspection = await this.inspectManifest(root, manifest);
     return {
       ...inspection,
@@ -502,6 +575,7 @@ export class PluginBackupService {
             mounts.map((mount) => mount.root),
           );
           const entries: Entry[] = [];
+          await this.options.protectRoots?.([snapshot]);
           await fsp.mkdir(path.join(snapshot, "files"), { recursive: true });
           try {
             for (const mount of mounts)
@@ -514,7 +588,7 @@ export class PluginBackupService {
                   entries,
                 );
             const manifest: Manifest = {
-              schemaVersion: 1,
+              schemaVersion: 2,
               product: "com.spark233.desktop",
               hostVersion: this.options.hostVersion,
               platform: process.platform,
@@ -634,6 +708,7 @@ export class PluginBackupService {
       // live workspace. Validation and staging use this same manifest object.
       if (manifestFingerprint !== expectedManifestFingerprint)
         throw new AppError("backupSelectionChanged", "备份在预览后发生变化，请重新选择并验证备份");
+      await this.options.protectRoots?.([root]);
       const inspection = await this.inspectManifest(root, manifest);
       const id = randomUUID();
       const warnings: string[] = [];
@@ -674,17 +749,34 @@ export class PluginBackupService {
             };
           });
           journal = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             id,
             phase: "prepared",
             roots: {
               host: canonical(this.options.hostRoot),
               plugins: canonical(this.options.pluginRoot),
-              notes: canonical(this.options.notesRoot()),
+              externalData: Object.fromEntries(
+                mounts
+                  .filter((mount) => mount.id !== "host" && mount.id !== "plugins")
+                  .map((mount) => [
+                    (manifest.schemaVersion === 1
+                      ? this.options.legacyMountAliases?.[mount.id]
+                      : undefined) ?? mount.id.slice("plugin-data-".length),
+                    canonical(mount.target),
+                  ]),
+              ),
             },
             previous: access.snapshot(),
             targets,
           };
+          await this.options.protectRoots?.(
+            targets.flatMap((target) => [
+              target.target,
+              target.stage,
+              target.previous,
+              target.failed,
+            ]),
+          );
           this.persistJournal(journal);
           const stagedPath = (target: string) => {
             const owner = targets.find((item) => inside(item.target, target));
@@ -717,14 +809,11 @@ export class PluginBackupService {
             for (const file of [configFile, path.join(this.options.pluginRoot, "previews.json")]) {
               const staged = stagedPath(file);
               if (fs.existsSync(staged)) {
-                const value = this.remapKnownJson(readJson(staged), manifest);
-                if (
-                  file === configFile &&
-                  value &&
-                  typeof value === "object" &&
-                  !Array.isArray(value)
-                )
-                  (value as Record<string, unknown>).dataDir = this.options.notesRoot();
+                const remapped = this.remapKnownJson(readJson(staged), manifest);
+                const value =
+                  file === configFile && this.options.rewriteHostConfig
+                    ? this.options.rewriteHostConfig(remapped, this.options.externalDataRoots())
+                    : remapped;
                 atomicWrite(staged, JSON.stringify(value, null, 2));
               }
             }
@@ -794,17 +883,32 @@ export class PluginBackupService {
       if (parsed.id !== id) throw new AppError("invalidBackup", "恢复日志身份不一致");
       if (
         canonical(parsed.roots.host) !== canonical(this.options.hostRoot) ||
-        canonical(parsed.roots.plugins) !== canonical(this.options.pluginRoot) ||
-        canonical(parsed.roots.notes) !== canonical(this.options.notesRoot())
+        canonical(parsed.roots.plugins) !== canonical(this.options.pluginRoot)
       )
         throw new AppError("unsafeBackupPath", "恢复日志与当前业务目录不匹配");
+      const recordedDataRoots = journalDataRoots(parsed, this.options.legacyMountAliases);
+      const currentDataRoots = this.options.externalDataRoots();
+      for (const [pluginId, root] of Object.entries(recordedDataRoots))
+        if (
+          !currentDataRoots[pluginId] ||
+          canonical(root) !== canonical(currentDataRoots[pluginId])
+        )
+          throw new AppError("unsafeBackupPath", "恢复日志的插件数据域不在当前授权位置");
       const previous = z
         .object({
           schemaVersion: z.literal(1),
           plugins: z.array(z.object({ pluginId: z.string() }).passthrough()),
         })
         .parse(parsed.previous);
-      const allowed = this.mounts(previous.plugins).map((mount) => mount.root);
+      const allowed = this.mounts(previous.plugins)
+        .filter(
+          (mount) =>
+            !mount.id.startsWith("plugin-data-") ||
+            recordedDataRoots[mount.id.slice("plugin-data-".length)] ||
+            (parsed.schemaVersion === 1 &&
+              previous.plugins.some((record) => `plugin-data-${record.pluginId}` === mount.id)),
+        )
+        .map((mount) => mount.root);
       if (
         parsed.targets.length !== allowed.length ||
         new Set(parsed.targets.map((target) => canonical(target.target))).size !== allowed.length
@@ -826,6 +930,14 @@ export class PluginBackupService {
       const warnings: string[] = [];
       const resumeHost = await this.options.pauseHost();
       try {
+        await this.options.protectRoots?.(
+          journal.targets.flatMap((target) => [
+            target.target,
+            target.stage,
+            target.previous,
+            target.failed,
+          ]),
+        );
         if (journal.phase === "committed" || journal.phase === "rolled-back")
           await this.archivePrevious(journal, warnings);
         else

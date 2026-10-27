@@ -5,15 +5,27 @@ import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import { PluginManagementDialog } from "../features/plugins/PluginManagementDialog";
 import { ApplicationsDialog } from "../features/applications/ApplicationsDialog";
+import { DiagnosticsDialog } from "../features/diagnostics/DiagnosticsDialog";
+import {
+  getContextPanelStatus,
+  openContextPanel,
+  retryContextPanel,
+  watchContextPanelStatus,
+} from "../features/context-panel/api";
+import type { ContextPanelStatus } from "../features/context-panel/types";
 import { Button } from "./ui/button";
-import { Field, FieldGroup, FieldLabel } from "./ui/field";
-import type { PluginManagementState } from "../features/plugins/types";
+import { Checkbox } from "./ui/checkbox";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "./ui/field";
+import { Textarea } from "./ui/textarea";
 import type {
   AppConfig,
+  AppConfigPatch,
   BackgroundFit,
   ImageDisplayMode,
   McpPermission,
   ThemeOption,
+  SuperPanelButton,
+  SuperPanelTrigger,
   TileColorMode,
   ViewMode,
 } from "../features/settings/types";
@@ -33,10 +45,11 @@ const HARMONY_FONT_LICENSE_URL = new URL("../assets/fonts/LICENSE_Fonts", import
 
 interface SettingsPanelProps {
   config: AppConfig;
-  onChange: (config: AppConfig) => void;
+  onChange: (patch: AppConfigPatch) => void;
   onMigrateDataDir: () => void;
   onClose: () => void;
   initialGroup?: "app" | "notes";
+  presentation?: "panel" | "content";
 }
 
 export function SettingsPanel({
@@ -45,6 +58,7 @@ export function SettingsPanel({
   onMigrateDataDir,
   onClose,
   initialGroup = "app",
+  presentation = "panel",
 }: SettingsPanelProps) {
   const { t } = useTranslation();
   const { t: applicationsText } = useTranslation("applications");
@@ -59,28 +73,80 @@ export function SettingsPanel({
   const [mcpCopied, setMcpCopied] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [applicationsOpen, setApplicationsOpen] = useState(false);
-  const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; title: string }>>([]);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [superPanelStatus, setSuperPanelStatus] = useState<ContextPanelStatus>();
+  const [superPanelBusy, setSuperPanelBusy] = useState(false);
+  const [superPanelError, setSuperPanelError] = useState(false);
+  const superPanelLive = useRef(false);
+  const superPanelEvents = useRef(0);
+  const superPanelOperating = useRef(false);
+  const savedExcludedApps = (config.superPanelExcludedApps ?? []).join("\n");
+  const [excludedAppsDraft, setExcludedAppsDraft] = useState(savedExcludedApps);
   useEffect(() => {
+    setExcludedAppsDraft(savedExcludedApps);
+  }, [savedExcludedApps]);
+  useEffect(() => {
+    superPanelLive.current = true;
     let disposed = false;
-    void invoke<PluginManagementState>("plugins_list")
-      .then((state) => {
-        if (!disposed)
-          setPluginCommands(
-            state.plugins.flatMap((plugin) =>
-              plugin.commands.map((command) => ({
-                id: `${plugin.pluginId}:${command.id}`,
-                title: `${plugin.displayName} · ${command.title}`,
-              })),
-            ),
-          );
+    let stop: (() => void) | undefined;
+    void watchContextPanelStatus((status) => {
+      if (disposed) return;
+      superPanelEvents.current++;
+      setSuperPanelStatus(status);
+      setSuperPanelError(false);
+    })
+      .then(async (unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        stop = unlisten;
+        const revision = superPanelEvents.current;
+        const status = await getContextPanelStatus();
+        if (!disposed && revision === superPanelEvents.current) setSuperPanelStatus(status);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!disposed) setSuperPanelError(true);
+      });
     return () => {
       disposed = true;
+      superPanelLive.current = false;
+      stop?.();
     };
   }, []);
-  const setConfigValue = <Key extends keyof AppConfig>(key: Key, value: AppConfig[Key]) => {
-    onChange({ ...config, [key]: value });
+  const superPanelAction = async (action: "retry" | "preview") => {
+    if (superPanelOperating.current) return;
+    superPanelOperating.current = true;
+    const revision = superPanelEvents.current;
+    setSuperPanelBusy(true);
+    setSuperPanelError(false);
+    try {
+      if (action === "preview") await openContextPanel();
+      else {
+        const status = await retryContextPanel();
+        if (superPanelLive.current && revision === superPanelEvents.current)
+          setSuperPanelStatus(status);
+      }
+    } catch {
+      if (superPanelLive.current) setSuperPanelError(true);
+    } finally {
+      superPanelOperating.current = false;
+      if (superPanelLive.current) setSuperPanelBusy(false);
+    }
+  };
+  const excludedApps = [
+    ...new Set(
+      excludedAppsDraft
+        .split(/\r?\n/)
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  const invalidExcludedApps =
+    excludedApps.length > 64 ||
+    excludedApps.some((value) => value.length > 260 || !/^[^<>:"/\\|?*\p{Cc}]+\.exe$/u.test(value));
+  const setConfigValue = <Key extends keyof AppConfigPatch>(key: Key, value: AppConfig[Key]) => {
+    onChange({ [key]: value });
   };
   const copyMcpConfig = async () => {
     try {
@@ -167,53 +233,220 @@ export function SettingsPanel({
   );
 
   return (
-    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
-      <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/25">
-        <h2 className="text-[13px] font-display font-medium text-ink-soft">
-          {t("settings.panelTitle", { defaultValue: "设置" })}
-        </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer"
-          title={t("settings.closeTitle", { defaultValue: "关闭设置" })}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
+    <aside className="w-full min-w-0 h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
+      {presentation === "panel" && (
+        <div className="flex shrink-0 items-center justify-between h-11 px-4 border-b border-paper-deep/25">
+          <h2 className="text-[13px] font-display font-medium text-ink-soft">
+            {t("settings.panelTitle", { defaultValue: "设置" })}
+          </h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            aria-label={t("settings.closeTitle", { defaultValue: "关闭设置" })}
+            title={t("settings.closeTitle", { defaultValue: "关闭设置" })}
           >
-            <path d="M2 2l8 8M10 2l-8 8" />
-          </svg>
-        </button>
-      </div>
+            <svg
+              aria-hidden="true"
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            >
+              <path d="M2 2l8 8M10 2l-8 8" />
+            </svg>
+          </Button>
+        </div>
+      )}
 
-      <div
-        role="group"
-        aria-label={t("settings.groups.label")}
-        className="shrink-0 border-b border-paper-deep/25 px-4 py-3"
-      >
-        <SlidingButtonGroup options={groupOptions} value={group} onChange={setGroup} />
-      </div>
+      {presentation === "panel" && (
+        <div
+          role="group"
+          aria-label={t("settings.groups.label")}
+          className="shrink-0 border-b border-paper-deep/25 px-4 py-3"
+        >
+          <SlidingButtonGroup options={groupOptions} value={group} onChange={setGroup} />
+        </div>
+      )}
       <div
         key={group}
         role="region"
         aria-label={t(group === "app" ? "settings.groups.app" : "settings.groups.notes")}
-        className="flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5"
       >
         {group === "app" ? (
           <>
-            <section className="flex flex-col gap-2">
-              <Button variant="outline" onClick={() => setPluginsOpen(true)}>
-                {t("plugins.title", { defaultValue: "插件管理" })}
-              </Button>
-              <Button variant="outline" onClick={() => setApplicationsOpen(true)}>
-                {applicationsText("title")}
-              </Button>
+            {presentation === "panel" && (
+              <section className="flex flex-col gap-2">
+                <Button variant="outline" onClick={() => setPluginsOpen(true)}>
+                  {t("plugins.title", { defaultValue: "插件管理" })}
+                </Button>
+                <Button variant="outline" onClick={() => setApplicationsOpen(true)}>
+                  {applicationsText("title")}
+                </Button>
+                <Button variant="outline" onClick={() => setDiagnosticsOpen(true)}>
+                  {t("diagnostics.title")}
+                </Button>
+              </section>
+            )}
+
+            <section
+              className="space-y-3 rounded-lg border border-paper-deep/30 p-3"
+              aria-labelledby="super-panel-settings-title"
+            >
+              <h3 id="super-panel-settings-title" className="text-sm font-medium">
+                {t("contextPanel.settings.title")}
+              </h3>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="super-panel-enabled"
+                  checked={config.superPanelEnabled ?? false}
+                  onCheckedChange={(checked) =>
+                    setConfigValue("superPanelEnabled", checked === true)
+                  }
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="super-panel-enabled">
+                    {t("contextPanel.settings.enable")}
+                  </FieldLabel>
+                  <FieldDescription>{t("contextPanel.settings.observeOnly")}</FieldDescription>
+                </FieldContent>
+              </Field>
+              <p role="status" className="text-xs text-muted-foreground">
+                {superPanelStatus
+                  ? t(
+                      superPanelStatus.supported
+                        ? `contextPanel.service.${superPanelStatus.phase}`
+                        : "contextPanel.service.unsupported",
+                    )
+                  : t("contextPanel.service.loading")}
+              </p>
+              <FieldGroup className="gap-3">
+                <Field>
+                  <FieldLabel>{t("contextPanel.settings.button")}</FieldLabel>
+                  <div role="group" aria-label={t("contextPanel.settings.button")}>
+                    <SlidingButtonGroup<SuperPanelButton>
+                      options={[
+                        { value: "middle", label: t("contextPanel.button.middle") },
+                        { value: "x1", label: t("contextPanel.button.x1") },
+                        { value: "x2", label: t("contextPanel.button.x2") },
+                      ]}
+                      value={config.superPanelButton ?? "middle"}
+                      onChange={(value) => setConfigValue("superPanelButton", value)}
+                      buttonClassName="min-h-7 px-1 py-1"
+                    />
+                  </div>
+                </Field>
+                <Field>
+                  <FieldLabel>{t("contextPanel.settings.trigger")}</FieldLabel>
+                  <div role="group" aria-label={t("contextPanel.settings.trigger")}>
+                    <SlidingButtonGroup<SuperPanelTrigger>
+                      options={[
+                        { value: "click", label: t("contextPanel.trigger.click") },
+                        { value: "hold", label: t("contextPanel.trigger.hold") },
+                      ]}
+                      value={config.superPanelTrigger ?? "hold"}
+                      onChange={(value) => setConfigValue("superPanelTrigger", value)}
+                    />
+                  </div>
+                </Field>
+                {(config.superPanelTrigger ?? "hold") === "hold" && (
+                  <RangeRow
+                    label={t("contextPanel.settings.holdDuration")}
+                    value={config.superPanelHoldMs ?? 500}
+                    min={200}
+                    max={1500}
+                    step={50}
+                    format={(value) => t("contextPanel.settings.milliseconds", { value })}
+                    onChange={(value) => setConfigValue("superPanelHoldMs", value)}
+                  />
+                )}
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="super-panel-copy"
+                    checked={config.superPanelCopyFallback ?? false}
+                    onCheckedChange={(checked) =>
+                      setConfigValue("superPanelCopyFallback", checked === true)
+                    }
+                  />
+                  <FieldContent>
+                    <FieldLabel htmlFor="super-panel-copy">
+                      {t("contextPanel.settings.copyFallback")}
+                    </FieldLabel>
+                    <FieldDescription>{t("contextPanel.settings.copyHint")}</FieldDescription>
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="super-panel-excluded">
+                    {t("contextPanel.settings.excludedApps")}
+                  </FieldLabel>
+                  <Textarea
+                    id="super-panel-excluded"
+                    value={excludedAppsDraft}
+                    onChange={(event) => setExcludedAppsDraft(event.target.value)}
+                    maxLength={16704}
+                    rows={3}
+                    className="max-h-40 resize-y"
+                    placeholder="example.exe"
+                    aria-describedby="super-panel-excluded-hint"
+                    aria-invalid={invalidExcludedApps}
+                  />
+                  <FieldDescription id="super-panel-excluded-hint">
+                    {t("contextPanel.settings.excludedHint")}
+                  </FieldDescription>
+                  {invalidExcludedApps && (
+                    <p role="alert" className="text-xs text-destructive">
+                      {t("contextPanel.settings.excludedInvalid")}
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      invalidExcludedApps ||
+                      JSON.stringify(excludedApps) ===
+                        JSON.stringify(config.superPanelExcludedApps ?? [])
+                    }
+                    onClick={() => setConfigValue("superPanelExcludedApps", excludedApps)}
+                  >
+                    {t("contextPanel.settings.saveExclusions")}
+                  </Button>
+                </Field>
+              </FieldGroup>
+              {superPanelError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {t("contextPanel.settings.operationFailed")}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={superPanelBusy || superPanelStatus?.phase === "starting"}
+                  onClick={() => {
+                    void superPanelAction("retry");
+                  }}
+                >
+                  {t("contextPanel.settings.retry")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={superPanelBusy}
+                  onClick={() => {
+                    void superPanelAction("preview");
+                  }}
+                >
+                  {t("contextPanel.settings.preview")}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t("contextPanel.settings.previewHint")}
+              </p>
             </section>
 
             <section className="space-y-2">
@@ -261,54 +494,70 @@ export function SettingsPanel({
                   {t("settings.launcherShortcut", { defaultValue: "启动器快捷键" })}
                 </label>
                 <ShortcutRecorder
+                  label={t("settings.launcherShortcut")}
                   value={config.globalShortcut}
                   onChange={(v) => setConfigValue("globalShortcut", v)}
                 />
               </div>
-              {pluginCommands.length > 0 && (
-                <FieldGroup>
-                  {pluginCommands.map((command) => (
-                    <Field key={command.id}>
-                      <FieldLabel>{command.title}</FieldLabel>
-                      <ShortcutRecorder
-                        value={config.commandShortcuts?.[command.id] ?? ""}
-                        onChange={(value) =>
-                          setConfigValue("commandShortcuts", {
-                            ...config.commandShortcuts,
-                            [command.id]: value,
-                          })
-                        }
-                      />
-                    </Field>
-                  ))}
-                </FieldGroup>
-              )}
             </section>
 
+            <section className="space-y-2">
+              <label className="block text-[11px] font-body text-ink-faint">
+                {t("settings.mcp.label", { defaultValue: "AI 接口（MCP）" })}
+              </label>
+              <ToggleRow
+                label={t("settings.mcp.enable", {
+                  defaultValue: "启用 MCP 服务（--mcp 供 AI 客户端接入）",
+                })}
+                checked={config.mcpEnabled ?? false}
+                onChange={(checked) => setConfigValue("mcpEnabled", checked)}
+              />
+              {config.mcpEnabled && (
+                <>
+                  <SlidingButtonGroup
+                    options={mcpPermissions}
+                    value={config.mcpPermission ?? "read"}
+                    onChange={(value: McpPermission) => setConfigValue("mcpPermission", value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void copyMcpConfig()}
+                    className="w-full h-8 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                  >
+                    {mcpCopied
+                      ? t("settings.mcp.copyDone", { defaultValue: "已复制" })
+                      : t("settings.mcp.copy", { defaultValue: "复制客户端配置" })}
+                  </button>
+                </>
+              )}
+            </section>
             <UpdateSettingsSection mode="settingsOnly" />
           </>
         ) : (
           <>
-            <section className="space-y-2">
-              <label className="block text-[11px] font-body text-ink-faint">
-                {t("settings.dataDir", { defaultValue: "数据目录" })}
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={config.dataDir}
-                  readOnly
-                  className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-faint truncate"
-                />
-                <button
-                  type="button"
-                  onClick={onMigrateDataDir}
-                  className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
-                >
-                  {t("settings.selectFolder", { defaultValue: "选择文件夹" })}
-                </button>
-              </div>
-            </section>
+            {presentation === "panel" && (
+              <section className="space-y-2">
+                <label className="block text-[11px] font-body text-ink-faint">
+                  {t("settings.dataDir", { defaultValue: "数据目录" })}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    aria-label={t("settings.dataDir")}
+                    value={config.dataDir}
+                    readOnly
+                    className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-faint truncate"
+                  />
+                  <button
+                    type="button"
+                    onClick={onMigrateDataDir}
+                    className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
+                  >
+                    {t("settings.selectFolder", { defaultValue: "选择文件夹" })}
+                  </button>
+                </div>
+              </section>
+            )}
 
             <section className="space-y-2">
               <ToggleRow
@@ -377,37 +626,6 @@ export function SettingsPanel({
             </section>
 
             <section className="space-y-2">
-              <label className="block text-[11px] font-body text-ink-faint">
-                {t("settings.mcp.label", { defaultValue: "AI 接口（MCP）" })}
-              </label>
-              <ToggleRow
-                label={t("settings.mcp.enable", {
-                  defaultValue: "启用 MCP 服务（--mcp 供 AI 客户端接入）",
-                })}
-                checked={config.mcpEnabled ?? false}
-                onChange={(checked) => setConfigValue("mcpEnabled", checked)}
-              />
-              {config.mcpEnabled && (
-                <>
-                  <SlidingButtonGroup
-                    options={mcpPermissions}
-                    value={config.mcpPermission ?? "read"}
-                    onChange={(value: McpPermission) => setConfigValue("mcpPermission", value)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void copyMcpConfig()}
-                    className="w-full h-8 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
-                  >
-                    {mcpCopied
-                      ? t("settings.mcp.copyDone", { defaultValue: "已复制" })
-                      : t("settings.mcp.copy", { defaultValue: "复制客户端配置" })}
-                  </button>
-                </>
-              )}
-            </section>
-
-            <section className="space-y-2">
               <ToggleRow
                 label={t("settings.tileCtrlClose", { defaultValue: "Ctrl+右键快速关闭磁贴" })}
                 checked={config.tileCtrlClose}
@@ -423,6 +641,7 @@ export function SettingsPanel({
                   {t("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" })}
                 </label>
                 <ShortcutRecorder
+                  label={t("settings.visibilityShortcut")}
                   value={config.toggleVisibilityShortcut}
                   onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
                 />
@@ -436,6 +655,7 @@ export function SettingsPanel({
               <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
                 <input
                   type="range"
+                  aria-label={t("settings.fontSize.editor")}
                   min={8}
                   max={30}
                   step={1}
@@ -456,6 +676,7 @@ export function SettingsPanel({
               <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
                 <input
                   type="range"
+                  aria-label={t("settings.fontSize.surface")}
                   min={8}
                   max={30}
                   step={1}
@@ -478,6 +699,7 @@ export function SettingsPanel({
               <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
                 <input
                   type="range"
+                  aria-label={t("settings.tabIndentSize")}
                   min={1}
                   max={8}
                   step={1}
@@ -504,17 +726,19 @@ export function SettingsPanel({
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
+                    aria-label={t("settings.tileColor.label")}
                     value={normalizeTileColor(config.tileColor)}
                     onChange={(event) => setConfigValue("tileColor", event.target.value)}
                     className="w-10 h-8 rounded-lg border border-paper-deep/40 bg-paper-warm/70 cursor-pointer"
                   />
                   <input
                     type="text"
+                    aria-label={t("settings.tileColor.label")}
                     value={config.tileColor}
                     onChange={(event) => setConfigValue("tileColor", event.target.value)}
                     placeholder="#f6f3ec"
                     spellCheck={false}
-                    className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
+                    className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   />
                   <button
                     type="button"
@@ -534,6 +758,7 @@ export function SettingsPanel({
               <div className="flex gap-2">
                 <input
                   type="text"
+                  aria-label={t("settings.background.label")}
                   value={
                     (config.backgroundImagePath &&
                       (localStorage.getItem("backgroundImageName") ||
@@ -659,6 +884,7 @@ export function SettingsPanel({
       </div>
       <PluginManagementDialog open={pluginsOpen} onOpenChange={setPluginsOpen} />
       <ApplicationsDialog open={applicationsOpen} onOpenChange={setApplicationsOpen} />
+      <DiagnosticsDialog open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen} />
     </aside>
   );
 }
@@ -671,7 +897,7 @@ interface ToggleRowProps {
 
 function ToggleRow({ label, checked, onChange }: ToggleRowProps) {
   return (
-    <label className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25 cursor-pointer">
+    <label className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25 cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2">
       <span className="text-[12px] text-ink-soft">{label}</span>
       <input
         type="checkbox"
@@ -710,6 +936,7 @@ function RangeRow({ label, value, min, max, step, format, onChange }: RangeRowPr
       <span className="w-9 text-[11px] text-ink-faint">{label}</span>
       <input
         type="range"
+        aria-label={label}
         min={min}
         max={max}
         step={step}
@@ -725,13 +952,14 @@ function RangeRow({ label, value, min, max, step, format, onChange }: RangeRowPr
 }
 
 interface ShortcutRecorderProps {
+  label: string;
   value: string;
   onChange: (value: string) => void;
 }
 
 type ShortcutMsg = { key: string; params?: Record<string, string> } | { raw: string };
 
-function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
+export function ShortcutRecorder({ label, value, onChange }: ShortcutRecorderProps) {
   const { t } = useTranslation();
   const [checkState, setCheckState] = useState<"idle" | "checking" | "ok" | "warning" | "error">(
     "idle",
@@ -857,6 +1085,7 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
       <div className="flex gap-2">
         <button
           type="button"
+          aria-label={label}
           onClick={() => recorder.startRecording()}
           className={`min-w-0 flex-1 h-8 px-2.5 rounded-lg border text-[12px] flex items-center gap-2 cursor-pointer transition-colors ${
             recorder.isRecording
@@ -912,7 +1141,9 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
             : t("settings.shortcut.check", { defaultValue: "检测" })}
         </button>
       </div>
-      <p className={`min-h-4 text-[11px] ${statusClass}`}>{resolveMsg(checkMsg)}</p>
+      <p role="status" className={`min-h-4 text-[11px] ${statusClass}`}>
+        {resolveMsg(checkMsg)}
+      </p>
     </div>
   );
 }

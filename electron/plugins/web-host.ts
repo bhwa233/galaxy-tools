@@ -26,7 +26,7 @@ import {
   type PluginWebEvent,
   type PluginWindowStopReason,
 } from "../../packages/sdk/src/index.js";
-import { atomicWrite, canonical, confined, inside } from "../store.js";
+import { atomicWrite, canonical, confined, inside } from "../persistence.js";
 import { PluginResourceScope, type StopDecision } from "./resources.js";
 
 const SCHEME = "spark233-plugin";
@@ -84,7 +84,7 @@ export interface WebPluginController {
   readonly owner: PluginOwner;
   readonly window: BrowserWindow | undefined;
   checkStartup(): Promise<void>;
-  query(activation: PluginActivation): Promise<JsonValue | undefined>;
+  query(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   activate(activation: PluginActivation): Promise<JsonValue | undefined>;
   prepareStop(reason: PluginWindowStopReason): Promise<StopDecision>;
   dispose(): Promise<void>;
@@ -599,13 +599,15 @@ class WebRuntime implements WebPluginController {
     }
     return undefined;
   }
-  async query(activation: PluginActivation): Promise<JsonValue | undefined> {
+  async query(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined> {
+    signal?.throwIfAborted();
     if (
       !activation.commandId ||
       !this.options.manifest.commands.some((command) => command.id === activation.commandId)
     )
       throw new Error("Unknown plugin query command");
     await this.checkStartup();
+    signal?.throwIfAborted();
     if (this.options.scope.state !== "active" || this.disposed || this.crashed)
       throw new Error("Plugin is not accepting queries");
     if (this.queries.size >= 32) throw new Error("Too many pending plugin queries");
@@ -621,7 +623,11 @@ class WebRuntime implements WebPluginController {
       if (!pending) return;
       this.queries.delete(requestId);
       clearTimeout(pending.timer);
-      this.send({ type: "query-cancel", owner: this.owner, requestId });
+      try {
+        this.send({ type: "query-cancel", owner: this.owner, requestId });
+      } catch {
+        // Cancellation still settles locally if the renderer has already gone.
+      }
       pending.reject(error);
     };
     const timer = setTimeout(
@@ -632,15 +638,25 @@ class WebRuntime implements WebPluginController {
     const release = this.options.scope.own("task", {
       dispose: () => cancel(new Error("Plugin query cancelled")),
     });
-    this.send({
-      type: "query",
-      owner: this.owner,
-      requestId,
-      activation: structuredClone(activation),
-    });
+    const abort = () => void release().catch(() => {});
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      if (signal?.aborted) abort();
+      else {
+        try {
+          this.send({
+            type: "query",
+            owner: this.owner,
+            requestId,
+            activation: structuredClone(activation),
+          });
+        } catch (error) {
+          cancel(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
       return await result;
     } finally {
+      signal?.removeEventListener("abort", abort);
       await release();
     }
   }

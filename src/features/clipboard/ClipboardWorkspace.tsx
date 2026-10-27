@@ -1,3 +1,4 @@
+import { openSettingsWindow } from "../settings/api";
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
@@ -31,7 +32,6 @@ import type {
   ClipboardPage,
   ClipboardRequest,
   ClipboardEmoji,
-  ClipboardSettings,
   ClipboardDraft,
 } from "./types";
 
@@ -112,8 +112,6 @@ export function ClipboardWorkspace({
   const [notice, setNotice] = useState("");
   const [version, setVersion] = useState(0);
   const [cleanup, setCleanup] = useState<Cleanup>();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState<ClipboardSettings>();
   const [groupName, setGroupName] = useState("");
   const [emojis, setEmojis] = useState<ClipboardEmoji[]>([]);
   const [emojiSymbol, setEmojiSymbol] = useState("");
@@ -373,8 +371,11 @@ export function ClipboardWorkspace({
           size="icon-sm"
           aria-label={t("剪贴板设置")}
           onClick={() => {
-            setSettings(page?.settings);
-            setSettingsOpen(true);
+            void openSettingsWindow({
+              page: "plugins",
+              pluginId: "spark233.clipboard",
+              tab: "config",
+            }).catch((value) => setError(errorText(value)));
           }}
         >
           <Settings />
@@ -1130,128 +1131,6 @@ export function ClipboardWorkspace({
               }}
             >
               {t("确认删除并回收资源")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-h-[85vh] overflow-auto">
-          <DialogHeader>
-            <DialogTitle>{t("剪贴板记录与快捷窗口")}</DialogTitle>
-            <DialogDescription>
-              {t("默认无限记录。范围调整仅影响显示，主动确认清理才删除数据。")}
-            </DialogDescription>
-          </DialogHeader>
-          {settings && (
-            <div className="space-y-3">
-              <label className="flex flex-col gap-1 text-sm">
-                <span>{t("排除应用，每行一个 exe 名称或完整路径")}</span>
-                <Textarea
-                  value={settings.excludedApps.join("\n")}
-                  onChange={(event) =>
-                    setSettings({ ...settings, excludedApps: event.target.value.split("\n") })
-                  }
-                />
-              </label>
-              <label className="block space-y-1 text-sm">
-                <span>{t("含这些文字时不记录，每行一项")}</span>
-                <Textarea
-                  value={settings.excludedText.join("\n")}
-                  onChange={(event) =>
-                    setSettings({ ...settings, excludedText: event.target.value.split("\n") })
-                  }
-                />
-              </label>
-              <label className="block space-y-1 text-sm">
-                <span>{t("可见天数，空白表示不限")}</span>
-                <Input
-                  type="number"
-                  min={1}
-                  value={settings.retentionDays ?? ""}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      retentionDays: event.target.value ? Number(event.target.value) : null,
-                    })
-                  }
-                />
-              </label>
-              <label className="block space-y-1 text-sm">
-                <span>{t("可见条数，空白表示不限")}</span>
-                <Input
-                  type="number"
-                  min={1}
-                  value={settings.visibleCount ?? ""}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      visibleCount: event.target.value ? Number(event.target.value) : null,
-                    })
-                  }
-                />
-              </label>
-              <div className="flex flex-wrap gap-1">
-                <span className="w-full text-sm">{t("快捷键")}</span>
-                {(["digits", "function"] as const).map((value) => (
-                  <Button
-                    key={value}
-                    variant={settings.quickKeys === value ? "secondary" : "outline"}
-                    onClick={() => setSettings({ ...settings, quickKeys: value })}
-                  >
-                    {value === "digits" ? t("数字 1–9") : "F1–F9"}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                <span className="w-full text-sm">{t("快捷键动作")}</span>
-                {(["copy", "paste"] as const).map((value) => (
-                  <Button
-                    key={value}
-                    variant={settings.quickAction === value ? "secondary" : "outline"}
-                    onClick={() => setSettings({ ...settings, quickAction: value })}
-                  >
-                    {value === "copy" ? t("复制") : t("回贴原应用")}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                <span className="w-full text-sm">{t("快捷小窗位置")}</span>
-                {(["cursor", "edge"] as const).map((value) => (
-                  <Button
-                    key={value}
-                    variant={settings.compactPosition === value ? "secondary" : "outline"}
-                    onClick={() => setSettings({ ...settings, compactPosition: value })}
-                  >
-                    {value === "cursor" ? t("鼠标附近") : t("屏幕边缘")}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSettingsOpen(false)}>
-              {t("取消")}
-            </Button>
-            <Button
-              disabled={busy || !settings}
-              onClick={async () => {
-                if (
-                  settings &&
-                  (await perform({
-                    action: "settings",
-                    patch: {
-                      ...settings,
-                      excludedApps: settings.excludedApps
-                        .map((value) => value.trim())
-                        .filter(Boolean),
-                      excludedText: settings.excludedText.filter(Boolean),
-                    },
-                  }))
-                )
-                  setSettingsOpen(false);
-              }}
-            >
-              {t("保存设置")}
             </Button>
           </DialogFooter>
         </DialogContent>

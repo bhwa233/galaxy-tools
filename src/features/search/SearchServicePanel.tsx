@@ -1,3 +1,4 @@
+import { useUnsavedChanges } from "../settings/useUnsavedChanges";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
   const [paths, setPaths] = useState("");
   const [volumes, setVolumes] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
   const [error, setError] = useState<string>();
   const [readError, setReadError] = useState<string>();
   const displayError = error ?? readError;
@@ -50,8 +52,11 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
       clearInterval(timer);
     };
   }, [refresh]);
-  async function manage(action: "configure" | "rebuild") {
-    if (operating.current || refreshing.current) return;
+  async function manage(action: "configure" | "rebuild", propagate = false) {
+    if (operating.current || refreshing.current) {
+      if (propagate) throw new Error(t("loading"));
+      return;
+    }
     operating.current = true;
     setBusy(true);
     onBusyChange?.(true);
@@ -74,8 +79,10 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
           : await rebuildSearchService();
       if (result.status !== "ok") throw new Error(result.message || result.status);
       dirty.current = false;
+      setHasChanges(false);
     } catch (value) {
       setError(message(value));
+      if (propagate) throw value;
     } finally {
       operating.current = false;
       onBusyChange?.(false);
@@ -85,8 +92,21 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
       }
     }
   }
+  const guard = useUnsavedChanges(
+    hasChanges,
+    () => manage("configure", true),
+    () => {
+      dirty.current = false;
+      setHasChanges(false);
+      if (status) {
+        setPaths(status.excludedRoots.join("\n"));
+        setVolumes(Object.fromEntries(status.volumes.map((volume) => [volume.id, volume.enabled])));
+      }
+    },
+  );
   return (
     <section className="space-y-3 border-t pt-4" aria-label={t("serviceTitle")}>
+      {guard.dialog}
       <h3 className="font-medium">{t("serviceTitle")}</h3>
       <p className="text-muted-foreground">{t("serviceHelp")}</p>
       <p role="status">{status?.message || (status ? status.status : t("loading"))}</p>
@@ -104,6 +124,7 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
               disabled={busy || !volume.supported}
               onCheckedChange={(value) => {
                 dirty.current = true;
+                setHasChanges(true);
                 setVolumes((current) => ({ ...current, [volume.id]: value === true }));
               }}
             />
@@ -130,6 +151,7 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
           disabled={busy || !status?.connected}
           onChange={(event) => {
             dirty.current = true;
+            setHasChanges(true);
             setPaths(event.target.value);
           }}
         />
@@ -140,7 +162,7 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
           variant="outline"
           disabled={busy || !status?.connected}
           onClick={() => {
-            void manage("configure");
+            void guard.save().catch(() => {});
           }}
         >
           {t("serviceApply")}

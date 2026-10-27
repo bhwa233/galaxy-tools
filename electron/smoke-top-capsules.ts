@@ -4,7 +4,7 @@ import { Menu, screen, type BrowserWindow } from "electron";
 import type { SmokeContext } from "./smoke.js";
 import type { NoteLayoutState } from "./note-window-state.js";
 import { members, pillWidth, queueGeometry, queueKey } from "./capsule-layout.js";
-import type { Edge } from "../src/features/capsules/types.js";
+import type { CapsuleQueue, Edge } from "../src/features/capsules/types.js";
 
 /** Real capsule renderers and native windows, with controlled screen DIPs for drag/hover probes. */
 export async function verifyTopCapsules(context: SmokeContext, main: BrowserWindow) {
@@ -28,11 +28,10 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
   const previous = context.capsules.queues.get(topKey);
   const coldPlacement = previous ? { ...previous } : undefined;
   let coldVisibleQueue = false;
-  if (previous && fs.existsSync(path.join(context.store.dataDir, "electron-layout.json"))) {
+  const startupLayout = await context.notes.getState("layout");
+  if (previous && startupLayout !== null) {
     progress("persist");
-    const saved = JSON.parse(
-      fs.readFileSync(path.join(context.store.dataDir, "electron-layout.json"), "utf8"),
-    );
+    const saved = startupLayout as unknown as { capsuleQueues: CapsuleQueue[] };
     const disk = saved.capsuleQueues.find((q: { key: string }) => q.key === topKey);
     if (
       disk &&
@@ -50,10 +49,12 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
         area,
         "top",
         previous,
-        restored.map((e) => {
-          const n = context.store.get(e.noteId!);
-          return pillWidth(n.title || n.content.slice(0, 30) || "无标题便签");
-        }),
+        await Promise.all(
+          restored.map(async (e) => {
+            const n = await context.notes.get(e.noteId!);
+            return pillWidth(n.title || n.content.slice(0, 30) || "无标题便签");
+          }),
+        ),
       );
       const actualBounds = host!.win.getBounds();
       // Windows can enforce a 39-DIP native minimum height; the shaped capsule remains 32 DIP.
@@ -79,8 +80,8 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
   const contents = new Map<string, string>();
   const edgeOf = (entry: NoteLayoutState) => entry.capsule!.edge;
   const kindOf = (entry: NoteLayoutState) => entry.capsule!.kind;
-  function seed(index: number) {
-    const note = context.store.save({
+  async function seed(index: number) {
+    const note = await context.notes.save({
       title: `顶部横排布局验证 ${index}`,
       content: `顶部便签 ${index}：正文保持原样`,
       category: "",
@@ -190,8 +191,8 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
   }
   try {
     progress("seed");
-    for (let i = 0; i < 4; i++) seed(i + 1);
-    context.capsules.refresh();
+    for (let i = 0; i < 4; i++) await seed(i + 1);
+    await context.capsules.refresh();
     context.emit("notes-changed");
     let host = await ready(entries[0]);
     const firstBounds = host.win.getBounds();
@@ -325,8 +326,8 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
       screen.getCursorScreenPoint = originalCursor;
     }
     progress("overflow");
-    for (let i = 0; i < Math.max(2, Math.ceil(area.width / 160) - 2); i++) seed(i + 10);
-    context.capsules.refresh();
+    for (let i = 0; i < Math.max(2, Math.ceil(area.width / 160) - 2); i++) await seed(i + 10);
+    await context.capsules.refresh();
     host = await ready(entries[0]);
     const q = context.capsules.queues.get(topKey)!;
     await host.win.webContents.executeJavaScript(
@@ -362,9 +363,9 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
       path.join(path.dirname(context.output), "capsules-top-overflow.png"),
       (await host.win.capturePage()).toPNG(),
     );
-    const saved = JSON.parse(
-      fs.readFileSync(path.join(context.store.dataDir, "electron-layout.json"), "utf8"),
-    );
+    const saved = (await context.notes.getState("layout")) as unknown as {
+      capsuleQueues: CapsuleQueue[];
+    };
     const persisted = saved.capsuleQueues.find((item: { key: string }) => item.key === topKey);
     if (
       persisted?.offset !== q.offset ||
@@ -373,7 +374,7 @@ export async function verifyTopCapsules(context: SmokeContext, main: BrowserWind
     )
       throw new Error("Top anchor or scrolling was not persisted");
     for (const entry of entries)
-      if (context.store.get(entry.noteId!).content !== contents.get(entry.noteId!))
+      if ((await context.notes.get(entry.noteId!)).content !== contents.get(entry.noteId!))
         throw new Error("Docking rewrote a note");
     return {
       horizontalRow: true,

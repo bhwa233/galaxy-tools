@@ -1,4 +1,6 @@
 /** Desktop boundary shared by the existing React features; business components never import Electron. */
+import type { CustomApplicationTarget } from "../features/applications/types";
+
 export type UnlistenFn = () => void;
 interface DesktopBridge {
   label: string;
@@ -9,6 +11,7 @@ interface DesktopBridge {
   emit(name: string, payload?: unknown): Promise<void>;
   on(name: string, callback: (payload: unknown) => void): UnlistenFn;
   droppedPaths(files: File[]): Promise<string[]>;
+  droppedApplicationEntries(files: File[]): Promise<CustomApplicationTarget[]>;
 }
 declare global {
   interface Window {
@@ -39,6 +42,9 @@ export async function listen<T = unknown>(
 }
 export async function emit(name: string, payload?: unknown): Promise<void> {
   await bridge().emit(name, payload);
+}
+export function droppedApplicationEntries(files: File[]): Promise<CustomApplicationTarget[]> {
+  return bridge().droppedApplicationEntries(files);
 }
 export function getVersion(): Promise<string> {
   return invoke("app_version");
@@ -108,6 +114,11 @@ export function getCurrentWindow() {
       callback: (event: { payload: { type: "drop"; paths: string[] } }) => void,
     ) => {
       const handler = (event: DragEvent) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("[data-application-entry-drop]")
+        )
+          return;
         if (event.defaultPrevented || !event.dataTransfer?.files.length) return;
         event.preventDefault();
         void bridge()
@@ -115,6 +126,11 @@ export function getCurrentWindow() {
           .then((paths) => callback({ payload: { type: "drop", paths } }));
       };
       const allow = (event: DragEvent) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("[data-application-entry-drop]")
+        )
+          return;
         if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
       };
       document.addEventListener("dragover", allow);

@@ -1,22 +1,31 @@
-import { invoke, open } from "../../platform/desktop";
-import type { CustomApplicationEntry, CustomApplicationsSettings } from "./types";
+import { invoke } from "../../platform/desktop";
+import type {
+  CustomApplicationEntry,
+  CustomApplicationsSettings,
+  CustomApplicationTarget,
+} from "./types";
 
 export function getCustomApplications(): Promise<CustomApplicationsSettings> {
   return invoke("applications_entries_get");
 }
 export function saveCustomApplications(
   entries: CustomApplicationEntry[],
+  revision: string,
 ): Promise<CustomApplicationsSettings> {
-  return invoke("applications_entries_save", { entries });
+  return invoke("applications_entries_save", { entries, revision });
 }
-export async function pickCustomApplication(title: string): Promise<string | undefined> {
-  const value = await open({
-    title,
-    filters: [{ name: title, extensions: ["exe", "lnk", "url"] }],
+export function pickCustomApplication(
+  directory = false,
+): Promise<CustomApplicationTarget | undefined> {
+  return invoke("applications_entries_pick", {
+    purpose: "target",
+    ...(directory ? { directory: true } : {}),
   });
-  return typeof value === "string" ? value : undefined;
 }
-export async function pickApplicationDirectory(title: string): Promise<string | undefined> {
-  const value = await open({ title, directory: true });
-  return typeof value === "string" ? value : undefined;
+export async function pickApplicationDirectory(): Promise<string | undefined> {
+  const value = await invoke<CustomApplicationTarget | undefined>("applications_entries_pick", {
+    purpose: "cwd",
+    directory: true,
+  });
+  return value?.path;
 }

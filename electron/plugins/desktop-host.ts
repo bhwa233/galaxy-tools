@@ -19,8 +19,9 @@ import type {
   PluginSummary,
   UpdateSummary,
   PluginUpdateSource,
+  PackageTaskSnapshot,
 } from "../../src/features/plugins/types.js";
-import { AppError, atomicWrite, canonical, confined, readJson } from "../store.js";
+import { AppError, atomicWrite, canonical, confined, readJson } from "../persistence.js";
 import {
   createTrustedBackend,
   type PluginBackendController,
@@ -35,6 +36,7 @@ import {
 } from "./manifest.js";
 import {
   getPluginVersionDirectory,
+  readPluginReleaseNotes,
   stageLocalPluginPackage,
   stageDevelopmentPluginPackage,
   stageRegistryPluginPackage,
@@ -47,6 +49,7 @@ import { createNativePluginRuntime } from "./native-runtime.js";
 import { runPluginDataMigration } from "./migration.js";
 import { createCapabilityBroker } from "./capabilities.js";
 import { registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
+import type { DiagnosticEvent, DiagnosticKind } from "../../src/features/diagnostics/types.js";
 
 export interface DesktopPluginHostOptions {
   root: string;
@@ -55,6 +58,14 @@ export interface DesktopPluginHostOptions {
   getLocale?: () => string;
   subscribeTheme?: (listener: () => void) => () => void;
   onChange?: () => void;
+  onPackageTaskChanged?: (caller: string, task: PackageTaskSnapshot) => void;
+  onDiagnostic?: (event: DiagnosticEvent) => void;
+  onDiagnosticOutput?: (
+    owner: PluginOwner,
+    stream: "stdout" | "stderr",
+    byteCount: number,
+    kind: DiagnosticKind,
+  ) => void;
   bundledRoot?: string;
   /** Host adapters are selected by the application, never by page-supplied code. */
   createOfficialRuntime?: (
@@ -67,6 +78,7 @@ export interface DesktopPluginHostOptions {
   resolveDataDirectory?: (pluginId: string) => string | undefined;
   onPluginEvent?: (owner: PluginOwner, name: string, payload?: JsonValue) => void;
   resolveResource?: (resource: ResourceHandle) => string | undefined;
+  subscribeResourceRevocations?: (listener: (ids: readonly string[]) => void) => () => void;
   onBackendHostCall?: TrustedBackendOptions["onHostCall"];
 }
 const sourceSchema = z.strictObject({
@@ -83,9 +95,33 @@ const pendingSchema = z.strictObject({
     directory: z.string(),
     integrity: z.string(),
     source: sourceSchema,
+    releaseNotes: z
+      .strictObject({
+        status: z.enum(["available", "missing", "error"]),
+        content: z.string().max(262144).optional(),
+        message: z.string().max(4096).optional(),
+      })
+      .optional(),
   }),
+  updateFrom: z
+    .strictObject({
+      pluginId: z.string(),
+      name: z.string(),
+      version: z.string(),
+      registry: z.string(),
+      channel: z.string(),
+    })
+    .optional(),
 });
 type PendingPackage = z.infer<typeof pendingSchema>;
+interface PackageTask {
+  owner: string;
+  requestKey: string;
+  snapshot: PackageTaskSnapshot;
+  abort: AbortController;
+  promise: Promise<InstallPreview | undefined>;
+  notifiedAt: number;
+}
 const previewStateSchema = z.strictObject({
   schemaVersion: z.literal(1),
   pending: z.array(pendingSchema).max(16),
@@ -143,6 +179,8 @@ export class DesktopPluginHost {
   private readonly checksFile: string;
   private readonly environment;
   private pending = new Map<string, PendingPackage>();
+  private readonly packageTasks = new Map<string, PackageTask>();
+  private offlineReservations = 0;
   private updates: UpdateSummary[] = [];
   private lastChecked?: number;
   private error?: string;
@@ -152,6 +190,8 @@ export class DesktopPluginHost {
   private operations: Promise<unknown> = Promise.resolve();
   private stopped = false;
   private maintenance = false;
+  private maintenanceDrained = false;
+  private restoreEpoch = 0;
   private abort = new AbortController();
   private readonly bundledUpdates = new Map<string, { name: string; source: PluginUpdateSource }>();
   private readonly bundledCatalog = new Map<string, BundledEntry>();
@@ -176,6 +216,7 @@ export class DesktopPluginHost {
       packages: this.paths,
       environment: this.environment,
       onChange: () => this.changed(),
+      onDiagnostic: (event) => this.diagnostic(event),
       resolveDataDirectory: options.resolveDataDirectory,
       migrateData: (installation, metadata, migration) =>
         runPluginDataMigration({
@@ -198,6 +239,8 @@ export class DesktopPluginHost {
               startupCheckOnly,
               hostCapabilities: installation.grant.capabilities,
               onHostCall: options.onBackendHostCall,
+              onLogBytes: (stream, bytes) =>
+                this.diagnosticOutput(scope.owner, stream, bytes, "backend"),
               onEvent: (event) => options.onPluginEvent?.(scope.owner, event.name, event.payload),
               onCrash: (error) => {
                 void this.manager
@@ -228,6 +271,8 @@ export class DesktopPluginHost {
               dataDir: this.manager.dataDirectory(installation.pluginId),
               cacheDir: confined(this.paths.cacheRoot, "runtime", installation.pluginId),
               approveTrust: () => installation.grant.native,
+              onOutputBytes: (stream, bytes) =>
+                this.diagnosticOutput(scope.owner, stream, bytes, "native"),
               onEvent: (event) => options.onPluginEvent?.(scope.owner, event.name, event.payload),
               onCrash: (error) => {
                 void this.manager
@@ -250,6 +295,10 @@ export class DesktopPluginHost {
                 : {}),
             })
           : undefined;
+        if (broker && options.subscribeResourceRevocations) {
+          const stop = options.subscribeResourceRevocations((ids) => broker.revokeContext(ids));
+          scope.own("event", { dispose: stop });
+        }
         const web = entries.web
           ? await createWebPluginRuntime({
               scope,
@@ -275,9 +324,10 @@ export class DesktopPluginHost {
         }
         await web?.checkStartup();
         return {
-          query: async (activation) => {
+          query: async (activation, signal) => {
+            signal?.throwIfAborted();
             broker?.grantContext(activation.context);
-            return backend ? backend.activate(activation) : web?.query(activation);
+            return backend ? backend.activate(activation, signal) : web?.query(activation, signal);
           },
           activate: async (activation) => {
             broker?.grantContext(activation.context);
@@ -291,6 +341,25 @@ export class DesktopPluginHost {
     });
   }
 
+  private diagnostic(event: DiagnosticEvent): void {
+    try {
+      this.options.onDiagnostic?.(event);
+    } catch {
+      /* Telemetry cannot own a transaction. */
+    }
+  }
+  private diagnosticOutput(
+    owner: PluginOwner,
+    stream: "stdout" | "stderr",
+    bytes: number,
+    kind: DiagnosticKind,
+  ): void {
+    try {
+      this.options.onDiagnosticOutput?.(owner, stream, bytes, kind);
+    } catch {
+      /* Never retain raw output. */
+    }
+  }
   private changed(): void {
     try {
       this.options.onChange?.();
@@ -337,32 +406,76 @@ export class DesktopPluginHost {
       throw new Error("Pending plugin manifest changed; cancel and import it again");
   }
   private preview(record: PendingPackage): InstallPreview {
-    const { metadata, source, integrity } = record.staged;
+    const { metadata, source, integrity, releaseNotes } = record.staged;
+    const task = this.taskForPreview(record.previewId);
     return structuredClone({
       previewId: record.previewId,
       metadata,
       source,
       integrity,
       createdAt: record.createdAt,
+      ...(releaseNotes ? { releaseNotes } : {}),
+      ...(task ? { taskId: task.snapshot.taskId } : {}),
+      ...(record.updateFrom ? { currentVersion: record.updateFrom.version } : {}),
       requiresNativeTrust:
         !!metadata.spark233.backend ||
         !!metadata.spark233.migration ||
         Object.keys(metadata.spark233.native).length > 0,
     });
   }
-  private addPreview(staged: StagedPluginPackage): InstallPreview {
-    const record = { previewId: randomUUID(), createdAt: Date.now(), staged };
+  private addPreview(
+    staged: StagedPluginPackage,
+    updateFrom?: PendingPackage["updateFrom"],
+  ): InstallPreview {
+    const record = {
+      previewId: randomUUID(),
+      createdAt: Date.now(),
+      staged,
+      ...(updateFrom ? { updateFrom } : {}),
+    };
     this.pending.set(record.previewId, record);
-    this.persistPreviews();
+    try {
+      this.persistPreviews();
+    } catch (error) {
+      this.pending.delete(record.previewId);
+      throw error;
+    }
     return this.preview(record);
   }
   private ensurePreviewCapacity(): void {
-    if (this.pending.size >= 16)
+    if (
+      this.pending.size +
+        this.offlineReservations +
+        [...this.packageTasks.values()].filter((task) =>
+          ["queued", "resolving", "downloading", "verifying", "cancelling"].includes(
+            task.snapshot.stage,
+          ),
+        ).length >=
+      16
+    )
       throw new Error("Confirm or cancel pending packages before importing more");
   }
   async initialize(): Promise<void> {
     await this.manager.initialize();
     await this.installBundled();
+    const saved = this.readManagementState();
+    this.pending = saved.pending;
+    this.lastChecked = saved.lastChecked;
+    this.error = saved.error;
+    if (fs.existsSync(this.previewsFile)) this.persistPreviews();
+    this.timer = setInterval(() => {
+      void this.checkUpdates();
+    }, SIX_HOURS);
+    this.timer.unref();
+    if (!this.lastChecked || Date.now() - this.lastChecked >= SIX_HOURS) void this.checkUpdates();
+  }
+  private readManagementState(): {
+    pending: Map<string, PendingPackage>;
+    lastChecked?: number;
+    error?: string;
+  } {
+    const pending = new Map<string, PendingPackage>();
+    let error: string | undefined;
     if (fs.existsSync(this.previewsFile)) {
       if (fs.statSync(this.previewsFile).size > 8 * 1024 * 1024)
         throw new Error("Plugin preview state is too large");
@@ -376,24 +489,52 @@ export class DesktopPluginHost {
             )
         )
           continue;
-        // Keep an invalid preview cancellable instead of forgetting its directory.
-        this.pending.set(record.previewId, record);
+        // Match startup: invalid candidates remain visible and cancellable;
+        // loading a backup never grants trust or starts a pending package.
+        pending.set(record.previewId, record);
         try {
           this.validatePending(record);
-        } catch (error) {
-          this.error = String(error);
+        } catch (failure) {
+          error = String(failure);
         }
       }
-      this.persistPreviews();
     }
-    if (fs.existsSync(this.checksFile))
-      this.lastChecked = checkStateSchema.parse(readJson(this.checksFile)).lastChecked;
-    this.timer = setInterval(() => {
-      void this.checkUpdates();
-    }, SIX_HOURS);
-    this.timer.unref();
-    if (!this.lastChecked || Date.now() - this.lastChecked >= SIX_HOURS) void this.checkUpdates();
+    const lastChecked = fs.existsSync(this.checksFile)
+      ? checkStateSchema.parse(readJson(this.checksFile)).lastChecked
+      : undefined;
+    return { pending, lastChecked, error };
   }
+
+  /** Called after the manager's snapshot replacement while the host is drained.
+   * Restore and rollback both reload their own disk generation. Never reinitialize
+   * the manager or install bundled packages here: enabled/uninstalled is restored state.
+   */
+  reloadAfterRestore(): void {
+    if (
+      !this.maintenance ||
+      !this.maintenanceDrained ||
+      this.stopped ||
+      this.offlineReservations ||
+      this.checking
+    )
+      throw new AppError("pluginBusy", "恢复管理状态前必须暂停并排空插件宿主");
+    if (
+      fs.existsSync(this.stateFile) &&
+      readJson<{ transaction?: unknown }>(this.stateFile).transaction
+    )
+      throw new AppError("pluginRecoveryRequired", "未完成的插件事务不能被恢复管理状态覆盖");
+    // Parse everything before replacing the live view. A bad restored file can
+    // trigger the backup service's rollback without half-replacing these maps.
+    const saved = this.readManagementState();
+    ++this.restoreEpoch;
+    this.pending = saved.pending;
+    this.packageTasks.clear();
+    this.updates = [];
+    this.lastChecked = saved.lastChecked;
+    this.error = saved.error;
+    this.changed();
+  }
+
   private async installBundled(): Promise<void> {
     if (!this.options.bundledRoot) return;
     const indexFile = confined(this.options.bundledRoot, "index.json");
@@ -493,7 +634,7 @@ export class DesktopPluginHost {
     const bundled = this.bundledUpdates.get(record.pluginId);
     return bundled?.name === record.packageName ? bundled.source : undefined;
   }
-  private list(): PluginManagementState {
+  private list(caller?: string): PluginManagementState {
     const plugins: PluginSummary[] = this.manager.list().map((record) => {
       let displayName = record.pluginId;
       let capabilities = record.grant.capabilities;
@@ -552,7 +693,16 @@ export class DesktopPluginHost {
           canPrepare: !pending && (!installed || semver.gt(entry.version, installed.version)),
         };
       }),
-      pending: [...this.pending.values()].map((record) => this.preview(record)),
+      pending: [...this.pending.values()]
+        .filter(
+          (record) =>
+            !this.taskForPreview(record.previewId) ||
+            this.taskForPreview(record.previewId)!.owner === caller,
+        )
+        .map((record) => this.preview(record)),
+      tasks: [...this.packageTasks.values()]
+        .filter((task) => task.owner === caller)
+        .map((task) => this.taskSnapshot(task)),
       updates: this.updates,
       checking: !!this.checking,
       ...(this.lastChecked === undefined ? {} : { lastChecked: this.lastChecked }),
@@ -561,35 +711,293 @@ export class DesktopPluginHost {
         : {}),
     });
   }
-  private async prepareRegistry(
+  private taskSnapshot(task: PackageTask): PackageTaskSnapshot {
+    return structuredClone(task.snapshot);
+  }
+  private taskChanged(task: PackageTask, change: Partial<PackageTaskSnapshot>): void {
+    if (this.packageTasks.get(task.snapshot.taskId) !== task) return;
+    const previousStage = task.snapshot.stage;
+    if (Object.hasOwn(change, "receivedBytes") && !Object.hasOwn(change, "totalBytes"))
+      delete task.snapshot.totalBytes;
+    if (change.stage === "saving") delete task.snapshot.error;
+    Object.assign(task.snapshot, change, { revision: task.snapshot.revision + 1 });
+    if (change.stage && change.stage !== previousStage && change.stage !== "cancelling")
+      this.diagnostic({
+        kind: "package",
+        code: change.stage,
+        level: ["failed", "recovery-required"].includes(change.stage) ? "error" : "info",
+        taskId: task.snapshot.taskId,
+        ...(task.snapshot.pluginId &&
+        (task.snapshot.candidateVersion ?? task.snapshot.currentVersion)
+          ? {
+              target: {
+                pluginId: task.snapshot.pluginId,
+                version: (task.snapshot.candidateVersion ?? task.snapshot.currentVersion)!,
+              },
+            }
+          : {}),
+      });
+    task.snapshot.cancelable = [
+      "queued",
+      "resolving",
+      "downloading",
+      "awaiting-confirmation",
+    ].includes(task.snapshot.stage);
+    // A separate narrow event must not invalidate launcher authorities or rebuild shortcuts.
+    if (!change.stage && Date.now() - task.notifiedAt < 100) return;
+    task.notifiedAt = Date.now();
+    try {
+      this.options.onPackageTaskChanged?.(task.owner, this.taskSnapshot(task));
+    } catch (error) {
+      console.error("plugin-package-task-notification", error);
+    }
+  }
+  private taskForPreview(previewId: string): PackageTask | undefined {
+    return [...this.packageTasks.values()].find((task) => task.snapshot.previewId === previewId);
+  }
+  private assertTaskOwner(task: PackageTask | undefined, caller: string): void {
+    if (task && task.owner !== caller)
+      throw new AppError("permissionDenied", "安装任务属于其他窗口文档");
+  }
+  private assertUpdateCurrent(
+    staged: StagedPluginPackage,
+    update?: PendingPackage["updateFrom"],
+  ): void {
+    if (!update) return;
+    const installed = this.manager.list().find((item) => item.pluginId === update.pluginId);
+    const source = installed && this.updateSource(installed);
+    if (
+      !installed ||
+      installed.packageName !== update.name ||
+      installed.version !== update.version ||
+      !source ||
+      source.registry !== update.registry ||
+      source.channel !== update.channel ||
+      staged.metadata.spark233.id !== update.pluginId ||
+      staged.metadata.name !== update.name ||
+      !semver.gt(staged.metadata.version, installed.version)
+    )
+      throw new Error("The installed plugin or update source changed; check for updates again");
+  }
+  private discardStaged(staged: StagedPluginPackage): void {
+    const directory = this.exactDirectory(staged);
+    if (
+      this.used(directory) ||
+      [...this.pending.values()].some(
+        (record) => canonical(record.staged.directory) === canonical(directory),
+      )
+    )
+      return;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  private async cancelPackageTask(task: PackageTask, caller: string): Promise<PackageTaskSnapshot> {
+    this.assertTaskOwner(task, caller);
+    if (this.packageTasks.get(task.snapshot.taskId) !== task)
+      throw new Error("Package task no longer exists");
+    const failedPreview =
+      task.snapshot.stage === "failed" &&
+      !!task.snapshot.previewId &&
+      this.pending.has(task.snapshot.previewId);
+    if (
+      ["cancelled", "completed", "recovery-required"].includes(task.snapshot.stage) ||
+      (task.snapshot.stage === "failed" && !failedPreview)
+    )
+      return this.taskSnapshot(task);
+    if (!task.snapshot.cancelable && task.snapshot.stage !== "cancelling" && !failedPreview)
+      throw new Error("This task is verifying, saving or committing; wait for it to finish");
+    if (task.snapshot.stage === "awaiting-confirmation" || failedPreview) {
+      await this.serial(async () => {
+        if (this.packageTasks.get(task.snapshot.taskId) !== task)
+          throw new Error("Package task no longer exists");
+        // Confirmation may have entered the queue first. Never cancel its transaction.
+        if (!["awaiting-confirmation", "failed"].includes(task.snapshot.stage))
+          throw new Error("Installation has already started");
+        const record = task.snapshot.previewId && this.pending.get(task.snapshot.previewId);
+        if (record) {
+          const directory = this.exactDirectory(record.staged);
+          if (this.used(directory)) throw new Error("The transaction still owns this package");
+          this.pending.delete(record.previewId);
+          try {
+            this.persistPreviews();
+          } catch (error) {
+            this.pending.set(record.previewId, record);
+            throw error;
+          }
+          this.discardStaged(record.staged);
+        }
+        this.taskChanged(task, { stage: "cancelled" });
+      });
+    } else {
+      this.taskChanged(task, { stage: "cancelling" });
+      task.abort.abort();
+      await task.promise;
+    }
+    return this.taskSnapshot(task);
+  }
+  releaseCaller(caller: string): void {
+    for (const task of this.packageTasks.values()) {
+      if (task.owner !== caller) continue;
+      if (["queued", "resolving", "downloading", "verifying"].includes(task.snapshot.stage)) {
+        // Retirement can discard a late verification result; it cannot interrupt a commit.
+        this.taskChanged(task, { stage: "cancelling" });
+        task.abort.abort();
+      } else if (
+        task.snapshot.stage === "awaiting-confirmation" ||
+        (task.snapshot.stage === "failed" &&
+          !!task.snapshot.previewId &&
+          this.pending.has(task.snapshot.previewId))
+      ) {
+        void this.cancelPackageTask(task, caller).catch((error) =>
+          console.error("plugin-package-retirement", error),
+        );
+      }
+    }
+  }
+  private prepareRegistryTask(
+    caller: string,
     name: string,
     registry?: string,
     channel?: string,
-    pluginId?: string,
-    currentVersion?: string,
-  ): Promise<InstallPreview> {
-    this.ensurePreviewCapacity();
-    const selection = await resolveRegistryPluginPackage(
-      {
-        name,
-        registry,
-        channel: channel ?? "latest",
-        expected: pluginId ? { pluginId } : undefined,
-        cacheRoot: confined(this.paths.cacheRoot, "registry-metadata"),
-        signal: this.abort.signal,
-      },
-      this.environment,
-    );
-    if (currentVersion && !semver.gt(selection.version, currentVersion))
-      throw new Error("No newer compatible plugin version is available");
-    const staged = await stageRegistryPluginPackage(selection, this.environment, this.paths, {
-      signal: this.abort.signal,
+    update?: PendingPackage["updateFrom"],
+  ): Promise<InstallPreview | undefined> {
+    if (this.stopped || this.maintenance)
+      return Promise.reject(new Error("Plugin host is unavailable"));
+    const source = updateSourceSchema.parse({
+      registry: registry ?? "https://registry.npmjs.org/",
+      channel: channel ?? "latest",
     });
-    return this.addPreview(staged);
+    const requestKey = JSON.stringify([name, source.registry, source.channel, update?.pluginId]);
+    const existing = [...this.packageTasks.values()].find(
+      (task) =>
+        task.snapshot.packageName === name &&
+        !["completed", "cancelled", "failed", "recovery-required"].includes(task.snapshot.stage),
+    );
+    if (existing) {
+      if (existing.owner === caller && existing.requestKey === requestKey) return existing.promise;
+      return Promise.reject(new Error("An installation task for this package already exists"));
+    }
+    if ([...this.pending.values()].some((record) => record.staged.metadata.name === name))
+      return Promise.reject(new Error("Confirm or cancel this package's pending preview first"));
+    this.ensurePreviewCapacity();
+    const task: PackageTask = {
+      owner: caller,
+      requestKey,
+      abort: new AbortController(),
+      notifiedAt: 0,
+      snapshot: {
+        taskId: randomUUID(),
+        revision: 0,
+        packageName: name,
+        stage: "queued",
+        receivedBytes: 0,
+        cancelable: true,
+        ...(update
+          ? {
+              pluginId: update.pluginId,
+              currentVersion: this.manager.list().find((item) => item.pluginId === update.pluginId)
+                ?.version,
+            }
+          : {}),
+      },
+      promise: Promise.resolve(undefined),
+    };
+    this.packageTasks.set(task.snapshot.taskId, task);
+    // Prune only terminal records; active promises and pending ownership stay bound.
+    for (const [id, previous] of this.packageTasks) {
+      if (this.packageTasks.size <= 64) break;
+      if (
+        ["completed", "cancelled", "failed"].includes(previous.snapshot.stage) &&
+        !(previous.snapshot.previewId && this.pending.has(previous.snapshot.previewId))
+      )
+        this.packageTasks.delete(id);
+    }
+    this.taskChanged(task, { stage: "queued" });
+    task.promise = this.runRegistryTask(task, source, update);
+    return task.promise;
+  }
+  private async runRegistryTask(
+    task: PackageTask,
+    source: PluginUpdateSource,
+    update?: PendingPackage["updateFrom"],
+  ): Promise<InstallPreview | undefined> {
+    let staged: StagedPluginPackage | undefined;
+    const abort = () => task.abort.abort();
+    this.abort.signal.addEventListener("abort", abort, { once: true });
+    try {
+      task.abort.signal.throwIfAborted();
+      this.taskChanged(task, { stage: "resolving" });
+      const selection = await resolveRegistryPluginPackage(
+        {
+          name: task.snapshot.packageName,
+          registry: source.registry,
+          channel: source.channel,
+          expected: update ? { pluginId: update.pluginId } : undefined,
+          cacheRoot: confined(this.paths.cacheRoot, "registry-metadata"),
+          signal: task.abort.signal,
+        },
+        this.environment,
+      );
+      task.abort.signal.throwIfAborted();
+      const pluginId = selection.metadata.spark233.id;
+      if (
+        [...this.packageTasks.values()].some(
+          (other) =>
+            other !== task &&
+            other.snapshot.pluginId === pluginId &&
+            !["completed", "cancelled", "failed"].includes(other.snapshot.stage),
+        ) ||
+        [...this.pending.values()].some((record) => record.staged.metadata.spark233.id === pluginId)
+      )
+        throw new Error("A package task or pending preview already owns this plugin identity");
+      this.taskChanged(task, {
+        pluginId,
+        candidateVersion: selection.version,
+        stage: "downloading",
+      });
+      if (update)
+        this.assertUpdateCurrent({ metadata: selection.metadata } as StagedPluginPackage, update);
+      staged = await stageRegistryPluginPackage(selection, this.environment, this.paths, {
+        signal: task.abort.signal,
+        onProgress: (progress) => this.taskChanged(task, progress),
+        onPhase: (stage) => this.taskChanged(task, { stage }),
+      });
+      task.abort.signal.throwIfAborted();
+      return await this.serial(async () => {
+        task.abort.signal.throwIfAborted();
+        if (this.packageTasks.get(task.snapshot.taskId) !== task)
+          throw new Error("Package task no longer exists");
+        this.assertUpdateCurrent(staged!, update);
+        const preview = this.addPreview(staged!, update);
+        this.taskChanged(task, { stage: "awaiting-confirmation", previewId: preview.previewId });
+        return { ...preview, taskId: task.snapshot.taskId };
+      });
+    } catch (failure) {
+      // A retired task must not delete a path now owned by restored disk state.
+      if (this.packageTasks.get(task.snapshot.taskId) !== task) return undefined;
+      let error = failure;
+      if (staged) {
+        try {
+          this.discardStaged(staged);
+        } catch (cleanup) {
+          error = new AggregateError([failure, cleanup], "Package cleanup needs attention");
+          this.taskChanged(task, { stage: "failed", error: String(error) });
+          throw error;
+        }
+      }
+      if (task.abort.signal.aborted) {
+        this.taskChanged(task, { stage: "cancelled" });
+        return undefined;
+      }
+      this.taskChanged(task, { stage: "failed", error: String(error) });
+      throw error;
+    } finally {
+      this.abort.signal.removeEventListener("abort", abort);
+    }
   }
   private checkUpdates(): Promise<void> {
     if (this.checking) return this.checking;
     if (this.stopped || this.maintenance) return Promise.resolve();
+    const epoch = this.restoreEpoch;
     const operation = (async () => {
       const updates: UpdateSummary[] = [];
       const errors: string[] = [];
@@ -636,7 +1044,13 @@ export class DesktopPluginHost {
           );
         }
       }
-      if (this.stopped || this.maintenance || this.abort.signal.aborted) return;
+      if (
+        this.stopped ||
+        this.maintenance ||
+        this.abort.signal.aborted ||
+        epoch !== this.restoreEpoch
+      )
+        return;
       this.updates = updates;
       this.error = errors.length ? errors.join("\n") : undefined;
       this.lastChecked = Date.now();
@@ -644,9 +1058,10 @@ export class DesktopPluginHost {
     })();
     this.checking = operation
       .catch((error) => {
-        this.error = String(error);
+        if (epoch === this.restoreEpoch) this.error = String(error);
       })
       .finally(() => {
+        if (epoch !== this.restoreEpoch) return;
         this.checking = undefined;
         this.changed();
       });
@@ -673,12 +1088,23 @@ export class DesktopPluginHost {
     );
   }
 
-  async handle(command: string, args: unknown, parent: BrowserWindow): Promise<unknown> {
-    if (command === "plugins_list") return this.list();
+  async handle(
+    command: string,
+    args: unknown,
+    parent: BrowserWindow,
+    caller = `host:${parent.webContents.id}`,
+  ): Promise<unknown> {
+    if (command === "plugins_list") return this.list(caller);
+    if (command === "plugins_cancel_package_task") {
+      const { taskId } = z.strictObject({ taskId: z.uuid() }).parse(args);
+      const task = this.packageTasks.get(taskId);
+      if (!task) throw new Error("Package task no longer exists");
+      return this.cancelPackageTask(task, caller);
+    }
     if (this.maintenance) throw new Error("插件正在备份或恢复，请稍后重试");
     if (command === "plugins_check_updates") {
       await this.checkUpdates();
-      return this.list();
+      return this.list(caller);
     }
     // Dispatch activation through the manager's queue, but do not hold the
     // service mutation queue for the duration of an AI/native plugin task.
@@ -690,12 +1116,63 @@ export class DesktopPluginHost {
         input.commandId ?? metadata.spark233.commands.find((command) => !command.internal)?.id;
       if (!commandId) throw new Error("Plugin does not expose a command to open");
       await this.manager.activate(input.pluginId, { commandId });
-      return this.list();
+      return this.list(caller);
+    }
+    if (command === "plugins_release_notes") {
+      const { pluginId } = pluginIdArgs.parse(args);
+      const installation = this.manager.list().find((item) => item.pluginId === pluginId);
+      if (!installation) throw new Error("Plugin is not installed");
+      this.manager.describe(pluginId);
+      const notes = await readPluginReleaseNotes(installation.directory);
+      if (
+        !this.manager
+          .list()
+          .some(
+            (item) =>
+              item.pluginId === pluginId &&
+              item.version === installation.version &&
+              item.integrity === installation.integrity,
+          )
+      )
+        throw new Error("Plugin version changed; load its notes again");
+      return notes;
+    }
+    if (command === "plugins_prepare_registry") {
+      const input = z
+        .strictObject({
+          name: z.string().min(1).max(214),
+          registry: z.string().max(2048).optional(),
+          channel: z.string().max(128).optional(),
+        })
+        .parse(args);
+      return this.prepareRegistryTask(caller, input.name, input.registry, input.channel);
+    }
+    if (command === "plugins_prepare_update") {
+      const { pluginId } = pluginIdArgs.parse(args);
+      const installed = this.manager.list().find((record) => record.pluginId === pluginId);
+      const source = installed && this.updateSource(installed);
+      if (!installed || !source)
+        throw new Error("This plugin has no configured registry update source");
+      return this.prepareRegistryTask(
+        caller,
+        installed.packageName,
+        source.registry,
+        source.channel,
+        { pluginId, name: installed.packageName, version: installed.version, ...source },
+      );
+    }
+    const reserving = [
+      "plugins_import",
+      "plugins_import_directory",
+      "plugins_prepare_bundled",
+    ].includes(command);
+    if (reserving) {
+      this.ensurePreviewCapacity();
+      this.offlineReservations++;
     }
     return this.serial(async () => {
       switch (command) {
         case "plugins_import": {
-          this.ensurePreviewCapacity();
           const result = await dialog.showOpenDialog(parent, {
             title: "Import spark233 plugin",
             properties: ["openFile"],
@@ -709,7 +1186,6 @@ export class DesktopPluginHost {
           );
         }
         case "plugins_import_directory": {
-          this.ensurePreviewCapacity();
           const result = await dialog.showOpenDialog(parent, {
             title: "Import spark233 development plugin directory",
             properties: ["openDirectory"],
@@ -721,22 +1197,11 @@ export class DesktopPluginHost {
             }),
           );
         }
-        case "plugins_prepare_registry": {
-          const input = z
-            .strictObject({
-              name: z.string().min(1).max(214),
-              registry: z.string().max(2048).optional(),
-              channel: z.string().max(128).optional(),
-            })
-            .parse(args);
-          return this.prepareRegistry(input.name, input.registry, input.channel);
-        }
         case "plugins_prepare_bundled": {
           const { pluginId } = pluginIdArgs.parse(args);
           const entry = this.bundledCatalog.get(pluginId);
           if (!entry || !this.options.bundledRoot)
             throw new Error("Official offline plugin is not in the bundled catalog");
-          this.ensurePreviewCapacity();
           const installed = this.manager.list().find((item) => item.pluginId === pluginId);
           if (installed && !semver.gt(entry.version, installed.version))
             throw new Error("This bundled plugin version or a newer version is already installed");
@@ -761,24 +1226,50 @@ export class DesktopPluginHost {
           const input = previewIdArgs.extend({ trustNative: z.boolean() }).parse(args);
           const record = this.pending.get(input.previewId);
           if (!record) throw new Error("Plugin install preview does not exist");
+          const task = this.taskForPreview(record.previewId);
+          this.assertTaskOwner(task, caller);
           this.validatePending(record);
+          this.assertUpdateCurrent(record.staged, record.updateFrom);
           if (this.preview(record).requiresNativeTrust && !input.trustNative)
             throw new AppError("pluginTrustRequired", "第三方 Node 或原生执行需要显式信任");
-          await this.manager.install(record.staged, {
-            capabilities: [...record.staged.metadata.spark233.capabilities],
-            native: input.trustNative,
-          });
+          if (task) this.taskChanged(task, { stage: "saving" });
+          try {
+            await this.manager.install(
+              record.staged,
+              {
+                capabilities: [...record.staged.metadata.spark233.capabilities],
+                native: input.trustNative,
+              },
+              true,
+              (stage) => {
+                if (task) this.taskChanged(task, { stage });
+              },
+            );
+          } catch (error) {
+            if (task)
+              this.taskChanged(task, {
+                stage:
+                  error instanceof AppError && error.code === "pluginRecoveryRequired"
+                    ? "recovery-required"
+                    : "failed",
+                error: String(error),
+              });
+            throw error;
+          }
           this.pending.delete(record.previewId);
           this.persistPreviews();
+          if (task) this.taskChanged(task, { stage: "completed" });
           this.updates = this.updates.filter(
             (update) => update.pluginId !== record.staged.metadata.spark233.id,
           );
-          return this.list();
+          return this.list(caller);
         }
         case "plugins_cancel_install": {
           const { previewId } = previewIdArgs.parse(args);
           const record = this.pending.get(previewId);
           if (!record) throw new Error("Plugin install preview does not exist");
+          const task = this.taskForPreview(record.previewId);
+          this.assertTaskOwner(task, caller);
           const directory = this.exactDirectory(record.staged);
           if (this.used(directory))
             throw new Error(
@@ -794,12 +1285,13 @@ export class DesktopPluginHost {
             fs.rmSync(directory, { recursive: true, force: true });
           this.pending.delete(previewId);
           this.persistPreviews();
-          return this.list();
+          if (task) this.taskChanged(task, { stage: "cancelled" });
+          return this.list(caller);
         }
         case "plugins_enable": {
           const input = pluginIdArgs.extend({ enabled: z.boolean() }).parse(args);
           await this.manager.setEnabled(input.pluginId, input.enabled);
-          return this.list();
+          return this.list(caller);
         }
         case "plugins_uninstall": {
           const input = pluginIdArgs.extend({ deleteData: z.boolean() }).parse(args);
@@ -811,39 +1303,32 @@ export class DesktopPluginHost {
             throw new Error("Cancel pending packages for this plugin before uninstalling");
           await this.manager.uninstall(input.pluginId, input.deleteData);
           this.updates = this.updates.filter((update) => update.pluginId !== input.pluginId);
-          return this.list();
-        }
-        case "plugins_prepare_update": {
-          const { pluginId } = pluginIdArgs.parse(args);
-          const installed = this.manager.list().find((record) => record.pluginId === pluginId);
-          const source = installed ? this.updateSource(installed) : undefined;
-          if (!installed || !source)
-            throw new Error("This plugin has no configured registry update source");
-          return this.prepareRegistry(
-            installed.packageName,
-            source.registry,
-            source.channel,
-            pluginId,
-            installed.version,
-          );
+          return this.list(caller);
         }
         default:
           throw new Error(`Unknown plugin management command: ${command}`);
       }
+    }).finally(() => {
+      if (reserving) this.offlineReservations--;
     });
   }
   async pauseMutations(): Promise<() => void> {
     if (this.maintenance || this.stopped) throw new Error("插件宿主正忙");
     this.maintenance = true;
+    this.maintenanceDrained = false;
     try {
-      await this.operations.catch(() => {});
       this.abort.abort();
+      await Promise.allSettled([...this.packageTasks.values()].map((task) => task.promise));
+      await this.operations.catch(() => {});
       await this.checking;
+      this.maintenanceDrained = true;
       return () => {
+        this.maintenanceDrained = false;
         this.abort = new AbortController();
         this.maintenance = false;
       };
     } catch (error) {
+      this.maintenanceDrained = false;
       this.abort = new AbortController();
       this.maintenance = false;
       throw error;
@@ -853,6 +1338,7 @@ export class DesktopPluginHost {
     if (this.timer) clearInterval(this.timer);
     this.stopped = true;
     this.abort.abort();
+    await Promise.allSettled([...this.packageTasks.values()].map((task) => task.promise));
     await this.operations.catch(() => {});
     await this.checking;
     try {

@@ -10,6 +10,8 @@ export default function translationPlugin(lifetime) {
       const input = activation.parameters ?? {};
       if (!input || typeof input !== "object" || Array.isArray(input))
         throw new Error("Translation parameters must be an object");
+      if (Object.hasOwn(input, "hostConfiguration"))
+        await translator.useConfiguration(input.hostConfiguration);
       const action =
         input.action ?? (activation.commandId === "translate" ? "translate" : "search");
       switch (action) {

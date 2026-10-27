@@ -266,6 +266,8 @@
     "shortcut": {
       "cancelHint": "Esc 取消",
       "clear": "清除",
+      "check": "检测",
+      "checkingShort": "检测中",
       "checkFailed": "快捷键检测失败",
       "checking": "正在检测快捷键...",
       "cleared": "快捷键已清空",
@@ -529,8 +531,7 @@
     "empty": "没有匹配的入口，试试其他关键词或检查插件是否启用。",
     "results": "入口与本地结果",
     "enterMode": "进入模式",
-    "navigation": "↑ ↓ 选择 · Enter 执行 · Esc 返回或隐藏",
-    "modeHint": "关键词 + Tab 进入模式",
+    "navigation": "Tab 切换区域 · ← → 选择应用 · ↑ ↓ 选择信息 · Enter 执行 · Esc 返回或隐藏",
     "settingsDescription": "修改应用设置并保存到宿主。",
     "savingSettings": "正在保存设置",
     "loadingSettings": "正在读取设置",
@@ -539,7 +540,53 @@
       "description": "确认将现有便签数据迁移到所选位置。迁移期间请等待完成。",
       "confirm": "确认迁移"
     },
-    "cancel": "取消"
+    "cancel": "取消",
+    "preferences": {
+      "manage": "入口管理",
+      "title": "启动器入口",
+      "description": "管理常用入口、固定顺序和个人别名。",
+      "hideScope": "隐藏仅影响启动器中的入口、别名与固定区；不停止插件后台。已有快捷键和内部调用仍遵循原有授权。",
+      "filterLabel": "查找入口",
+      "filterPlaceholder": "名称、别名或所属插件",
+      "listLabel": "可管理的启动器入口",
+      "command": "命令",
+      "application": "应用",
+      "pinned": "已固定",
+      "hidden": "已隐藏",
+      "unavailable": "不可用",
+      "pin": "固定入口",
+      "unpin": "取消固定",
+      "moveUp": "将“{{title}}”上移",
+      "moveDown": "将“{{title}}”下移",
+      "editAliases": "编辑别名",
+      "aliasesLabel": "个人别名",
+      "aliasesHint": "每行一个；留空可移除全部个人别名，原有关键词仍然可用。",
+      "aliasesSummary": "别名：{{aliases}}",
+      "saveAliases": "保存别名",
+      "hide": "隐藏入口",
+      "show": "恢复显示",
+      "removeMissing": "移除此应用记录",
+      "empty": "没有匹配的入口。可清空筛选，查找隐藏或不可用的项目。",
+      "loading": "正在读取入口…",
+      "saving": "正在保存…",
+      "saved": "已保存",
+      "expired": "此结果已失效，请重新查询后再编辑。"
+    },
+    "learning": {
+      "title": "关键词选择记忆",
+      "enable": "允许学习成功的选择（默认关闭）",
+      "privacy": "仅关联短关键词与明确选中且执行成功的应用或普通命令；不学习正文、AI 输入，也不学习图片、剪贴板或文件上下文。",
+      "offHint": "关闭后停止记录，也不再用已有记录排序；已有记录保留，仍可单独清除。",
+      "rankingHint": "只在同组、同匹配等级内影响顺序；固定入口、精确应用名和精确个人别名优先，不会自动执行。",
+      "recordCount": "已记 {{value}} 条关联",
+      "clear": "清除学习记录",
+      "clearHint": "清除学习记录不会更改固定入口、个人别名或隐藏设置。",
+      "cleared": "学习记录已清除。",
+      "saved": "学习设置已保存。",
+      "learned": "曾为此关键词选择"
+    },
+    "applicationRegion": "应用与插件",
+    "informationRegion": "信息与结果"
   },
   "ocr": {
     "results": "取字结果",
@@ -727,6 +774,306 @@
         "index": "搜索索引"
       },
       "commands": "调用其他插件的公开命令"
+    },
+    "currentVersion": "当前版本：{{version}}",
+    "candidateVersion": "候选版本：{{version}}",
+    "notInstalled": "尚未安装",
+    "releaseNotes": {
+      "source": "来自包根目录的 CHANGELOG.md；不渲染 HTML，不显示图片。",
+      "candidate": "候选版本说明",
+      "installed": "已安装版本说明 · {{version}}",
+      "missing": "此包未提供 CHANGELOG.md。",
+      "error": "无法读取版本说明，仍可核对并确认安装。",
+      "loading": "正在读取版本说明…",
+      "retry": "重新读取版本说明",
+      "prepareAgain": "取消此预览后重新准备插件包，可重试读取候选版本说明。",
+      "unavailable": "此预览未提供可读取的版本说明。"
+    },
+    "tasks": {
+      "title": "插件包任务",
+      "cancel": "取消任务",
+      "cancelNamed": "取消 {{name}} 的插件包任务",
+      "bytesKnown": "已下载 {{received}} / {{total}} 字节",
+      "bytesUnknown": "已下载 {{received}} 字节 · 总大小未知",
+      "downloadProgress": "{{name}} 的下载进度",
+      "downloadHint": "这里只表示下载进度，之后仍需校验、确认和安装。",
+      "failedHint": "任务未完成，请核对插件状态后重试。",
+      "stage": {
+        "queued": "等待开始",
+        "resolving": "正在解析包版本",
+        "downloading": "正在下载插件包",
+        "verifying": "正在核对完整性与包内容",
+        "awaiting-confirmation": "已准备好，等待你确认安装",
+        "saving": "正在请求保存并停止当前插件",
+        "backing-up": "正在备份插件数据",
+        "migrating": "正在迁移插件数据",
+        "switching": "正在切换安装版本",
+        "starting": "正在启动并验证插件",
+        "recovering": "正在恢复上一版本与数据",
+        "cancelling": "正在取消并清理",
+        "completed": "安装已完成",
+        "cancelled": "任务已取消",
+        "failed": "任务失败",
+        "recovery-required": "自动恢复失败，需要手动恢复"
+      }
     }
+  },
+  "diagnostics": {
+    "title": "诊断日志",
+    "description": "查看宿主与插件的运行状态和计数；不包含正文、原始输出或请求内容。",
+    "retention": "最多保留最近 {{count}} 条记录；清空会删除全部诊断日志，筛选条件不影响清空范围。",
+    "retry": "重新连接",
+    "refresh": "刷新",
+    "export": "导出当前筛选",
+    "clear": "清空全部日志",
+    "loading": "正在连接诊断日志…",
+    "entryCount": "当前显示 {{count}} 条记录",
+    "catchingUp": "当前显示 {{count}} 条记录，正在接收后续批次…",
+    "entries": "诊断记录（最新在前）",
+    "unknownTime": "时间不可用",
+    "duration": "耗时 {{value}} 毫秒",
+    "bytes": "{{value}} 字节",
+    "count": "{{value}} 次",
+    "identity": "查看实例与任务标识",
+    "instance": "实例 ID",
+    "task": "任务 ID",
+    "source": {
+      "all": "全部",
+      "host": "宿主",
+      "plugin": "插件"
+    },
+    "level": {
+      "debug": "调试",
+      "info": "信息",
+      "warn": "警告",
+      "error": "错误",
+      "unknown": "未知级别"
+    },
+    "kind": {
+      "host": "宿主运行",
+      "lifecycle": "插件生命周期",
+      "backend": "插件后台",
+      "native": "原生任务",
+      "search": "搜索",
+      "ocr": "文字识别",
+      "translation": "翻译",
+      "package": "插件包",
+      "output": "输出计数",
+      "unknown": "其他事件"
+    },
+    "code": {
+      "started": "已开始",
+      "completed": "已完成",
+      "cancelled": "已取消",
+      "failed": "未完成",
+      "crashed": "意外退出",
+      "enabled": "已启用",
+      "disabled": "已停用",
+      "uninstalled": "已卸载",
+      "stopped": "已停止",
+      "output": "已汇总输出",
+      "queued": "等待开始",
+      "resolving": "正在解析版本",
+      "downloading": "正在下载",
+      "verifying": "正在校验",
+      "awaiting-confirmation": "等待安装确认",
+      "saving": "正在请求保存",
+      "backing-up": "正在备份",
+      "migrating": "正在迁移",
+      "switching": "正在切换版本",
+      "starting": "正在启动",
+      "recovering": "正在恢复",
+      "recovery-required": "需要手动恢复",
+      "unknown": "状态不可用"
+    },
+    "failure": {
+      "unknownFailure": "操作未完成，原因未能归类。",
+      "timeout": "任务等待超时。",
+      "permissionDenied": "此操作未获授权。",
+      "unavailable": "所需服务当前不可用。",
+      "invalidData": "输入或返回的数据无效。",
+      "saveRefused": "插件未确认保存，操作已停止。",
+      "recoveryRequired": "自动恢复未完成，需要处理恢复状态。",
+      "networkFailure": "网络请求未完成。",
+      "integrityMismatch": "插件包完整性校验未通过。",
+      "incompatible": "插件与当前宿主不兼容。",
+      "diskUnavailable": "诊断日志暂时无法写入磁盘。",
+      "protocolFailure": "后台通信未按约定完成。"
+    },
+    "filters": {
+      "source": "来源",
+      "plugin": "插件 ID（留空为全部）",
+      "level": "级别",
+      "from": "开始时间（本地时间）",
+      "to": "结束时间（本地时间）",
+      "reset": "重置筛选",
+      "invalid": "请输入有效的插件 ID 与时间范围；开始时间不能晚于结束时间。"
+    },
+    "error": {
+      "unavailable": "诊断日志暂不可用",
+      "failed": "诊断操作未完成",
+      "hint": "请重新连接后重试。此处不会显示原始错误内容。"
+    },
+    "disk": {
+      "ready": "磁盘记录正常",
+      "readyHint": "诊断日志按固定容量轮换保留。",
+      "unavailable": "磁盘记录暂不可用",
+      "unavailableHint": "仍可查看当前内存记录。磁盘写入有丢弃时会显示在下方计数中；刷新可重新核对状态。"
+    },
+    "dropped": {
+      "title": "查看保留与丢弃计数",
+      "invalid": "未接受的记录",
+      "history": "超出历史容量",
+      "queue": "超出写入队列",
+      "disk": "磁盘写入丢弃",
+      "output": "超出输出汇总容量",
+      "subscribers": "订阅未接受或中断"
+    },
+    "working": {
+      "clear": "正在清空全部日志…",
+      "export": "正在导出诊断快照…",
+      "refresh": "正在刷新诊断快照…"
+    },
+    "notice": {
+      "cleared": "全部诊断日志已清空。",
+      "exported": "已导出当前筛选的诊断快照。",
+      "exportCancelled": "已取消导出，未保存文件。",
+      "memoryClearedDiskUnavailable": "内存记录已清空，磁盘记录清理未完成。"
+    },
+    "empty": {
+      "title": "没有匹配的诊断记录",
+      "description": "新事件会自动显示，也可以调整筛选条件或刷新。"
+    },
+    "stream": {
+      "stdout": "标准输出（仅计数）",
+      "stderr": "标准错误（仅计数）"
+    }
+  },
+  "contextPanel": {
+    "title": "上下文面板",
+    "return": "返回来源窗口",
+    "close": "关闭上下文面板",
+    "source": "来源：{{app}}",
+    "contextStatus": "本次上下文状态",
+    "expired": "此次上下文已失效，请关闭后重新呼出。",
+    "returnFailed": "来源窗口已不可用，未能恢复焦点。",
+    "operationFailed": "操作未完成，请关闭面板后重试。",
+    "capture": {
+      "capturing": "正在获取本次选区…",
+      "ready": "本次选区已准备好，请选择要执行的操作。",
+      "no-context": "未获取到上下文，显示常用入口。",
+      "error": "此次获取未完成，可使用常用入口。",
+      "window": "未获取选区内容，可使用当前程序的专用动作和常用入口。"
+    },
+    "reason": {
+      "empty": "没有本次新内容，不会使用旧剪贴板。",
+      "denied": "原应用不允许读取此次选区。",
+      "changed": "来源窗口发生变化，此次捕获已丢弃。",
+      "timeout": "获取选区超时，未使用过期内容。",
+      "unavailable": "选区服务当前不可用。"
+    },
+    "service": {
+      "disabled": "鼠标触发已关闭。",
+      "starting": "输入服务正在启动…",
+      "ready": "输入服务已准备好。",
+      "unavailable": "输入服务暂不可用，请重试。",
+      "unsupported": "此平台不支持鼠标选区触发，仍可预览常用入口。",
+      "loading": "正在读取输入服务状态…"
+    },
+    "button": {
+      "middle": "鼠标中键",
+      "x1": "侧键 1",
+      "x2": "侧键 2"
+    },
+    "trigger": {
+      "click": "单击松开",
+      "hold": "长按松开"
+    },
+    "settings": {
+      "title": "上下文面板",
+      "enable": "启用鼠标呼出（默认关闭）",
+      "observeOnly": "仅观察所选按键，不阻止原鼠标操作。长按达到时长后需松开才呼出；原应用仍可能同时滚动或执行侧键导航。",
+      "button": "使用的鼠标按键",
+      "trigger": "触发方式",
+      "holdDuration": "长按时长",
+      "milliseconds": "{{value}} 毫秒",
+      "copyFallback": "允许一次复制快捷键作为备选",
+      "copyHint": "优先尝试获取选中文字。仅明确允许此项后，才在需要时发送一次 Ctrl+C 获取图片或文件；会更新系统剪贴板。若未产生本次新内容，则按无上下文处理，不使用旧内容。",
+      "excludedApps": "不触发的应用",
+      "excludedHint": "每行一个 .exe 文件名（不含路径），最多 64 项，忽略大小写。留空并保存可清除排除项。",
+      "excludedInvalid": "请输入最多 64 个有效的 .exe 文件名，不能包含路径或控制字符。",
+      "saveExclusions": "保存排除列表",
+      "operationFailed": "无法完成此操作，请重试或查看诊断日志。",
+      "retry": "重试输入服务",
+      "preview": "预览常用入口",
+      "previewHint": "预览不会获取选区，也不会发送复制快捷键。"
+    }
+  },
+  "settingsEditor": {
+    "navigation": "设置分类",
+    "pages": {
+      "general": "常规设置",
+      "entries": "入口管理",
+      "plugins": "插件管理",
+      "backup": "数据与备份",
+      "diagnostics": "诊断"
+    },
+    "savePolicy": "常规设置自动保存；插件配置需明确保存。",
+    "autoSave": "更改自动保存",
+    "unsaved": "有未保存的更改",
+    "unsavedDescription": "保存这些更改后继续，或放弃更改。取消将留在当前页面。",
+    "save": "保存更改",
+    "discard": "放弃更改",
+    "cancel": "取消",
+    "continue": "继续",
+    "navigationCancelled": "已取消离开",
+    "hostSaveFailed": "常规设置尚未保存成功，请重试",
+    "minimize": "最小化",
+    "maximize": "最大化或还原",
+    "backGeneral": "返回常规设置"
+  },
+  "pluginConfig": {
+    "loading": "正在加载配置…",
+    "loadFirst": "请先加载配置",
+    "noSettings": "此插件没有声明可编辑配置，可查看功能及信息。",
+    "explicitSave": "修改后点击保存更改才会生效",
+    "saved": "配置已保存",
+    "secretSet": "密钥已配置；留空保留原密钥，输入新值后保存以替换。",
+    "secretEmpty": "尚未配置密钥；本机免密服务可以留空。",
+    "emptyUnlimited": "留空表示不限制",
+    "installed": "已安装插件",
+    "findPlugin": "搜索插件",
+    "installAndTasks": "安装与任务",
+    "declaredRules": "以下为插件声明的只读匹配规则。个人别名在入口管理中设置。",
+    "openSettings": "在插件管理中配置",
+    "tabs": {
+      "config": "配置",
+      "functions": "功能",
+      "matching": "匹配",
+      "info": "信息与权限"
+    },
+    "fields": {
+      "paused": "暂停剪贴板记录",
+      "excludedApps": "排除应用（每行一项）",
+      "excludedText": "排除文本（每行一项）",
+      "retentionDays": "显示最近天数",
+      "visibleCount": "显示条数",
+      "quickKeys": "快捷按键",
+      "quickAction": "快捷动作",
+      "compactPosition": "小窗位置",
+      "excludedRoots": "排除目录或卷（每行一项）",
+      "extensions": "正文扩展名（每行一项，留空使用默认范围）",
+      "maxFileMiB": "正文文件上限（MiB）",
+      "includeHidden": "包含隐藏文件"
+    },
+    "options": {
+      "digits": "数字键",
+      "function": "功能键",
+      "copy": "复制",
+      "paste": "粘贴",
+      "cursor": "跟随光标",
+      "edge": "屏幕边缘"
+    },
+    "secretClearing": "密钥将在保存后清除；放弃更改将保留原密钥。"
   }
 }

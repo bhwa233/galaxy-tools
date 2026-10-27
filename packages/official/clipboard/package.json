@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-clipboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "spark233 local multi-format clipboard history",
   "license": "MIT",
   "files": [

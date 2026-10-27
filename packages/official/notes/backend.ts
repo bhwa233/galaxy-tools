@@ -102,7 +102,9 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
     initialized = false,
     locale = "zh-CN";
   let queue: Promise<unknown> = Promise.resolve(),
-    timer: ReturnType<typeof setInterval> | undefined;
+    timer: ReturnType<typeof setInterval> | undefined,
+    remindersRunning = false,
+    preparing = false;
   const settings = {
     value: defaultConfig(lifetime.dataDir),
     save: (value: ReturnType<typeof defaultConfig>) => {
@@ -129,11 +131,18 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
     getLocale: () => locale,
     notify: (notification) =>
       lifetime.emit("notes-reminder-due", notification as unknown as JsonValue),
-    onChanged: () => lifetime.emit("reminders-changed"),
+    onChanged: () => lifetime.emit("reminders-changed", reminders.list() as unknown as JsonValue),
   });
   const stopTimer = () => {
     if (timer) clearInterval(timer);
     timer = undefined;
+  };
+  const startTimer = () => {
+    stopTimer();
+    if (!remindersRunning || preparing) return;
+    timer = setInterval(() => {
+      void enqueue(lifetime, () => reminders.tick()).catch(() => {});
+    }, REMINDER_TICK_MS);
   };
   const ensure = () => {
     if (!initialized) {
@@ -257,14 +266,22 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
       case "storage.migrate": {
         // Prepare an opaque root copy; only the host's existing lifecycle/root
         // transaction may commit the pointer and reopen this engine there.
-        const oldRoot = store.dataDir,
-          oldSettings = settings.value;
-        try {
-          return store.migrate(request.newDir).dataDir;
-        } finally {
-          store.dataDir = oldRoot;
-          settings.value = oldSettings;
-        }
+        if (!current)
+          throw new AppError("permissionDenied", "Migration requires an active request");
+        const context = current,
+          destination = store.planMigration(request.newDir);
+        return (async () => {
+          await context.callHost({ operation: "storage.protectRoot", path: destination });
+          context.signal.throwIfAborted();
+          const oldRoot = store.dataDir,
+            oldSettings = settings.value;
+          try {
+            return store.migrate(request.newDir, destination).dataDir;
+          } finally {
+            store.dataDir = oldRoot;
+            settings.value = oldSettings;
+          }
+        })();
       }
       case "state.get": {
         const file = confined(lifetime.dataDir, "electron-layout.json");
@@ -298,12 +315,11 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
         reminders.tick(request.now);
         return reminders.list();
       case "reminder.start":
-        stopTimer();
-        timer = setInterval(() => {
-          void enqueue(lifetime, () => reminders.tick()).catch(() => {});
-        }, REMINDER_TICK_MS);
+        remindersRunning = true;
+        startTimer();
         return null;
       case "reminder.stop":
+        remindersRunning = false;
         stopTimer();
         return null;
     }
@@ -342,6 +358,7 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
       return result as JsonValue;
     },
     async prepareStop() {
+      preparing = true;
       stopTimer();
       let settled: Promise<unknown>;
       do {
@@ -350,7 +367,12 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
       } while (settled !== queue);
       return { ok: true };
     },
+    cancelStop() {
+      preparing = false;
+      startTimer();
+    },
     stop() {
+      remindersRunning = false;
       stopTimer();
       reminders.dispose();
     },

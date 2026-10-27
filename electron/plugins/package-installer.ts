@@ -1,6 +1,6 @@
 import path from "node:path";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, mkdtemp, opendir, realpath, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, opendir, realpath, rename, rm, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as retryDelay } from "node:timers/promises";
 import npmFetch from "npm-registry-fetch";
@@ -36,18 +36,70 @@ export interface PackageInstallOptions {
   limits?: Partial<PluginPackageLimits>;
   /** Optional externally supplied SRI for a local import. */
   integrity?: string;
+  onProgress?: (progress: { receivedBytes: number; totalBytes?: number }) => void;
+  onPhase?: (phase: "downloading" | "verifying") => void;
+}
+
+export interface PluginReleaseNotes {
+  status: "available" | "missing" | "error";
+  content?: string;
+  message?: string;
 }
 
 export interface StagedPluginPackage {
   metadata: PluginPackageMetadata;
   directory: string;
   integrity: string;
+  releaseNotes?: PluginReleaseNotes;
   source: {
     kind: "registry" | "file" | "directory";
     location: string;
     registry?: string;
     channel?: string;
   };
+}
+
+/** Package-local display text only. Existing archive validation rejects links;
+ * rereads still bound the opened regular file instead of following arbitrary paths. */
+export async function readPluginReleaseNotes(directory: string): Promise<PluginReleaseNotes> {
+  const maximum = 256 * 1024;
+  try {
+    const root = await realpath(directory);
+    const filename = path.join(root, "CHANGELOG.md");
+    const before = await lstat(filename);
+    if (!before.isFile() || before.isSymbolicLink() || before.size > maximum)
+      throw new Error("Release notes must be a bounded regular file");
+    if (!inside(root, await realpath(filename))) throw new Error("Release notes escaped package");
+    const file = await open(filename, "r");
+    try {
+      const opened = await file.stat();
+      if (
+        !opened.isFile() ||
+        opened.size > maximum ||
+        opened.dev !== before.dev ||
+        opened.ino !== before.ino
+      )
+        throw new Error("Release notes changed while opening");
+      const buffer = Buffer.alloc(maximum + 1);
+      let received = 0;
+      while (received < buffer.length) {
+        const { bytesRead } = await file.read(buffer, received, buffer.length - received, received);
+        if (!bytesRead) break;
+        received += bytesRead;
+      }
+      if (received > maximum) throw new Error("Release notes exceed the size limit");
+      return {
+        status: "available",
+        content: new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, received)),
+      };
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? { status: "missing" }
+      : { status: "error", message: "Package CHANGELOG.md could not be read safely." };
+  }
 }
 
 /** Exact code location only; lifecycle and active-version transactions are external. */
@@ -123,9 +175,18 @@ async function stagePackage(
   const work = await mkdtemp(path.join(stagingRoot, "install-"));
   const archive = path.join(work, "package.tgz");
   const unpacked = path.join(work, "unpacked");
+  let createdDirectory: string | undefined;
+  let createdIdentity: { dev: number; ino: number } | undefined;
+  const phase = (value: "downloading" | "verifying") => {
+    try {
+      options.onPhase?.(value);
+    } catch {}
+  };
   try {
+    phase("downloading");
     await acquire(archive, limits, cacheRoot);
     options.signal?.throwIfAborted();
+    phase("verifying");
     if (expectedIntegrity) {
       await ssri.checkStream(createReadStream(archive), expectedIntegrity, { strict: true });
     }
@@ -135,6 +196,7 @@ async function stagePackage(
     await mkdir(unpacked, { mode: 0o700 });
     await extractPluginArchive(archive, unpacked, limits, options.signal);
     const metadata = validatePluginDirectory(unpacked, environment, options.expected);
+    const releaseNotes = await readPluginReleaseNotes(unpacked);
     const directory = getPluginVersionDirectory(
       { versionsRoot },
       metadata.spark233.id,
@@ -149,8 +211,12 @@ async function stagePackage(
     for (let attempt = 0; ; attempt++) {
       options.signal?.throwIfAborted();
       await exactVersionParent(versionsRoot, directory);
+      options.signal?.throwIfAborted();
       try {
+        const identity = await lstat(unpacked);
         await rename(unpacked, directory);
+        createdDirectory = directory;
+        createdIdentity = identity;
         break;
       } catch (error) {
         if (
@@ -162,7 +228,24 @@ async function stagePackage(
         await retryDelay(Math.min(50 * 2 ** attempt, 500), undefined, { signal: options.signal });
       }
     }
-    return { metadata, directory, integrity, source };
+    options.signal?.throwIfAborted();
+    return { metadata, directory, integrity, source, releaseNotes };
+  } catch (error) {
+    if (createdDirectory && createdIdentity) {
+      const current = await lstat(createdDirectory).catch((failure: NodeJS.ErrnoException) => {
+        if (failure.code !== "ENOENT") throw failure;
+        return undefined;
+      });
+      if (
+        current?.isDirectory() &&
+        !current.isSymbolicLink() &&
+        current.dev === createdIdentity.dev &&
+        current.ino === createdIdentity.ino &&
+        inside(versionsRoot, await realpath(createdDirectory))
+      )
+        await rm(createdDirectory, { recursive: true, force: true });
+    }
+    throw error;
   } finally {
     await rm(work, { recursive: true, force: true });
   }
@@ -209,9 +292,24 @@ export async function stageRegistryPluginPackage(
         timeout: 30_000,
       };
       const response = await npmFetch(url, fetchOptions);
+      const length = response.headers.get("content-length");
+      const encoding = response.headers.get("content-encoding");
+      const declared = length && /^\d+$/.test(length) ? Number(length) : undefined;
+      const totalBytes =
+        (!encoding || encoding.toLowerCase() === "identity") &&
+        Number.isSafeInteger(declared) &&
+        declared! > 0 &&
+        declared! <= limits.maxArchiveBytes
+          ? declared
+          : undefined;
       await pipeline(
         response.body,
-        limitPackageBytes(limits.maxArchiveBytes, "Plugin tarball"),
+        limitPackageBytes(limits.maxArchiveBytes, "Plugin tarball", (receivedBytes) =>
+          options.onProgress?.({
+            receivedBytes,
+            ...(totalBytes !== undefined && receivedBytes <= totalBytes ? { totalBytes } : {}),
+          }),
+        ),
         createWriteStream(archive, { flags: "wx", mode: 0o600 }),
         { signal: options.signal },
       );
@@ -239,7 +337,9 @@ export async function stageLocalPluginPackage(
     async (archive, limits) => {
       await pipeline(
         createReadStream(source),
-        limitPackageBytes(limits.maxArchiveBytes, "Local plugin tarball"),
+        limitPackageBytes(limits.maxArchiveBytes, "Local plugin tarball", (receivedBytes) =>
+          options.onProgress?.({ receivedBytes, totalBytes: info.size }),
+        ),
         createWriteStream(archive, { flags: "wx", mode: 0o600 }),
         { signal: options.signal },
       );

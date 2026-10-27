@@ -1,12 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { translationTarget } from "./language.mjs";
 
 const MAX_OUTPUT = 256_000;
 const MAX_FRAME = 512_000;
 const CACHE_BYTES = 4 * 1024 * 1024;
-const targetLanguage = (text, override) =>
-  override ?? (/\p{Script=Han}/u.test(text) ? "en" : "zh-CN");
 const validTarget = (target) => target === "en" || target === "zh-CN";
 
 function providerUrl(endpoint) {
@@ -138,7 +137,7 @@ export function createTranslator(lifetime) {
       throw new Error("Translation input must contain between 1 and 20000 characters");
     if (input.target !== undefined && !validTarget(input.target))
       throw new Error("Translation target must be en or zh-CN");
-    const target = targetLanguage(input.text, input.target);
+    const target = translationTarget(input.text, input.target);
     const requestId = input.requestId ?? randomUUID();
     if (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(requestId))
       throw new Error("Invalid translation request ID");
@@ -319,6 +318,12 @@ export function createTranslator(lifetime) {
     }
   }
   return {
+    async useConfiguration(value) {
+      await ready.catch(() => {});
+      const next = value?.endpoint && value?.model ? configuration(value) : undefined;
+      if (JSON.stringify(next) !== JSON.stringify(config)) cache.clear();
+      config = next;
+    },
     configure,
     translate,
     async status() {

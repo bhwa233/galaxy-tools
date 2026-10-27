@@ -2,9 +2,12 @@
   "repository": "https://github.com/jimmgreen/pulse",
   "commit": "c4fe01ed82fe091f495f531972a854aa32caac2b",
   "archiveSha256": "CD158FCB689324DF5065FECCCD5DB0147B86BFCC7B06A4FFB9B160427E096634",
-  "adaptation": 7,
+  "adaptation": 8,
   "runtimeNamespace": "spark233",
   "modifiedFiles": [
+    "CMakeLists.txt",
+    "src/index/content_task_search.cpp",
+    "src/index/text_task_reader.cpp",
     "src\\app\\about_info.cpp",
     "src\\app\\about_info.h",
     "src\\app\\address_search_history.cpp",
@@ -396,8 +399,7 @@
     "src\\ui\\window_material.cpp",
     "src\\ui\\window_overview_view.h",
     "src\\ui\\window_switcher_view.cpp",
-    "src\\ui\\window_switcher_view.h",
-    "CMakeLists.txt"
+    "src\\ui\\window_switcher_view.h"
   ],
-  "preparedAt": "2026-10-24T10:04:35.1776844Z"
+  "preparedAt": "2026-10-26T10:12:59.1658428Z"
 }

@@ -266,6 +266,8 @@
     "shortcut": {
       "cancelHint": "Esc to cancel",
       "clear": "Clear",
+      "check": "Check",
+      "checkingShort": "Checking…",
       "checkFailed": "Shortcut check failed",
       "checking": "Checking shortcut...",
       "cleared": "Shortcut cleared",
@@ -529,8 +531,7 @@
     "empty": "No matching commands. Try another keyword or check whether the plugin is enabled.",
     "results": "Commands and local results",
     "enterMode": "Enter mode",
-    "navigation": "↑ ↓ Select · Enter Run · Esc Back or hide",
-    "modeHint": "Keyword + Tab to enter a mode",
+    "navigation": "Tab switch areas · ← → apps · ↑ ↓ results · Enter run · Esc back or hide",
     "settingsDescription": "Change application preferences and save them to spark233.",
     "savingSettings": "Saving preferences",
     "loadingSettings": "Loading preferences",
@@ -539,7 +540,53 @@
       "description": "Move the existing note data to the selected location. Please wait until the move finishes.",
       "confirm": "Confirm move"
     },
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "preferences": {
+      "manage": "Manage entries",
+      "title": "Launcher entries",
+      "description": "Manage frequent entries, pin order and personal aliases.",
+      "hideScope": "Hiding affects launcher entries, aliases and pins only; the plugin keeps running. Existing shortcuts and internal calls still follow their original authorization.",
+      "filterLabel": "Find an entry",
+      "filterPlaceholder": "Name, alias or plugin",
+      "listLabel": "Manageable launcher entries",
+      "command": "Command",
+      "application": "Application",
+      "pinned": "Pinned",
+      "hidden": "Hidden",
+      "unavailable": "Unavailable",
+      "pin": "Pin entry",
+      "unpin": "Unpin",
+      "moveUp": "Move {{title}} up",
+      "moveDown": "Move {{title}} down",
+      "editAliases": "Edit aliases",
+      "aliasesLabel": "Personal aliases",
+      "aliasesHint": "One per line. Leave empty to remove all personal aliases; original keywords remain available.",
+      "aliasesSummary": "Aliases: {{aliases}}",
+      "saveAliases": "Save aliases",
+      "hide": "Hide entry",
+      "show": "Show entry",
+      "removeMissing": "Remove this application record",
+      "empty": "No matching entries. Clear the filter to find hidden or unavailable items.",
+      "loading": "Loading entries…",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "expired": "This result has expired. Search again before editing."
+    },
+    "learning": {
+      "title": "Keyword selection memory",
+      "enable": "Allow learning successful choices (off by default)",
+      "privacy": "Associates only short keywords with explicitly selected applications or ordinary commands that execute successfully. Text bodies, AI input, images, clipboard context, and file context are excluded.",
+      "offHint": "Turning this off stops recording and learned ranking. Existing records remain and can still be cleared separately.",
+      "rankingHint": "Affects order only within the same group and match tier. Pinned entries, exact application names, and exact personal aliases take priority. Nothing runs automatically.",
+      "recordCount": "Saved associations: {{value}}",
+      "clear": "Clear learned choices",
+      "clearHint": "Clearing learned choices does not change pins, personal aliases, or hidden entries.",
+      "cleared": "Learned choices cleared.",
+      "saved": "Learning settings saved.",
+      "learned": "Previously chosen for this keyword"
+    },
+    "applicationRegion": "Applications & plugins",
+    "informationRegion": "Information and results"
   },
   "ocr": {
     "results": "Recognized text",
@@ -727,6 +774,306 @@
         "index": "Search indexing"
       },
       "commands": "Run other plugins’ public commands"
+    },
+    "currentVersion": "Current: {{version}}",
+    "candidateVersion": "Candidate: {{version}}",
+    "notInstalled": "Not installed",
+    "releaseNotes": {
+      "source": "From CHANGELOG.md at the package root. HTML and images are disabled.",
+      "candidate": "Candidate release notes",
+      "installed": "Installed release notes · {{version}}",
+      "missing": "This package does not include CHANGELOG.md.",
+      "error": "Release notes could not be read. Installation can still be reviewed and confirmed.",
+      "loading": "Reading release notes…",
+      "retry": "Retry reading release notes",
+      "prepareAgain": "Cancel this preview and prepare the package again to retry reading its release notes.",
+      "unavailable": "Release notes are not available in this preview."
+    },
+    "tasks": {
+      "title": "Package tasks",
+      "cancel": "Cancel task",
+      "cancelNamed": "Cancel package task for {{name}}",
+      "bytesKnown": "Downloaded {{received}} / {{total}} bytes",
+      "bytesUnknown": "Downloaded {{received}} bytes · total size unknown",
+      "downloadProgress": "Download progress for {{name}}",
+      "downloadHint": "Download progress only. Verification, confirmation, and installation still follow.",
+      "failedHint": "The task did not complete. Review the plugin status before retrying.",
+      "stage": {
+        "queued": "Waiting to start",
+        "resolving": "Resolving package version",
+        "downloading": "Downloading package",
+        "verifying": "Verifying integrity and package contents",
+        "awaiting-confirmation": "Ready for your installation confirmation",
+        "saving": "Requesting save and stopping the current plugin",
+        "backing-up": "Backing up plugin data",
+        "migrating": "Migrating plugin data",
+        "switching": "Switching installed version",
+        "starting": "Starting and validating the plugin",
+        "recovering": "Restoring the previous version and data",
+        "cancelling": "Cancelling and cleaning up",
+        "completed": "Installation completed",
+        "cancelled": "Task cancelled",
+        "failed": "Task failed",
+        "recovery-required": "Automatic recovery failed; manual recovery required"
+      }
     }
+  },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "description": "Review host and plugin status and counts. Content, raw output, and request bodies are excluded.",
+    "retention": "Keeps up to {{count}} recent entries. Clear removes all diagnostic logs, regardless of the current filters.",
+    "retry": "Reconnect",
+    "refresh": "Refresh",
+    "export": "Export current filters",
+    "clear": "Clear all logs",
+    "loading": "Connecting to diagnostics…",
+    "entryCount": "Showing {{count}} entries",
+    "catchingUp": "Showing {{count}} entries; receiving remaining batches…",
+    "entries": "Diagnostic entries (newest first)",
+    "unknownTime": "Time unavailable",
+    "duration": "Duration: {{value}} ms",
+    "bytes": "{{value}} bytes",
+    "count": "Count: {{value}}",
+    "identity": "View instance and task identifiers",
+    "instance": "Instance ID",
+    "task": "Task ID",
+    "source": {
+      "all": "All",
+      "host": "Host",
+      "plugin": "Plugin"
+    },
+    "level": {
+      "debug": "Debug",
+      "info": "Info",
+      "warn": "Warning",
+      "error": "Error",
+      "unknown": "Unknown level"
+    },
+    "kind": {
+      "host": "Host",
+      "lifecycle": "Plugin lifecycle",
+      "backend": "Plugin backend",
+      "native": "Native task",
+      "search": "Search",
+      "ocr": "Text recognition",
+      "translation": "Translation",
+      "package": "Plugin package",
+      "output": "Output counts",
+      "unknown": "Other event"
+    },
+    "code": {
+      "started": "Started",
+      "completed": "Completed",
+      "cancelled": "Cancelled",
+      "failed": "Failed",
+      "crashed": "Unexpected exit",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "uninstalled": "Uninstalled",
+      "stopped": "Stopped",
+      "output": "Output summarized",
+      "queued": "Queued",
+      "resolving": "Resolving version",
+      "downloading": "Downloading",
+      "verifying": "Verifying",
+      "awaiting-confirmation": "Awaiting installation confirmation",
+      "saving": "Requesting save",
+      "backing-up": "Backing up",
+      "migrating": "Migrating",
+      "switching": "Switching version",
+      "starting": "Starting",
+      "recovering": "Recovering",
+      "recovery-required": "Manual recovery required",
+      "unknown": "Status unavailable"
+    },
+    "failure": {
+      "unknownFailure": "The operation did not complete; its cause could not be classified.",
+      "timeout": "The task timed out.",
+      "permissionDenied": "This operation was not authorized.",
+      "unavailable": "A required service is unavailable.",
+      "invalidData": "Input or returned data was invalid.",
+      "saveRefused": "The plugin did not acknowledge saving. The operation was stopped.",
+      "recoveryRequired": "Automatic recovery did not complete. Review the recovery state.",
+      "networkFailure": "The network request did not complete.",
+      "integrityMismatch": "Package integrity verification failed.",
+      "incompatible": "The plugin is incompatible with this host.",
+      "diskUnavailable": "Diagnostic logs cannot currently be written to disk.",
+      "protocolFailure": "Backend communication did not complete as expected."
+    },
+    "filters": {
+      "source": "Source",
+      "plugin": "Plugin ID (blank for all)",
+      "level": "Levels",
+      "from": "From (local time)",
+      "to": "To (local time)",
+      "reset": "Reset filters",
+      "invalid": "Enter a valid plugin ID and time range. The start time must not be after the end time."
+    },
+    "error": {
+      "unavailable": "Diagnostics are unavailable",
+      "failed": "The diagnostic operation did not complete",
+      "hint": "Reconnect and try again. Raw error details are not displayed here."
+    },
+    "disk": {
+      "ready": "Disk logging is available",
+      "readyHint": "Diagnostic files rotate within fixed size limits.",
+      "unavailable": "Disk logging is unavailable",
+      "unavailableHint": "Current in-memory entries are still available. Lost disk writes appear in the counts below. Refresh to check the status again."
+    },
+    "dropped": {
+      "title": "View retention and drop counts",
+      "invalid": "Rejected entries",
+      "history": "History limit exceeded",
+      "queue": "Write queue limit exceeded",
+      "disk": "Dropped disk writes",
+      "output": "Output summary limit exceeded",
+      "subscribers": "Rejected or interrupted subscriptions"
+    },
+    "working": {
+      "clear": "Clearing all diagnostic logs…",
+      "export": "Exporting a diagnostic snapshot…",
+      "refresh": "Refreshing diagnostics…"
+    },
+    "notice": {
+      "cleared": "All diagnostic logs were cleared.",
+      "exported": "The current filtered diagnostic snapshot was exported.",
+      "exportCancelled": "Export cancelled. No file was saved.",
+      "memoryClearedDiskUnavailable": "In-memory entries were cleared. Disk log cleanup did not complete."
+    },
+    "empty": {
+      "title": "No matching diagnostic entries",
+      "description": "New events appear automatically. You can also adjust the filters or refresh."
+    },
+    "stream": {
+      "stdout": "Standard output (counts only)",
+      "stderr": "Standard error (counts only)"
+    }
+  },
+  "contextPanel": {
+    "title": "Context panel",
+    "return": "Return to source",
+    "close": "Close context panel",
+    "source": "Source: {{app}}",
+    "contextStatus": "Current context status",
+    "expired": "This context has expired. Close the panel and open it again.",
+    "returnFailed": "The source window is no longer available. Focus was not restored.",
+    "operationFailed": "The operation did not complete. Close the panel and try again.",
+    "capture": {
+      "capturing": "Getting the current selection…",
+      "ready": "The current selection is ready. Choose an action.",
+      "no-context": "No context captured. Showing common entries.",
+      "error": "Capture did not complete. Common entries remain available.",
+      "window": "No selection content captured. Source application actions and common entries are available."
+    },
+    "reason": {
+      "empty": "No new content was captured. Old clipboard content is not used.",
+      "denied": "The source application did not allow reading this selection.",
+      "changed": "The source window changed. This capture was discarded.",
+      "timeout": "Selection capture timed out. Expired content was not used.",
+      "unavailable": "The selection service is unavailable."
+    },
+    "service": {
+      "disabled": "Mouse triggering is off.",
+      "starting": "Starting the input service…",
+      "ready": "The input service is ready.",
+      "unavailable": "The input service is unavailable. Try again.",
+      "unsupported": "Mouse selection triggering is unavailable on this platform. You can still preview common entries.",
+      "loading": "Reading input service status…"
+    },
+    "button": {
+      "middle": "Middle button",
+      "x1": "Side button 1",
+      "x2": "Side button 2"
+    },
+    "trigger": {
+      "click": "Click and release",
+      "hold": "Hold and release"
+    },
+    "settings": {
+      "title": "Context panel",
+      "enable": "Enable mouse triggering (off by default)",
+      "observeOnly": "Observes the selected button without blocking its original action. A hold opens the panel only after release. The source application may also scroll or navigate with that button.",
+      "button": "Mouse button",
+      "trigger": "Trigger",
+      "holdDuration": "Hold duration",
+      "milliseconds": "{{value}} ms",
+      "copyFallback": "Allow one copy shortcut as a fallback",
+      "copyHint": "Selected text is attempted first. Only with this permission may one Ctrl+C be sent to capture images or files; it updates the system clipboard. Without new content from this capture, no context is used. Old clipboard content is never reused.",
+      "excludedApps": "Excluded applications",
+      "excludedHint": "One .exe file name per line, without a path; up to 64, case insensitive. Save an empty list to remove exclusions.",
+      "excludedInvalid": "Enter up to 64 valid .exe file names without paths or control characters.",
+      "saveExclusions": "Save exclusions",
+      "operationFailed": "The operation did not complete. Try again or check diagnostics.",
+      "retry": "Retry input service",
+      "preview": "Preview common entries",
+      "previewHint": "Preview does not read a selection or send a copy shortcut."
+    }
+  },
+  "settingsEditor": {
+    "navigation": "Settings navigation",
+    "pages": {
+      "general": "General",
+      "entries": "Launcher entries",
+      "plugins": "Plugins",
+      "backup": "Data & backups",
+      "diagnostics": "Diagnostics"
+    },
+    "savePolicy": "General settings save automatically. Plugin settings require Save changes.",
+    "autoSave": "Changes save automatically",
+    "unsaved": "Unsaved changes",
+    "unsavedDescription": "Save before continuing, discard changes, or cancel to stay here.",
+    "save": "Save changes",
+    "discard": "Discard changes",
+    "cancel": "Cancel",
+    "continue": "Continue",
+    "navigationCancelled": "Navigation cancelled",
+    "hostSaveFailed": "General settings have not been saved. Retry before leaving.",
+    "minimize": "Minimize",
+    "maximize": "Maximize or restore",
+    "backGeneral": "Back to general"
+  },
+  "pluginConfig": {
+    "loading": "Loading settings…",
+    "loadFirst": "Load settings first",
+    "noSettings": "This plugin has no editable settings. See its features and information.",
+    "explicitSave": "Changes apply only after Save changes",
+    "saved": "Settings saved",
+    "secretSet": "A key is configured. Leave blank to keep it, or save a new value to replace it.",
+    "secretEmpty": "No key configured. Local services without authentication may leave this blank.",
+    "emptyUnlimited": "Leave blank for no limit",
+    "installed": "Installed plugins",
+    "findPlugin": "Search plugins",
+    "installAndTasks": "Install & tasks",
+    "declaredRules": "Read-only rules declared by the plugin. Manage personal aliases in Launcher entries.",
+    "openSettings": "Configure in plugin management",
+    "tabs": {
+      "config": "Settings",
+      "functions": "Features",
+      "matching": "Matching",
+      "info": "Info & permissions"
+    },
+    "fields": {
+      "paused": "Pause clipboard capture",
+      "excludedApps": "Excluded applications (one per line)",
+      "excludedText": "Excluded text (one per line)",
+      "retentionDays": "Visible days",
+      "visibleCount": "Visible entries",
+      "quickKeys": "Quick keys",
+      "quickAction": "Quick action",
+      "compactPosition": "Compact window position",
+      "excludedRoots": "Excluded folders or volumes (one per line)",
+      "extensions": "Content extensions (one per line; empty uses defaults)",
+      "maxFileMiB": "Maximum content file size (MiB)",
+      "includeHidden": "Include hidden files"
+    },
+    "options": {
+      "digits": "Digits",
+      "function": "Function keys",
+      "copy": "Copy",
+      "paste": "Paste",
+      "cursor": "At cursor",
+      "edge": "Screen edge"
+    },
+    "secretClearing": "The key will be cleared after saving. Discard changes to keep it."
   }
 }

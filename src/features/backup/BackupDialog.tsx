@@ -17,49 +17,71 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/ManagementSurface";
 import { Spinner } from "@/components/ui/spinner";
-import { createBackup, inspectBackup, restoreBackup } from "./api";
+import { createBackup, inspectBackup, releaseBackupSelection, restoreBackup } from "./api";
 import type { BackupReport, BackupSelection } from "./types";
 
 export interface BackupDialogProps {
+  embedded?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 // Reuse the existing Dialog/Card/Alert primitives and desktop boundary. State
 // here represents only the user's selection and the host's verified preview.
-export function BackupDialog({ open, onOpenChange }: BackupDialogProps) {
+export function BackupDialog({ open, onOpenChange, embedded = false }: BackupDialogProps) {
   const { t, i18n } = useTranslation();
   const [busy, setBusy] = useState<"create" | "inspect" | "restore">();
   const [selection, setSelection] = useState<BackupSelection>();
+  const selectionRef = useRef<BackupSelection | undefined>(undefined);
+  const selectionGeneration = useRef(0);
+  const openRef = useRef(open);
+  openRef.current = open;
   const [report, setReport] = useState<BackupReport>();
   const [error, setError] = useState<string>();
   const operating = useRef(false);
   const mounted = useRef(true);
+  const clearSelection = () => {
+    selectionGeneration.current++;
+    const previous = selectionRef.current;
+    selectionRef.current = undefined;
+    if (mounted.current) setSelection(undefined);
+    if (previous) void releaseBackupSelection(previous.selectionId).catch(() => {});
+  };
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      clearSelection();
     };
   }, []);
+  useEffect(() => {
+    if (!open) clearSelection();
+  }, [open]);
   const run = async (action: "create" | "inspect" | "restore") => {
     if (operating.current || (action === "restore" && !selection)) return;
     operating.current = true;
     setBusy(action);
     setError(undefined);
     setReport(undefined);
-    if (action === "inspect") setSelection(undefined);
+    if (action === "inspect") clearSelection();
+    const generation = selectionGeneration.current;
     try {
       if (action === "inspect") {
         const next = await inspectBackup();
-        if (mounted.current && next) setSelection(next);
+        if (next) {
+          if (mounted.current && openRef.current && selectionGeneration.current === generation) {
+            selectionRef.current = next;
+            setSelection(next);
+          } else void releaseBackupSelection(next.selectionId).catch(() => {});
+        }
       } else {
         const next =
           action === "create" ? await createBackup() : await restoreBackup(selection!.selectionId);
         if (mounted.current && next) {
           setReport(next);
-          if (action === "restore") setSelection(undefined);
+          if (action === "restore") clearSelection();
         }
       }
     } catch (value) {
@@ -70,7 +92,7 @@ export function BackupDialog({ open, onOpenChange }: BackupDialogProps) {
           "code" in value &&
           value.code === "backupSelectionChanged"
         ) {
-          setSelection(undefined);
+          clearSelection();
           setError(t("backup.selectionChanged"));
         } else {
           setError(
@@ -89,9 +111,13 @@ export function BackupDialog({ open, onOpenChange }: BackupDialogProps) {
     `${(bytes / (1024 * 1024)).toLocaleString(i18n.resolvedLanguage, { maximumFractionDigits: 2 })} MiB`;
   return (
     <Dialog
+      embedded={embedded}
       open={open}
       onOpenChange={(next) => {
-        if (!operating.current) onOpenChange(next);
+        if (!operating.current) {
+          if (!next) clearSelection();
+          onOpenChange(next);
+        }
       }}
     >
       <DialogContent
@@ -204,7 +230,7 @@ export function BackupDialog({ open, onOpenChange }: BackupDialogProps) {
                   {busy === "restore" && <Spinner data-icon="inline-start" />}
                   {t("backup.confirm", { defaultValue: "确认恢复" })}
                 </Button>
-                <Button variant="outline" disabled={!!busy} onClick={() => setSelection(undefined)}>
+                <Button variant="outline" disabled={!!busy} onClick={clearSelection}>
                   {t("backup.cancelSelection", { defaultValue: "取消选择" })}
                 </Button>
               </CardFooter>

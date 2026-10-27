@@ -185,8 +185,21 @@ export class NoteStore {
       editorMode: req.editorMode ?? old?.editorMode ?? DEFAULT_NOTE_EDITOR_MODE,
     };
     const target = this.notePath(meta);
+    const previous = fs.existsSync(target) ? fs.readFileSync(target) : undefined;
     atomicWrite(target, req.content);
-    this.commit(old ? notes.map((note) => (note.id === id ? meta : note)) : [...notes, meta]);
+    try {
+      this.commit(old ? notes.map((note) => (note.id === id ? meta : note)) : [...notes, meta]);
+    } catch (error) {
+      // The index still owns the old note. Reuse the same atomic writer to undo
+      // this body's write, without leaving a second Markdown for the same ID.
+      try {
+        if (previous === undefined) fs.rmSync(target, { force: true });
+        else atomicWrite(target, previous);
+      } catch (rollback) {
+        throw new AggregateError([error, rollback], "便签索引提交及正文恢复均失败");
+      }
+      throw error;
+    }
     if (old) {
       const source = this.notePath(old);
       // Case-only renames on Windows can refer to the same newly saved file.
@@ -301,13 +314,20 @@ export class NoteStore {
       }
     return removed;
   }
-  migrate(newDir: string): AppConfig {
+  planMigration(newDir: string): string {
     const dest = canonical(path.join(path.resolve(newDir), "spark233")),
       source = canonical(this.dataDir);
     if (inside(source, dest) || inside(dest, source) || dest === path.parse(dest).root)
       throw new AppError("unsafePath", "新旧目录不能互相包含");
     if (fs.existsSync(dest) && fs.readdirSync(dest).length)
       throw new AppError("pathConflict", "目标目录必须为空");
+    return dest;
+  }
+  migrate(newDir: string, expectedRoot?: string): AppConfig {
+    const dest = this.planMigration(newDir),
+      source = canonical(this.dataDir);
+    if (expectedRoot !== undefined && dest !== expectedRoot)
+      throw new AppError("unsafePath", "迁移目的目录在授权后发生变化");
     fs.mkdirSync(dest, { recursive: true });
     // Copy then switch config; keep the source as a recovery copy, including images and layout.
     for (const item of [
@@ -315,6 +335,7 @@ export class NoteStore {
       "images",
       "backgrounds",
       "metadata.json",
+      ".spark233-preferences.json",
       "electron-layout.json",
       "reminders.json",
     ]) {

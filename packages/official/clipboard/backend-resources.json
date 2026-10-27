@@ -7,7 +7,7 @@
     },
     {
       "path": "electron/plugins/official/clipboard-history.ts",
-      "sha256": "9162dc6bf9d7314734b7375f6d04d4a8e9eea58677af902f4fc8cf7488a34d81"
+      "sha256": "443b213c7276ac5a91d1cd9b4c9c8bd5da28a9313f7e2e09b3d1066b42c470d3"
     },
     {
       "path": "electron/persistence.ts",
@@ -16,7 +16,7 @@
   ],
   "file": {
     "name": "backend.mjs",
-    "bytes": 211292,
-    "sha256": "5605c6e49d487e48ae71f5879d19a1970cebcd89ace1dcdd8520b7c9b56b0963"
+    "bytes": 211298,
+    "sha256": "978dcb97aea101d80d135f08eb219e50824cddf40017a3cebb6adeb06ae5daef"
   }
 }

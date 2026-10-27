@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { commandMatchesSourceApplication } from "../../packages/sdk/src/index.js";
 import type {
   JsonValue,
   PluginManifest,
@@ -32,11 +33,13 @@ export function createCapabilityBroker(options: {
   ) => Promise<JsonValue | undefined>;
 }) {
   const files = new Map<string, string>();
+  const contextFiles = new Map<string, ResourceHandle>();
   const shortcuts = new Map<string, () => Promise<void>>();
   const notifications = new Set<Notification>();
   options.scope.own("event", {
     dispose: () => {
       files.clear();
+      contextFiles.clear();
       for (const notification of notifications) notification.close();
       notifications.clear();
     },
@@ -50,6 +53,15 @@ export function createCapabilityBroker(options: {
     const { id } = handlePayload.parse(value),
       file = files.get(id);
     if (!file) throw new Error("文件资源不属于此插件实例或已失效");
+    const contextResource = contextFiles.get(id);
+    if (contextResource) {
+      const current = options.resolveResource?.(contextResource);
+      if (!current || canonical(current) !== file) {
+        files.delete(id);
+        contextFiles.delete(id);
+        throw new Error("上下文文件资源已撤销，请重新选择");
+      }
+    }
     const real = canonical(file);
     if (real !== file || !fs.statSync(real).isFile())
       throw new Error("已授权文件发生变化，请重新选择");
@@ -73,6 +85,11 @@ export function createCapabilityBroker(options: {
         )
       )
         throw new Error("原生调用只能使用本插件已声明的入口和公开命令");
+      const command = options.manifest.commands.find((entry) => entry.id === input.commandId)!;
+      // Raw capability payloads carry no host-observed source. Source-bound
+      // commands must enter through the host's guarded activation route.
+      if (!commandMatchesSourceApplication(command, undefined))
+        throw new Error("此命令需要宿主确认的来源程序，请通过对应启动器动作执行");
       if (!options.invokeNative) throw new Error("此插件的原生运行时不可用");
       return options.invokeNative(
         input.entryId,
@@ -253,11 +270,26 @@ export function createCapabilityBroker(options: {
   };
   return Object.assign(broker, {
     grantContext: (context?: PluginContext) => {
-      if (!context || context.kind === "text") return;
+      // Expired references never become permanent picker grants. Prune on the
+      // next grant as well as on read, bounding repeated panel captures.
+      for (const [id, resource] of contextFiles) {
+        const current = options.resolveResource?.(resource);
+        if (!current || canonical(current) !== files.get(id)) {
+          files.delete(id);
+          contextFiles.delete(id);
+        }
+      }
+      if (!context || context.kind === "text" || context.kind === "window") return;
       for (const resource of context.kind === "image" ? [context.resource] : context.resources) {
         const filename = options.resolveResource?.(resource);
-        if (filename) files.set(resource.id, canonical(filename));
+        if (filename && (contextFiles.has(resource.id) || contextFiles.size < 256)) {
+          files.set(resource.id, canonical(filename));
+          contextFiles.set(resource.id, structuredClone(resource));
+        }
       }
+    },
+    revokeContext: (ids: readonly string[]) => {
+      for (const id of ids) if (contextFiles.delete(id)) files.delete(id);
     },
   });
 }

@@ -14,6 +14,42 @@ export interface PluginUpdateSource {
   registry: string;
   channel: string;
 }
+export interface PluginReleaseNotes {
+  status: "available" | "missing" | "error";
+  content?: string;
+  message?: string;
+}
+export type PackageTaskStage =
+  | "queued"
+  | "resolving"
+  | "downloading"
+  | "verifying"
+  | "awaiting-confirmation"
+  | "saving"
+  | "backing-up"
+  | "migrating"
+  | "switching"
+  | "starting"
+  | "recovering"
+  | "cancelling"
+  | "completed"
+  | "cancelled"
+  | "failed"
+  | "recovery-required";
+export interface PackageTaskSnapshot {
+  taskId: string;
+  revision: number;
+  pluginId?: string;
+  packageName: string;
+  currentVersion?: string;
+  candidateVersion?: string;
+  stage: PackageTaskStage;
+  receivedBytes: number;
+  totalBytes?: number;
+  cancelable: boolean;
+  previewId?: string;
+  error?: string;
+}
 export interface PluginSummary {
   pluginId: string;
   packageName: string;
@@ -28,6 +64,7 @@ export interface PluginSummary {
   dependencies: Record<string, string>;
   optionalDependencies: Record<string, string>;
   lastError?: string;
+  releaseNotes?: PluginReleaseNotes;
 }
 export interface InstallPreview {
   previewId: string;
@@ -36,6 +73,9 @@ export interface InstallPreview {
   integrity: string;
   requiresNativeTrust: boolean;
   createdAt: number;
+  taskId?: string;
+  currentVersion?: string;
+  releaseNotes?: PluginReleaseNotes;
 }
 export interface UpdateSummary {
   pluginId: string;
@@ -50,6 +90,7 @@ export interface PluginManagementState {
   pending: InstallPreview[];
   updates: UpdateSummary[];
   checking: boolean;
+  tasks: PackageTaskSnapshot[];
   lastChecked?: number;
   error?: string;
 }
@@ -70,6 +111,8 @@ export interface PluginCommandArguments {
   plugins_prepare_bundled: { pluginId: string };
   plugins_confirm_install: { previewId: string; trustNative: boolean };
   plugins_cancel_install: { previewId: string };
+  plugins_cancel_package_task: { taskId: string };
+  plugins_release_notes: { pluginId: string };
   plugins_enable: { pluginId: string; enabled: boolean };
   plugins_activate: { pluginId: string; commandId?: string };
   plugins_uninstall: { pluginId: string; deleteData: boolean };

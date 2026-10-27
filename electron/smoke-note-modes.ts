@@ -26,13 +26,30 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     );
     await until(win, mode(value), `Note did not switch to ${value}`);
   }
-  async function save(win: BrowserWindow) {
+  async function save(win: BrowserWindow, noteId?: string, expectedContent?: string) {
+    const expected =
+      expectedContent ??
+      (await win.webContents.executeJavaScript(
+        "document.querySelector('textarea')?.value ?? null",
+      ));
     await win.webContents.executeJavaScript(
       "document.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true}))",
     );
-    await wait(200);
+    if (expected === null) {
+      await wait(200);
+      return;
+    }
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const id =
+        noteId ??
+        [...context.layouts.values()].find((entry) => context.windows.get(entry.label) === win)
+          ?.noteId;
+      if (id && (await context.notes.get(id)).content === expected) return;
+      await wait(50);
+    }
+    throw new Error("Ctrl+S did not persist the current editor source");
   }
-  const win = context.windows.get(context.openNote())!;
+  const win = context.windows.get(await context.openNote())!;
   await until(win, mode("text"), "New note did not default to Text mode");
   if (
     await win.webContents.executeJavaScript(
@@ -86,9 +103,9 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   )!;
   const id = layout.noteId;
   if (!id) throw new Error("Screenshot paste did not save its note");
-  if (context.store.get(id).title !== "一二三四五六七八九十甲乙")
+  if ((await context.notes.get(id)).title !== "一二三四五六七八九十甲乙")
     throw new Error("Header title did not save with the note");
-  const original = context.store.get(id).content;
+  const original = (await context.notes.get(id)).content;
   if (
     !original.startsWith(source) ||
     !original.includes("{width=75%}") ||
@@ -108,15 +125,15 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     )
   )
     throw new Error("Markdown mode did not remain read-only");
-  await save(win);
-  if (context.store.get(id).content !== original)
+  await save(win, id, original);
+  if ((await context.notes.get(id)).content !== original)
     throw new Error("Switching to Markdown rewrote the source");
   await win.webContents.executeJavaScript(
     "document.querySelector('[data-pad-markdown] input[type=checkbox]').click()",
   );
-  await save(win);
   const checked = original.replace("- [ ] 核对图片", "- [x] 核对图片");
-  if (context.store.get(id).content !== checked)
+  await save(win, id, checked);
+  if ((await context.notes.get(id)).content !== checked)
     throw new Error("Checking a task altered unrelated Markdown");
   const output = path.dirname(context.output);
   fs.mkdirSync(output, { recursive: true });
@@ -129,11 +146,12 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   );
   fs.writeFileSync(path.join(output, "note-pad-text.png"), (await win.capturePage()).toPNG());
   await context.foldAndRelease(win);
-  const reopened = context.windows.get(context.openNote(id))!;
+  const reopened = context.windows.get(await context.openNote(id))!;
   await until(reopened, mode("text"), "Fold/reopen forgot the note's Text mode");
   await switchMode(reopened, "markdown");
   await until(reopened, screenshotReady, "Reopening lost the image preview");
-  if (context.store.get(id).content !== checked) throw new Error("Fold/reopen altered the source");
+  if ((await context.notes.get(id)).content !== checked)
+    throw new Error("Fold/reopen altered the source");
   await main.webContents.executeJavaScript(
     `window.spark233Desktop.invoke('open_note_in_editor',{noteId:${JSON.stringify(id)}})`,
   );
@@ -167,8 +185,8 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   await main.webContents.executeJavaScript(
     "document.querySelector('.markdown-selectable input[type=checkbox]').click()",
   );
-  await save(main);
-  if (context.store.get(id).content !== original)
+  await save(main, id, original);
+  if ((await context.notes.get(id)).content !== original)
     throw new Error("Main preview checkbox did not update only its task marker");
   await until(
     reopened,

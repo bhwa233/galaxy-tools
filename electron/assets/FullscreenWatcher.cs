@@ -15,6 +15,7 @@ class FullscreenWatcher {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder name, int size);
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowLong(IntPtr h, int index);
     static volatile string managedHandles = "";
     static int Main(string[] args) {
         int parent; if(args.Length != 1 || !Int32.TryParse(args[0], out parent)) return 2;
@@ -34,11 +35,16 @@ class FullscreenWatcher {
                     rect.Left <= info.Monitor.Left+2 && rect.Top <= info.Monitor.Top+2 &&
                     rect.Right >= info.Monitor.Right-2 && rect.Bottom >= info.Monitor.Bottom-2) {
                     var r=info.Monitor;
+                    // Inserting behind a topmost HWND promotes our windows into
+                    // its topmost band again after the host has lowered them.
+                    // HWND_NOTOPMOST stays behind that band; ordinary fullscreen
+                    // windows still need explicit placement behind their HWND.
+                    IntPtr after = (GetWindowLong(window,-20) & 0x00000008) != 0 ? new IntPtr(-2) : window;
                     foreach(var item in managedHandles.Split(' ')) {
                         long raw; if(!Int64.TryParse(item,out raw)) continue;
                         IntPtr managed = new IntPtr(raw);
                         if(MonitorFromWindow(managed,2)==MonitorFromWindow(window,2))
-                            SetWindowPos(managed,window,0,0,0,0,0x0013);
+                            SetWindowPos(managed,after,0,0,0,0,0x0013);
                     }
                     value=String.Format("rect {0} {1} {2} {3}",r.Left,r.Top,r.Right-r.Left,r.Bottom-r.Top);
                 }

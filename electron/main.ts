@@ -1,3 +1,22 @@
+import { shouldHideLauncher } from "./host/launcher-presentation.js";
+import { readApplicationSettings } from "./application-settings.js";
+import { PluginSettingsService, type PluginSettingsAdapter } from "./plugins/settings.js";
+import {
+  readTranslationSettings,
+  writeTranslationSettings,
+} from "./plugins/translation-settings.js";
+import { ClipboardHistory } from "./plugins/official/clipboard-history.js";
+import { settingsSchema as clipboardSettingsSchema } from "./plugins/official/clipboard-history.js";
+import {
+  settingsSchema as searchSettingsSchema,
+  validateSettings as validateSearchSettings,
+} from "./plugins/official/search-settings.js";
+import {
+  noteSettingsFields,
+  clipboardSettingsFields,
+  searchSettingsFields,
+  translationSettingsFields,
+} from "../src/features/plugins/settingsFields.js";
 import {
   app,
   BrowserWindow,
@@ -12,18 +31,32 @@ import {
   protocol,
   screen,
   session,
+  safeStorage,
   shell,
 } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import { AppError, atomicWrite, confined, readJson, canonical, inside } from "./store.js";
-import { PluginBackupService, readPendingBackupNotesRoot } from "./plugins/backup.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { z } from "zod";
+import { sourceApplicationSchema } from "../packages/sdk/src/index.js";
+import { BackupSelections } from "./backup-selections.js";
+import { DiagnosticsStore, diagnosticErrorCode, type DiagnosticFilter } from "./diagnostics.js";
+import { AppError, atomicWrite, confined, canonical, inside } from "./persistence.js";
+import { PluginBackupService, readPendingBackupDataRoots } from "./plugins/backup.js";
 import type { PluginResourceScope } from "./plugins/resources.js";
-import { externalUrl, FileGrants, imagePath } from "./security.js";
+import type { PluginManagerSnapshot } from "./plugins/manager.js";
+import { externalUrl, FileGrants } from "./security.js";
+import { ApplicationEntryAdmissions } from "./application-entries.js";
+import { ContextPanelCoordinator, type ContextPanelMaterialized } from "./context-panel.js";
+import type {
+  ContextPanelNativeCapture,
+  ContextPanelNativeConfig,
+} from "./context-panel-native.js";
 import type { AppConfig } from "../src/features/settings/types.js";
-import type { SaveNoteRequest } from "../src/features/notes/types.js";
+import type { NoteMetadata, SaveNoteRequest } from "../src/features/notes/types.js";
+import type { PluginManagementState } from "../src/features/plugins/types.js";
 
 import { initializeWindowsRuntime, watchFullscreen } from "./windows.js";
 import { ShortcutManager } from "./host/shortcuts.js";
@@ -39,7 +72,8 @@ import { runMcpLauncher } from "./mcp-launcher.js";
 import { McpServer } from "./mcp-server.js";
 import type { McpOps } from "./mcp-protocol.js";
 import { deriveNoteWindowState } from "./note-window-state.js";
-import { HostConfigStore } from "./host-config.js";
+import { HostConfigStore, configPatchSchema } from "./host-config.js";
+import { HostPrivateDataRootsStore } from "./private-data-roots.js";
 import { LauncherController } from "./launcher.js";
 import { createCommandPinyinMatcher } from "./launcher-command-matcher.js";
 import { createNotesRuntime } from "./plugins/official/notes.js";
@@ -79,6 +113,12 @@ app.on("child-process-gone", (_event, details) => {
   ) {
     gpuCrashCount += 1;
     console.error("gpu-process-gone", details.reason, details.exitCode);
+    diagnostics?.record({
+      kind: "host",
+      code: "crashed",
+      level: "error",
+      errorCode: "unknownFailure",
+    });
   }
 });
 
@@ -136,8 +176,11 @@ if (cliArgs.mcp) {
     });
 } else if (!app.requestSingleInstanceLock()) app.exit(0);
 const grants = new FileGrants();
+const applicationEntries = new ApplicationEntryAdmissions();
 const windows = new Map<string, BrowserWindow>();
 interface Layout extends CapsuleEntry {
+  hostPage?: "settings";
+  settingsTarget?: { page: string; pluginId?: string; tab?: string };
   everOpened?: boolean;
   label: string;
   view: "main" | "launcher" | "notepad" | "tile";
@@ -157,15 +200,33 @@ let pendingManagerOpen:
   | undefined;
 const crashedWindows = new Set<number>();
 let hostConfig: HostConfigStore;
+let privateDataRoots: HostPrivateDataRootsStore;
+let diagnostics: DiagnosticsStore | undefined;
+const diagnosticSubscriptions = new Map<string, () => void>();
 const notesClient = new NotesDataClient(() => pluginHost?.manager);
-let notesOwnerClient: NotesDataClient | undefined;
+// Only the factory may use its own startup transport before manager registration.
+let notesStartupClient: NotesDataClient | undefined;
 let notesMaintenanceClient: NotesDataClient | undefined;
+// A utility crash must not destroy the host's surviving editors or overwrite
+// their in-memory placement with the last layout acknowledged by the dead worker.
+let notesRecoveryPending = false;
+let pendingNotesMigration: { directory: string; copiedRoot?: string } | undefined;
 let backupService: PluginBackupService | undefined;
-const backupSelections = new Map<
-  string,
-  { directory: string; createdAt: number; manifestFingerprint: string }
->();
+const backupSelections = new BackupSelections();
 let maintenance = false;
+let launcherAvailabilityRevision = 0;
+function setMaintenance(value: boolean): void {
+  if (maintenance === value) return;
+  maintenance = value;
+  launcherAvailabilityRevision++;
+  if (value) {
+    launcher?.clear();
+    void contextPanel?.close().catch(() => {});
+  }
+  // Entering maintenance keeps visible choices available for a clear rejected
+  // action. Recovery must refresh even if the UI never read the entering state.
+  if (!value) emit("launcher-status-changed");
+}
 let notesScope: PluginResourceScope | undefined;
 const preparedWindows = new Set<number>();
 const workspaceRequests = new Map<string, { kind: string; result?: unknown }>();
@@ -203,26 +264,398 @@ function bindOfficialRenderer(
   });
 }
 let launcher: LauncherController;
+const launcherExecutions = new AsyncLocalStorage<{
+  callerId: string;
+  active: boolean;
+  panelExecution?: string;
+  query?: { sessionId: string; requestId: string };
+}>();
+const windowPresentations = new WeakMap<BrowserWindow, () => boolean>();
+function launcherPresentationGuard(): () => boolean {
+  const execution = launcherExecutions.getStore();
+  if (!execution?.panelExecution) return () => true;
+  const { callerId, panelExecution } = execution;
+  return () => contextPanel?.canPresent(callerId, panelExecution) === true;
+}
+function endLauncherExecutionQuery(): void {
+  const execution = launcherExecutions.getStore();
+  if (execution?.active && execution.query)
+    launcher.clear(
+      execution.callerId,
+      execution.query.sessionId,
+      execution.query.requestId,
+      "execution",
+    );
+}
+const launcherCallers = new Map<number, string>();
+const launcherHides = new Map<number, { caller: string; sessionId: string; requestId: string }>();
+function launcherCaller(win: BrowserWindow): string {
+  const id = win.webContents.id;
+  let caller = launcherCallers.get(id);
+  if (!caller) {
+    caller = `${id}:${randomUUID()}`;
+    launcherCallers.set(id, caller);
+  }
+  if (windows.get("context-panel") === win) contextPanelCallers.add(caller);
+  return caller;
+}
+// Capture the execution before Electron dispatches a possibly asynchronous hide
+// event; AsyncLocalStorage alone need not survive a native event boundary.
+function hideHostWindow(win: BrowserWindow): void {
+  const id = win.webContents.id;
+  const caller = launcherCallers.get(id);
+  const execution = launcherExecutions.getStore();
+  if (
+    win.isVisible() &&
+    caller &&
+    execution?.active &&
+    execution.callerId === caller &&
+    execution.query
+  )
+    launcherHides.set(id, { caller, ...execution.query });
+  else launcherHides.delete(id);
+  win.hide();
+}
+function revokeLauncherCaller(id: number): void {
+  const caller = launcherCallers.get(id);
+  if (caller) backupSelections.revokeCaller(caller);
+  if (caller) launcher?.clear(caller);
+  if (caller) applicationEntries.revoke(caller);
+  if (caller) pluginHost?.releaseCaller(caller);
+  if (caller && contextPanelCallers.delete(caller))
+    void contextPanel?.close(caller, { retired: true }).catch(() => {});
+  if (caller) {
+    diagnosticSubscriptions.get(caller)?.();
+    diagnosticSubscriptions.delete(caller);
+  }
+  launcherCallers.delete(id);
+  launcherHides.delete(id);
+}
+function deliverLauncherQueryUpdate(
+  caller: string,
+  result: import("../src/features/launcher/types.js").LauncherQueryResult,
+): void {
+  for (const win of windows.values())
+    if (
+      !win.isDestroyed() &&
+      !win.webContents.isDestroyed() &&
+      launcherCallers.get(win.webContents.id) === caller
+    )
+      emit("launcher-query-updated", result, win);
+}
 let notesActive = false;
 let notesRendererRoot: string | undefined;
 let layoutsRestored = false;
 let clipboardRuntime: ClipboardRuntime | undefined;
 let launcherContext: { context: PluginContext; label: string } | undefined;
+let launcherContextRevision = 0;
 const pluginImages = new Map<string, CaptureImage>();
 const pluginFiles = new Map<string, string>();
+const resourceRevocations = new Set<(ids: readonly string[]) => void>();
+function notifyResourceRevocations(ids: readonly string[]): void {
+  if (!ids.length) return;
+  for (const listener of resourceRevocations)
+    try {
+      listener(ids);
+    } catch {
+      console.warn("context-resource-revocation-failed");
+    }
+}
 function clearLauncherContext(): void {
-  if (launcherContext?.context.kind === "image") {
-    const image = pluginImages.get(launcherContext.context.resource.id);
-    if (image?.owner.pluginId === "spark233.host") {
+  const previous = launcherContext;
+  const revoked =
+    previous?.context.kind === "image"
+      ? [previous.context.resource.id]
+      : previous?.context.kind === "files"
+        ? previous.context.resources.map((resource) => resource.id)
+        : [];
+  const image =
+    previous?.context.kind === "image" ? pluginImages.get(previous.context.resource.id) : undefined;
+  launcherContextRevision++;
+  launcherContext = undefined;
+  if (image?.owner.pluginId === "spark233.host") pluginImages.delete(image.resource.id);
+  if (previous?.context.kind === "files")
+    for (const resource of previous.context.resources) pluginFiles.delete(resource.id);
+  notifyResourceRevocations(revoked);
+  if (image?.owner.pluginId === "spark233.host")
+    try {
       fs.rmSync(confined(configDir, "launcher-resources", `${image.sessionId}.png`), {
         force: true,
       });
-      pluginImages.delete(image.resource.id);
+    } catch {
+      diagnostics?.record({
+        kind: "host",
+        code: "failed",
+        level: "warn",
+        errorCode: "diskUnavailable",
+      });
     }
-  } else if (launcherContext?.context.kind === "files") {
-    for (const resource of launcherContext.context.resources) pluginFiles.delete(resource.id);
+  if (launcher) {
+    launcher.pluginsChanged();
+    emit("launcher-status-changed");
   }
-  launcherContext = undefined;
+}
+let contextPanel: ContextPanelCoordinator | undefined;
+const contextPanelCallers = new Set<string>();
+const contextPanelDialogs = new Set<number>();
+const launcherComposition = new Map<number, number>();
+const nativeDialogDepth = new Map<number, number>();
+const contextPanelNativeRoot = path.join(configDir, "cache", "context-panel-native");
+const contextPanelImageRoot = path.join(configDir, "context-panel-resources");
+function panelConfiguration(config: AppConfig): ContextPanelNativeConfig {
+  return {
+    enabled: config.superPanelEnabled,
+    button: config.superPanelButton,
+    holdMs: config.superPanelTrigger === "click" ? 0 : config.superPanelHoldMs,
+    excludedApps: [...config.superPanelExcludedApps],
+    copyFallback: config.superPanelCopyFallback,
+  };
+}
+function contextForCaller(caller?: string): { context: PluginContext; label: string } | undefined {
+  // Retired document identities have no context, including the normal launcher's.
+  // Window role is established by the host; a replacement panel document cannot
+  // inherit the global context merely because its previous caller was revoked.
+  if (caller && ![...launcherCallers.values()].includes(caller)) return;
+  if (caller && contextPanelCallers.has(caller)) {
+    const context = contextPanel?.context(caller);
+    return context
+      ? {
+          context,
+          label: contextPanel?.contextLabel(caller) ?? ui("当前选区", "Current selection"),
+        }
+      : undefined;
+  }
+  return launcherContext;
+}
+function contextRevisionForCaller(caller?: string): number {
+  if (caller && ![...launcherCallers.values()].includes(caller)) return 0;
+  return caller && contextPanelCallers.has(caller)
+    ? (contextPanel?.contextRevision(caller) ?? 0)
+    : launcherContextRevision;
+}
+function contextForCommand(
+  caller: string,
+  pluginId: string,
+  commandId: string,
+  context: PluginContext,
+): PluginContext | undefined {
+  if (
+    !contextPanelCallers.has(caller) ||
+    context.kind !== "files" ||
+    pluginId !== "spark233.notes" ||
+    commandId !== "new"
+  )
+    return context;
+  const files = context.resources.map((resource) => pluginFiles.get(resource.id));
+  if (files.some((file) => !file)) return;
+  // Send selected references as literal text, without reading file bodies or
+  // adding an attachment/Office parser. Absolute paths cannot start a fence line.
+  const text = `${ui("所选文件路径", "Selected file paths")}\n\n\`\`\`text\n${files.join("\n")}\n\`\`\``;
+  return text.length <= 65536
+    ? {
+        kind: "text",
+        text,
+        ...(context.sourceApplication ? { sourceApplication: context.sourceApplication } : {}),
+      }
+    : undefined;
+}
+async function materializePanelContext(
+  capture: ContextPanelNativeCapture,
+  signal: AbortSignal,
+  sourceApplication?: string,
+): Promise<ContextPanelMaterialized> {
+  signal.throwIfAborted();
+  const application = sourceApplicationSchema.safeParse(sourceApplication);
+  const sourceContext = application.success ? { sourceApplication: application.data } : {};
+  const windowContext: ContextPanelMaterialized = {
+    ...(application.success
+      ? {
+          context: { kind: "window", sourceApplication: application.data },
+          label: ui("当前程序", "Source application"),
+        }
+      : {}),
+    dispose() {},
+  };
+  if (capture.kind === "none")
+    // The helper rechecks its source identity before returning these content-
+    // only failures. They do not authorize reading selection/clipboard data.
+    return [
+      "emptySelection",
+      "unsupported",
+      "protectedSource",
+      "tooLarge",
+      "inputBusy",
+      "inputRejected",
+      "clipboardUnavailable",
+      "clipboardBusy",
+      "clipboardUnchanged",
+      "clipboardOwnerChanged",
+    ].includes(capture.reason)
+      ? windowContext
+      : { dispose() {} };
+  if (capture.kind === "text") {
+    if (!capture.text.trim()) return windowContext;
+    if (capture.text.length > 65536) throw new AppError("invalidPayload", "选区文字过长");
+    return {
+      context: { kind: "text", text: capture.text, ...sourceContext },
+      label: ui("选中文字", "Selected text"),
+      dispose() {},
+    };
+  }
+  const ids: string[] = [];
+  let imageFile: string | undefined;
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    // Revoke authority before disk cleanup: EPERM must not preserve a readable handle.
+    for (const id of ids) {
+      pluginImages.delete(id);
+      pluginFiles.delete(id);
+    }
+    notifyResourceRevocations(ids);
+    if (imageFile)
+      try {
+        fs.rmSync(imageFile, { force: true });
+      } catch {
+        diagnostics?.record({
+          kind: "host",
+          code: "failed",
+          level: "warn",
+          errorCode: "diskUnavailable",
+        });
+      }
+  };
+  try {
+    if (capture.kind === "files") {
+      if (!capture.paths.length || capture.paths.length > 100)
+        throw new AppError("invalidPayload", "选区文件数不合法");
+      const resources = capture.paths.map((filename) => {
+        if (!path.isAbsolute(filename) || /\p{Cc}/u.test(filename))
+          throw new AppError("invalidPayload", "选区文件引用不合法");
+        const real = canonical(filename),
+          stat = fs.statSync(real);
+        if (!stat.isFile()) throw new AppError("invalidPayload", "选区仅支持文件授权点");
+        const id = randomUUID();
+        ids.push(id);
+        pluginFiles.set(id, real);
+        return { id, kind: "file" as const, size: stat.size };
+      });
+      signal.throwIfAborted();
+      return {
+        context: { kind: "files", resources, ...sourceContext },
+        label: ui(
+          `${resources.length} 个文件（发送便签时保存路径）`,
+          `${resources.length} files (send paths to notes)`,
+        ),
+        dispose,
+      };
+    }
+    const source = canonical(capture.file);
+    if (
+      !inside(canonical(contextPanelNativeRoot), source) ||
+      fs.lstatSync(capture.file).isSymbolicLink()
+    )
+      throw new AppError("permissionDenied", "选区图片不属于捕获缓存");
+    const stat = fs.statSync(source);
+    if (!stat.isFile() || stat.size !== capture.bytes || stat.size > 32 * 1024 * 1024)
+      throw new AppError("invalidPayload", "选区图片大小不合法");
+    const image = nativeImage.createFromPath(source),
+      size = image.getSize();
+    if (image.isEmpty() || size.width * size.height > 100_000_000)
+      throw new AppError("invalidPayload", "选区图片尺寸不合法");
+    const png = image.toPNG();
+    if (png.length > 32 * 1024 * 1024) throw new AppError("invalidPayload", "选区图片超过大小上限");
+    signal.throwIfAborted();
+    const id = randomUUID();
+    ids.push(id);
+    imageFile = path.join(contextPanelImageRoot, `${id}.png`);
+    atomicWrite(imageFile, png);
+    const resource = { id, kind: "image" as const, mimeType: "image/png", size: png.length };
+    pluginImages.set(id, {
+      owner: { pluginId: "spark233.host", version: app.getVersion(), instanceId: id },
+      sessionId: id,
+      path: imageFile,
+      resource,
+      width: size.width,
+      height: size.height,
+    });
+    return {
+      context: { kind: "image", resource, ...sourceContext },
+      label: ui("选中图片", "Selected image"),
+      dispose,
+    };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}
+function panelWindow(caller: string): BrowserWindow | undefined {
+  const win = windows.get("context-panel");
+  return win && !win.isDestroyed() && launcherCallers.get(win.webContents.id) === caller
+    ? win
+    : undefined;
+}
+function initializeContextPanel(): void {
+  contextPanel = new ContextPanelCoordinator({
+    isBlocked: () => maintenance || hostShutdown.isQuitting || exiting,
+    nativeOptions: {
+      assetDirectory: path.join(here, "assets"),
+      cacheDirectory: contextPanelNativeRoot,
+    },
+    materialize: materializePanelContext,
+    openView: (physicalPoint) => {
+      if (maintenance || hostShutdown.isQuitting || exiting)
+        throw new AppError("maintenance", "当前不能打开面板");
+      const point =
+        process.platform === "win32" ? screen.screenToDipPoint(physicalPoint) : physicalPoint;
+      const layout: Layout = {
+        label: "context-panel",
+        view: "launcher",
+        compact: true,
+        bounds: safeBounds({ x: point.x + 8, y: point.y + 8, width: 520, height: 440 }),
+        visible: true,
+        topmost: false,
+      };
+      const win = launcherExecutions.exit(() => createWindow(layout)),
+        caller = launcherCaller(win);
+      contextPanelCallers.add(caller);
+      return caller;
+    },
+    publish: (caller, state) => {
+      const win = panelWindow(caller);
+      if (win) emit("super-panel-state", state, win);
+    },
+    closeView: (caller) => {
+      const win = panelWindow(caller);
+      if (win) win.destroy();
+    },
+    focusView: (caller) => {
+      const win = panelWindow(caller);
+      if (win) {
+        win.show();
+        win.focus();
+      }
+    },
+    clearQuery: (caller) => launcher?.clear(caller),
+    onStatus: (status) => {
+      emit("super-panel-status", status);
+      diagnostics?.record({
+        kind: "host",
+        code:
+          status.phase === "ready"
+            ? "started"
+            : status.phase === "unavailable"
+              ? "failed"
+              : "stopped",
+        level: status.phase === "unavailable" ? "warn" : "info",
+        ...(status.phase === "unavailable" ? { errorCode: "unavailable" } : {}),
+      });
+    },
+  });
+  void contextPanel
+    .configure(panelConfiguration(hostConfig.value))
+    .catch(() => console.warn("context-panel-configuration-failed"));
 }
 let pluginHost: DesktopPluginHost | undefined;
 let pluginHostStartupError: string | undefined;
@@ -285,24 +718,25 @@ const createOfficialRuntime: NonNullable<
   }
   if (id === "spark233.notes") {
     if (!backend) throw new Error("Notes backend entry is required");
+    let started = false;
     const renderer = confined(installation.directory, "renderer");
     if (!fs.statSync(confined(renderer, "index.html")).isFile())
       throw new Error("Notes renderer is missing from its package");
-    const lifecycleData = new NotesDataClient(() =>
-      scope.accepts(scope.owner)
-        ? { activate: (_pluginId, activation) => backend.activate(activation) }
-        : undefined,
-    );
-    const maintenanceData = new NotesDataClient(() =>
-      ["active", "preparing"].includes(scope.state)
-        ? { activate: (_pluginId, activation) => backend.maintenance(activation) }
-        : undefined,
-    );
+    const lifecycleData = NotesDataClient.fromTransport((activation) => {
+      if (!scope.accepts(scope.owner))
+        throw new AppError("pluginDisabled", "便签插件运行实例已失效");
+      return backend.activate(activation);
+    });
+    const maintenanceData = NotesDataClient.fromTransport((activation) => {
+      if (scope.state !== "preparing")
+        throw new AppError("pluginStopping", "便签维护通道仅用于当前实例的最终保存");
+      return backend.maintenance(activation);
+    });
     return createNotesRuntime({
       scope,
       backend,
       openManager: () => {
-        showMain();
+        if (launcherPresentationGuard()()) showMain();
       },
       newNote: async (activation) => {
         if (activation.context?.kind === "text") {
@@ -314,23 +748,32 @@ const createOfficialRuntime: NonNullable<
             }),
           );
           changed();
-          await openNote(note.id);
+          if (launcherPresentationGuard()()) await openNote(note.id);
         } else if (activation.context?.kind === "image") {
           const image = pluginImages.get(activation.context.resource.id);
           if (!image) throw new Error("图片资源已失效");
+          // Snapshot the accepted input before it waits behind a host write or
+          // maintenance. Closing the panel may revoke/delete its temporary file.
+          const acceptedImage = fs.readFileSync(image.path).toString("base64");
           const note = await enqueueMutation(() =>
-            notesClient.createFromImage(fs.readFileSync(image.path).toString("base64"), "png"),
+            notesClient.createFromImage(acceptedImage, "png"),
           );
           changed();
-          await openNote(note.id);
-        } else await openNote();
+          if (launcherPresentationGuard()()) await openNote(note.id);
+        } else if (launcherPresentationGuard()()) await openNote();
       },
       openNote: (id) => openNoteWithAnchor(id),
       showOnDesktop: async (id) => {
         await openNote(id);
       },
-      search: async (query) => ({
-        items: (await notesClient.search(query, 60)).map((meta) => ({
+      search: async (query, signal) => ({
+        items: (
+          await (
+            signal
+              ? NotesDataClient.fromTransport((activation) => backend.activate(activation, signal))
+              : notesClient
+          ).search(query, 60)
+        ).map((meta) => ({
           id: meta.id,
           title: meta.title || ui("无标题便签", "Untitled note"),
           description: meta.preview,
@@ -351,7 +794,20 @@ const createOfficialRuntime: NonNullable<
           ],
         })),
       }),
-      prepare: async () => {
+      prepare: async (reason) => {
+        if (reason === "crash" && !backend.running) {
+          if (notesScope === scope) {
+            notesRecoveryPending = true;
+            for (const [label, win] of windows)
+              if (layouts.get(label)?.view !== "launcher" && !win.isDestroyed()) remember(win);
+          }
+          // The failed utility cannot acknowledge another write. Release its
+          // owner while retaining live renderer buffers for an explicit retry.
+          return { ok: true };
+        }
+        // Failed construction owns no active note UI; do not ask retained
+        // editors to save through a manager that has not registered this owner.
+        if (!started) return { ok: true };
         for (const [label, win] of windows)
           if (layouts.get(label)?.view !== "launcher") preparedWindows.delete(win.id);
         await mutations.catch(() => {});
@@ -362,34 +818,49 @@ const createOfficialRuntime: NonNullable<
         if (!saved.every(Boolean)) return { ok: false, reason: "便签尚未保存，已保留窗口和插件" };
         for (const win of notes) remember(win);
         await persistLayout(maintenanceData);
+        if (pendingNotesMigration)
+          pendingNotesMigration.copiedRoot = await maintenanceData.migrate(
+            pendingNotesMigration.directory,
+          );
         return { ok: true };
       },
       stop: () => {
+        if (notesScope !== scope) return;
         notesActive = false;
         notesRendererRoot = undefined;
         if (notesScope === scope) {
           notesScope = undefined;
-          notesOwnerClient = undefined;
+          notesStartupClient = undefined;
           notesMaintenanceClient = undefined;
         }
         capsules.setEnabled(false);
         mcpServer?.stop();
-        for (const [label, win] of windows)
-          if (layouts.get(label)?.view !== "launcher") win.destroy();
+        if (!notesRecoveryPending)
+          for (const [label, win] of windows)
+            if (layouts.get(label)?.view !== "launcher") win.destroy();
         refreshTray();
         publishNoteStates();
       },
       start: async () => {
         layoutsRestored = false;
         await lifecycleData.initialize(hostConfig.value.locale);
-        await restoreNotesLayout(lifecycleData);
+        if (!notesRecoveryPending) await restoreNotesLayout(lifecycleData);
         layoutsRestored = true;
         notesScope = scope;
-        notesOwnerClient = lifecycleData;
+        notesStartupClient = lifecycleData;
         notesMaintenanceClient = maintenanceData;
         notesActive = true;
         notesRendererRoot = renderer;
-        capsules.setEnabled(true);
+        try {
+          capsules.setEnabled(true);
+          await capsules.refresh();
+        } finally {
+          notesStartupClient = undefined;
+        }
+        // A dead renderer has no buffer to preserve; keep its layout but let
+        // normal window creation recreate it when recovering a utility owner.
+        for (const [label, win] of windows)
+          if (layouts.get(label)?.view !== "launcher" && crashedWindows.has(win.id)) win.destroy();
         for (const layout of layouts.values())
           if (
             layout.view !== "launcher" &&
@@ -400,7 +871,12 @@ const createOfficialRuntime: NonNullable<
             (layout.noteId || (tray && layout.view === "main"))
           )
             createWindow(layout);
+        for (const [label, win] of windows)
+          if (layouts.get(label)?.view !== "launcher") preparedWindows.delete(win.id);
         await lifecycleData.startReminders();
+        if (notesRecoveryPending) await persistLayout(lifecycleData);
+        notesRecoveryPending = false;
+        started = true;
         syncMcp();
         refreshTray();
       },
@@ -410,6 +886,22 @@ const createOfficialRuntime: NonNullable<
     if (!backend) throw new Error("Applications backend entry is required");
     scope.own("event", { dispose: clearApplicationIconCache });
     return {
+      query: async (activation, signal) => {
+        const parameters =
+          activation.parameters &&
+          typeof activation.parameters === "object" &&
+          !Array.isArray(activation.parameters)
+            ? activation.parameters
+            : {};
+        const value = await backend.activate(
+          { ...activation, parameters: { ...parameters, locale: hostConfig.value.locale } },
+          signal,
+        );
+        signal?.throwIfAborted();
+        const result = await decorateApplicationResults(value);
+        signal?.throwIfAborted();
+        return result;
+      },
       activate: async (activation) => {
         const parameters =
           activation.parameters &&
@@ -433,6 +925,17 @@ const createOfficialRuntime: NonNullable<
     if (!backend) throw new Error("Translation backend entry is required");
     bindOfficialRenderer(id, installation.directory, scope);
     return {
+      query: (activation, signal) =>
+        backend.activate(
+          {
+            ...activation,
+            parameters: {
+              ...(activation.parameters as Record<string, never>),
+              hostConfiguration: translationSettings() as never,
+            },
+          },
+          signal,
+        ),
       activate: async (activation) => {
         // Entering the workspace does not send a request. Its explicit Translate
         // button uses translation_action with the chosen source/target language.
@@ -443,7 +946,13 @@ const createOfficialRuntime: NonNullable<
           });
           return;
         }
-        const result = await backend.activate(activation);
+        const result = await backend.activate({
+          ...activation,
+          parameters: {
+            ...(activation.parameters as Record<string, never>),
+            hostConfiguration: translationSettings() as never,
+          },
+        });
         const parameters =
           activation.parameters &&
           typeof activation.parameters === "object" &&
@@ -463,6 +972,9 @@ const createOfficialRuntime: NonNullable<
     dataDir: pluginHost!.manager.dataDirectory(id),
     cacheDir: path.join(configDir, "plugins", "cache", "runtime", id),
     approveTrust: () => installation.grant.native,
+    onOutputBytes: (stream: "stdout" | "stderr", byteCount: number) => {
+      if (scope.accepts(scope.owner)) diagnostics?.output(scope.owner, stream, byteCount, "native");
+    },
   };
   if (id === "spark233.search") {
     if (!entries.native.search) throw new Error("Search executable entry is required");
@@ -470,7 +982,8 @@ const createOfficialRuntime: NonNullable<
       ...common,
       descriptor: entries.native.search,
       getLocale: () => hostConfig.value.locale,
-      privateRoots: [hostConfig.value.dataDir, path.join(configDir, "plugins", "data")],
+      privateRoots: () => privateDataRoots.list(),
+      subscribePrivateRoots: (listener) => privateDataRoots.subscribe(listener),
       openPath: (filename) => shell.openPath(filename),
       revealPath: (filename) => {
         shell.showItemInFolder(filename);
@@ -531,7 +1044,12 @@ const createOfficialRuntime: NonNullable<
           .toPNG();
       },
       beforePaste: () => {
-        for (const [label, win] of windows) if (layouts.get(label)?.view === "launcher") win.hide();
+        for (const [label, win] of windows)
+          if (
+            layouts.get(label)?.view === "launcher" &&
+            layouts.get(label)?.hostPage !== "settings"
+          )
+            hideHostWindow(win);
       },
       openWorkspace: async (presentation) => {
         await showClipboardWorkspace(presentation);
@@ -677,7 +1195,10 @@ const createOfficialRuntime: NonNullable<
     });
     return {
       activate: async (activation) => {
-        if (activation.commandId !== "cancel") windows.get("launcher")?.hide();
+        if (activation.commandId !== "cancel") {
+          const launcherWindow = windows.get("launcher");
+          if (launcherWindow) hideHostWindow(launcherWindow);
+        }
         try {
           return await runtime.activate(activation);
         } finally {
@@ -709,7 +1230,10 @@ const hostShortcuts = new ShortcutManager({
 });
 const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   isBlocked: () => maintenance,
-  awaitWrites: () => mutations.catch(() => {}),
+  awaitWrites: async () => {
+    await contextPanel?.close();
+    await mutations.catch(() => {});
+  },
   awaitReleases: () => Promise.all(releasing.values()),
   windows: () => windows.values(),
   prepare,
@@ -717,7 +1241,10 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   persist: persistLayout,
   shutdownPlugins: async () => {
     await pluginHost?.shutdown();
+    await contextPanel?.shutdown();
     await commandMatcher.stop();
+    diagnostics?.record({ kind: "host", code: "stopped", level: "info" });
+    await diagnostics?.shutdown();
   },
   onCommit: () => {
     exiting = true;
@@ -905,6 +1432,7 @@ function remember(win: BrowserWindow): void {
   const layout = layouts.get(labelOf(win));
   if (!layout || win.isDestroyed()) return;
   layout.bounds = win.getBounds();
+  if (layout.hostPage === "settings") return;
   applyNoteTopmost(win, layout);
   scheduleLayout();
 }
@@ -942,8 +1470,11 @@ function isAdminView(layout: Layout): boolean {
   return isHostView(layout) && !layout.pluginId;
 }
 function createWindow(layout: Layout): BrowserWindow {
+  const presentation = launcherPresentationGuard();
+  if (!presentation()) throw new AppError("cancelled", "面板操作已失效");
   const existing = windows.get(layout.label);
   if (existing && !existing.isDestroyed()) {
+    windowPresentations.set(existing, presentation);
     layout.visible = true;
     existing.show();
     existing.focus();
@@ -952,26 +1483,33 @@ function createWindow(layout: Layout): BrowserWindow {
   layout.bounds = safeBounds(layout.bounds, layout.view === "main");
   layouts.set(layout.label, layout);
   if (!isHostView(layout)) layout.everOpened = true;
+  const area = screen.getDisplayMatching(layout.bounds).workArea;
   const win = createHostWindow({
     bounds: layout.bounds,
     title: "spark233",
     preload: path.join(here, "preload.cjs"),
     icon: path.join(here, "assets/icon.ico"),
-    minWidth: layout.compact
-      ? 320
-      : layout.view === "launcher"
-        ? 640
-        : layout.view === "main"
-          ? 900
-          : 160,
-    minHeight: layout.compact
-      ? 240
-      : layout.view === "launcher"
-        ? 420
-        : layout.view === "main"
-          ? 620
-          : 60,
-    skipTaskbar: !isHostView(layout),
+    minWidth:
+      layout.hostPage === "settings"
+        ? Math.min(800, area.width)
+        : layout.compact
+          ? 320
+          : layout.view === "launcher"
+            ? 640
+            : layout.view === "main"
+              ? 900
+              : 160,
+    minHeight:
+      layout.hostPage === "settings"
+        ? Math.min(600, area.height)
+        : layout.compact
+          ? 240
+          : layout.view === "launcher"
+            ? 420
+            : layout.view === "main"
+              ? 620
+              : 60,
+    skipTaskbar: layout.label === "launcher" || !isHostView(layout),
     alwaysOnTop: layout.topmost,
     hasShadow: isHostView(layout),
     label: layout.label,
@@ -985,7 +1523,22 @@ function createWindow(layout: Layout): BrowserWindow {
     officialWindows.set(win.id, { ...renderer.scope.owner });
   }
   windows.set(layout.label, win);
+  windowPresentations.set(win, presentation);
+  const launcherContentsId = win.webContents.id;
+  let initialNavigation = true;
+  win.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+    if (!mainFrame || inPlace) return;
+    const first = initialNavigation;
+    initialNavigation = false;
+    // The first load belongs to the capture-to-window handoff already in flight.
+    if (layout.label === "context-panel" && first) return;
+    launcherComposition.delete(win.id);
+    nativeDialogDepth.delete(win.id);
+    revokeLauncherCaller(launcherContentsId);
+    if (layout.label === "context-panel" && !win.isDestroyed()) win.destroy();
+  });
   win.webContents.on("render-process-gone", (_event, details) => {
+    revokeLauncherCaller(launcherContentsId);
     crashedWindows.add(win.id);
     ready.delete(win.id);
     const owner =
@@ -995,6 +1548,7 @@ function createWindow(layout: Layout): BrowserWindow {
     );
     if (owner) void pluginHost?.manager.reportCrash(owner, error).catch(console.error);
     else console.error("host-renderer-crash", error);
+    if (layout.label === "context-panel" && !win.isDestroyed()) win.destroy();
   });
   applyNoteTopmost(win, layout);
   win.webContents.on("before-input-event", (_event, input) => {
@@ -1019,7 +1573,11 @@ function createWindow(layout: Layout): BrowserWindow {
   win.on("system-context-menu", (event) => {
     if (!isHostView(layout)) {
       event.preventDefault();
-      paperMenu(win).popup({ window: win });
+      void paperMenu(win)
+        .then((menu) => {
+          if (!win.isDestroyed()) menu.popup({ window: win });
+        })
+        .catch((error) => reportError(error, win));
     }
   });
   win.on("move", () => remember(win));
@@ -1030,31 +1588,83 @@ function createWindow(layout: Layout): BrowserWindow {
   win.on("show", () => {
     layout.visible = true;
     applyNoteTopmost(win, layout);
-    scheduleLayout();
+    if (layout.hostPage !== "settings") scheduleLayout();
     publishNoteStates();
   });
-  win.on("hide", () => publishNoteStates());
+  win.on("hide", () => {
+    const caller = launcherCallers.get(launcherContentsId);
+    const handoff = launcherHides.get(launcherContentsId);
+    launcherHides.delete(launcherContentsId);
+    if (caller) {
+      const execution = launcherExecutions.getStore();
+      if (handoff?.caller === caller)
+        launcher.clear(caller, handoff.sessionId, handoff.requestId, "execution");
+      else if (execution?.active && execution.callerId === caller && execution.query)
+        launcher.clear(caller, execution.query.sessionId, execution.query.requestId, "execution");
+      else launcher.clear(caller);
+    }
+    publishNoteStates();
+  });
+  win.on("blur", () => {
+    if (layout.label === "launcher") {
+      setTimeout(() => {
+        if (
+          !win.isDestroyed() &&
+          shouldHideLauncher({
+            label: layout.label,
+            visible: win.isVisible(),
+            focused: win.isFocused(),
+            ownedDialog: contextPanelDialogs.has(win.id) || nativeDialogDepth.has(win.id),
+            composingUntil: launcherComposition.get(win.id) ?? 0,
+            devToolsFocused: win.webContents.isDevToolsFocused(),
+          })
+        ) {
+          hideHostWindow(win);
+        }
+      }, 160);
+    }
+    const caller = launcherCallers.get(launcherContentsId);
+    if (layout.label === "context-panel" && caller && !contextPanelDialogs.has(win.id))
+      contextPanel?.blur(caller);
+  });
   win.on("close", (event) => {
     if (exiting) return;
+    if (layout.label === "context-panel") {
+      event.preventDefault();
+      const caller = launcherCallers.get(launcherContentsId);
+      if (caller) void contextPanel?.close(caller).catch(() => {});
+      else win.destroy();
+      return;
+    }
     event.preventDefault();
-    if (isAdminView(layout) && !layout.compact && !hostConfig.value.closeToTray) void quit();
+    if (
+      isAdminView(layout) &&
+      layout.hostPage !== "settings" &&
+      !layout.compact &&
+      !hostConfig.value.closeToTray
+    )
+      void quit();
     else
       void (isHostView(layout) ? hideAndRelease(win) : foldAndRelease(win)).catch((error) =>
         reportError(error, win),
       );
   });
   win.on("closed", () => {
+    revokeLauncherCaller(launcherContentsId);
     if (pendingManagerOpen?.windowId === win.id) pendingManagerOpen = undefined;
     ready.delete(win.id);
     crashedWindows.delete(win.id);
     preparedWindows.delete(win.id);
     officialWindows.delete(win.id);
-    workspaceRequests.delete(layout.label);
-    windows.delete(layout.label);
+    if (windows.get(layout.label) === win) {
+      workspaceRequests.delete(layout.label);
+      windows.delete(layout.label);
+    }
     publishNoteStates();
   });
   const params = new URLSearchParams({
-    view: layout.view,
+    view: layout.hostPage ?? layout.view,
+    ...layout.settingsTarget,
     ...(layout.noteId ? { noteId: layout.noteId } : {}),
     ...(layout.workspace ? { workspace: layout.workspace } : {}),
     ...(layout.compact ? { compact: "1" } : {}),
@@ -1103,6 +1713,8 @@ function requestLauncher(): void {
   void showLauncher().catch((error) => reportError(error));
 }
 async function showOfficialWorkspace(kind: "translation" | "ocr", result: unknown): Promise<void> {
+  if (!launcherPresentationGuard()()) return;
+  endLauncherExecutionQuery();
   if (maintenance || hostShutdown.isQuitting)
     throw new AppError(
       "maintenance",
@@ -1130,6 +1742,8 @@ async function showClipboardWorkspace(presentation?: {
   compact: boolean;
   position: "cursor" | "edge";
 }): Promise<void> {
+  if (!launcherPresentationGuard()()) return;
+  endLauncherExecutionQuery();
   if (maintenance || hostShutdown.isQuitting)
     throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
   if (presentation?.compact) {
@@ -1137,6 +1751,7 @@ async function showClipboardWorkspace(presentation?: {
       await clipboardRuntime
         .rememberTarget()
         .catch((error) => console.error("clipboard-target", error));
+    if (!launcherPresentationGuard()()) return;
     const point = screen.getCursorScreenPoint(),
       area = screen.getDisplayNearestPoint(point).workArea;
     const layout: Layout = layouts.get("clipboard-quick") ?? {
@@ -1162,6 +1777,7 @@ async function showClipboardWorkspace(presentation?: {
     await clipboardRuntime
       .rememberTarget()
       .catch((error) => console.error("clipboard-target", error));
+  if (!launcherPresentationGuard()()) return;
   const layout: Layout = layouts.get("clipboard") ?? {
     label: "clipboard",
     view: "launcher",
@@ -1175,6 +1791,7 @@ async function showClipboardWorkspace(presentation?: {
   createWindow(layout);
 }
 function showMain(): BrowserWindow {
+  endLauncherExecutionQuery();
   requireNotes();
   const layout = layouts.get("main") ?? {
     label: "main",
@@ -1198,12 +1815,14 @@ async function openNote(
 ): Promise<string> {
   requireNotes();
   if (noteId) await notesClient.get(noteId);
+  endLauncherExecutionQuery();
   const found = noteId
     ? [...layouts.values()].find(
         (entry) => entry.noteId === noteId && (entry.view === "notepad" || entry.view === "tile"),
       )
     : undefined;
   const label = found?.label ?? `${view ?? "notepad"}-${noteId || randomUUID()}`;
+  if (!launcherPresentationGuard()()) return label;
   const layout: Layout = found ?? {
     label,
     view: view ?? "notepad",
@@ -1247,10 +1866,13 @@ async function prepare(win: BrowserWindow): Promise<boolean> {
   if (!ready.has(win.id)) return false;
   const requestId = randomUUID();
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pending.delete(requestId);
-      resolve(false);
-    }, 10000);
+    const timer = setTimeout(
+      () => {
+        pending.delete(requestId);
+        resolve(false);
+      },
+      layouts.get(labelOf(win))?.hostPage === "settings" ? 120000 : 10000,
+    );
     pending.set(requestId, {
       windowId: win.id,
       resolve: (result) => {
@@ -1281,9 +1903,9 @@ function releaseWindow(win: BrowserWindow, fold: boolean): Promise<void> {
     else {
       layout.visible = false;
       layout.folded = false;
-      await persistLayout();
+      if (layout.hostPage !== "settings") await persistLayout();
     }
-    win.hide();
+    hideHostWindow(win);
     if (layout.noteId) emit("tile-window-closed", layout.noteId);
     win.destroy();
     capsules.refresh();
@@ -1297,6 +1919,12 @@ function quit(): Promise<void> {
   return hostShutdown.request();
 }
 function reportError(error: unknown, win?: BrowserWindow): void {
+  diagnostics?.record({
+    kind: "host",
+    code: "failed",
+    level: "error",
+    errorCode: diagnosticErrorCode(error),
+  });
   console.error(error);
   const options: Electron.MessageBoxOptions = {
     type: "error",
@@ -1311,11 +1939,27 @@ function refreshTray(): void {
   tray.refresh();
 }
 async function globalMenu(): Promise<Electron.Menu> {
-  const notes = notesActive ? await (notesOwnerClient ?? notesClient).list() : [];
+  let notesAvailable = notesActive && notesScope?.state === "active" && !maintenance;
+  let notes: NoteMetadata[] = [];
+  if (notesAvailable) {
+    try {
+      notes = await notesClient.list();
+    } catch (error) {
+      // A menu requested just before prepare may reach the manager after its
+      // fence. Keep host actions available and refresh again on manager change.
+      notesAvailable = false;
+      if (!(error instanceof AppError && error.code.startsWith("plugin")))
+        console.error("tray-notes", error);
+    }
+  }
   return Menu.buildFromTemplate([
     { label: ui("打开启动器", "Open launcher"), click: requestLauncher },
-    { label: ui("打开便签列表", "Manage notes"), enabled: notesActive, click: () => showMain() },
-    { label: ui("新建便签", "New note"), enabled: notesActive, click: () => openNote() },
+    { label: ui("打开便签列表", "Manage notes"), enabled: notesAvailable, click: () => showMain() },
+    {
+      label: ui("新建便签", "New note"),
+      enabled: notesAvailable,
+      click: () => void openNote().catch(reportError),
+    },
     { type: "separator" },
     {
       label: ui("找回便签", "Recover a note"),
@@ -1324,7 +1968,7 @@ async function globalMenu(): Promise<Electron.Menu> {
             label: (note.title || note.preview || ui("无标题便签", "Untitled note"))
               .slice(0, 50)
               .replace(/&/g, "&&"),
-            click: () => openNote(note.id),
+            click: () => void openNote(note.id).catch(reportError),
           }))
         : [{ label: ui("暂无便签", "No notes"), enabled: false }],
     },
@@ -1334,6 +1978,7 @@ async function globalMenu(): Promise<Electron.Menu> {
 }
 async function openNoteWithAnchor(noteId: string, taskText?: string): Promise<void> {
   await notesClient.get(noteId);
+  if (!launcherPresentationGuard()()) return;
   const main = showMain();
   // 旧载荷是纯 id 字符串；带任务锚点的提醒用对象载荷，渲染端两者都接受。
   const payload: string | { noteId: string; taskText?: string } = taskText
@@ -1440,7 +2085,7 @@ function visibleSurfaceWindows(): BrowserWindow[] {
   ].filter((win) => win.isVisible());
 }
 function hideAllSurfaces(): void {
-  for (const win of visibleSurfaceWindows()) win.hide();
+  for (const win of visibleSurfaceWindows()) hideHostWindow(win);
   capsules.setHidden(true);
 }
 function showAllSurfaces(): void {
@@ -1463,7 +2108,7 @@ function executeCliCommand(command: CliCommand): void {
   }
   switch (command) {
     case "new":
-      openNote();
+      void openNote().catch(reportError);
       return;
     case "show":
       requestLauncher();
@@ -1613,9 +2258,17 @@ function syncMcp(): void {
   else mcpServer.stop();
 }
 async function pauseForBackup(): Promise<() => void> {
+  if (notesRecoveryPending)
+    throw new AppError(
+      "pluginRecoveryRequired",
+      ui(
+        "请先恢复便签后台并保存保留的编辑窗口",
+        "Recover notes and save the retained editors first",
+      ),
+    );
   if (maintenance || hostShutdown.isQuitting)
     throw new AppError("maintenance", "已有备份或恢复任务正在运行");
-  maintenance = true;
+  setMaintenance(true);
   let resumePlugins: (() => void) | undefined;
   try {
     resumePlugins = await pluginHost?.pauseMutations();
@@ -1629,29 +2282,92 @@ async function pauseForBackup(): Promise<() => void> {
     if (!saved.every(Boolean)) throw new AppError("saveFailed", "工作区尚未保存，已取消备份或恢复");
     return () => {
       resumePlugins?.();
-      maintenance = false;
+      setMaintenance(false);
       preparedWindows.clear();
       syncMcp();
       refreshTray();
     };
   } catch (error) {
     resumePlugins?.();
-    maintenance = false;
+    setMaintenance(false);
     preparedWindows.clear();
     syncMcp();
     throw error;
   }
 }
-function reloadHostAfterRestore(): void {
+async function migrateNotesDirectory(directory: string): Promise<AppConfig> {
+  requireNotes();
+  if (!pluginHost) throw new AppError("pluginHostUnavailable", "插件宿主尚未就绪");
+  if (maintenance || hostShutdown.isQuitting || pendingNotesMigration)
+    throw new AppError("maintenance", "已有数据维护任务正在运行");
+  setMaintenance(true);
+  let previous = hostConfig.value;
+  let previousPlugins: PluginManagerSnapshot | undefined;
+  let resumeHost: (() => void) | undefined;
+  const migration = { directory } as { directory: string; copiedRoot?: string };
+  try {
+    resumeHost = await pluginHost.pauseMutations();
+    mcpServer.stop();
+    await mutations.catch(() => {});
+    previous = hostConfig.value;
+    pendingNotesMigration = migration;
+    await pluginHost.manager.withQuiesced(
+      async (access) => {
+        if (!migration.copiedRoot)
+          throw new AppError("migrationFailed", "便签引擎未完成数据目录复制");
+        previousPlugins = access.snapshot();
+        // Restart/rollback preparation must not attempt to copy this root again.
+        pendingNotesMigration = undefined;
+        hostConfig.save({
+          ...previous,
+          dataDir: migration.copiedRoot,
+          backgroundImagePath:
+            previous.backgroundImagePath && inside(previous.dataDir, previous.backgroundImagePath)
+              ? path.join(
+                  migration.copiedRoot,
+                  path.relative(previous.dataDir, previous.backgroundImagePath),
+                )
+              : previous.backgroundImagePath,
+        });
+      },
+      async (access) => {
+        hostConfig.save(previous);
+        // Failed startup persists lastError. Restore the pre-switch installation
+        // state as well as its root, so resume actually restarts the old engine.
+        if (previousPlugins) access.replaceSnapshot(previousPlugins);
+      },
+    );
+    emit("config-changed", hostConfig.value);
+    return hostConfig.value;
+  } finally {
+    pendingNotesMigration = undefined;
+    resumeHost?.();
+    setMaintenance(false);
+    preparedWindows.clear();
+    syncMcp();
+    refreshTray();
+  }
+}
+async function reloadHostAfterRestore(): Promise<void> {
   const dataDir = hostConfig.value.dataDir;
   const previousAutostart = hostConfig.value.autostart;
+  await contextPanel?.close();
+  launcher.clear();
+  pluginHost?.reloadAfterRestore();
   hostConfig = new HostConfigStore(hostConfigDir, dataDir);
+  await contextPanel?.configure(panelConfiguration(hostConfig.value));
   launcher = new LauncherController({
     commandMatcher,
     getWarnings: () => (shortcutWarning ? [shortcutWarning] : []),
     stateFile: path.join(hostConfigDir, "launcher.json"),
     manager: () => pluginHost?.manager,
-    getContext: () => launcherContext,
+    onQueryUpdate: deliverLauncherQueryUpdate,
+    onPreferencesChanged: () => emit("launcher-status-changed"),
+    onLearningChanged: (learning) => emit("launcher-learning-changed", learning),
+    getContext: contextForCaller,
+    adaptContext: contextForCommand,
+    getContextRevision: contextRevisionForCaller,
+    getAvailabilityRevision: () => launcherAvailabilityRevision,
     getLocale: () => hostConfig.value.locale,
   });
   notesActive = false;
@@ -1665,6 +2381,102 @@ function reloadHostAfterRestore(): void {
   emit("config-changed", hostConfig.value);
   publishPluginTheme();
 }
+function translationSettingsFile(): string {
+  if (!pluginHost) throw new Error("Plugin host is not ready");
+  return path.join(
+    pluginHost.manager.dataDirectory("spark233.translation"),
+    "provider-settings.json",
+  );
+}
+function translationSettings(): Record<string, unknown> {
+  return readTranslationSettings(translationSettingsFile(), (bytes) =>
+    safeStorage.decryptString(bytes),
+  );
+}
+let settingsCaller: BrowserWindow | undefined;
+const pluginSettings = new PluginSettingsService(
+  (id): PluginSettingsAdapter => {
+    if (!pluginHost) throw new Error("Plugin host is not ready");
+    const manager = pluginHost.manager;
+    manager.describe(id);
+    const directory = manager.dataDirectory(id);
+    if (id === "spark233.notes")
+      return {
+        fields: noteSettingsFields,
+        read: () =>
+          Object.fromEntries(
+            noteSettingsFields
+              .filter((field) => hostConfig.value[field.key as keyof AppConfig] !== undefined)
+              .map((field) => [field.key, hostConfig.value[field.key as keyof AppConfig]]),
+          ),
+        save: async (values) => {
+          if (!settingsCaller || settingsCaller.isDestroyed())
+            throw new Error("Settings document closed");
+          await handle(settingsCaller, "config_patch", { patch: values });
+        },
+      };
+    if (id === "spark233.translation")
+      return {
+        fields: translationSettingsFields,
+        read: translationSettings,
+        save: (values) =>
+          writeTranslationSettings(translationSettingsFile(), values, (key) => {
+            if (!safeStorage.isEncryptionAvailable())
+              throw new Error("系统密钥加密暂不可用，未保存密钥");
+            return safeStorage.encryptString(key);
+          }),
+      };
+    if (id === "spark233.search") {
+      const file = path.join(directory, "search-scope.json");
+      return {
+        fields: searchSettingsFields,
+        read: () =>
+          fs.existsSync(file)
+            ? validateSearchSettings(JSON.parse(fs.readFileSync(file, "utf8")))
+            : searchSettingsSchema.parse({ excludedRoots: [] }),
+        save: async (values) => {
+          const next = validateSearchSettings(values);
+          const active =
+            manager.list().find((plugin) => plugin.pluginId === id)?.status === "active";
+          if (active)
+            await manager.activate(id, {
+              commandId: "settings",
+              parameters: { action: "save", ...next },
+            });
+          else atomicWrite(file, JSON.stringify(next));
+          launcher.clear();
+          emit("search-scope-changed");
+        },
+      };
+    }
+    if (id === "spark233.clipboard") {
+      const withHistory = <T>(action: (history: ClipboardHistory) => T): T => {
+        const history = new ClipboardHistory(directory);
+        try {
+          return action(history);
+        } finally {
+          history.close();
+        }
+      };
+      return {
+        fields: clipboardSettingsFields,
+        read: () => withHistory((history) => ({ ...history.settings() })),
+        save: async (values) => {
+          const next = clipboardSettingsSchema.parse(values);
+          if (clipboardRuntime) await clipboardRuntime.request({ action: "settings", patch: next });
+          else withHistory((history) => history.saveSettings(next));
+          emit("clipboard-changed");
+        },
+      };
+    }
+    return { fields: [], read: () => ({}), save: () => {} };
+  },
+  (id) => {
+    const record = pluginHost?.manager.list().find((plugin) => plugin.pluginId === id);
+    if (!record) throw new Error("Plugin is not installed");
+    return JSON.stringify([record.packageName, record.version, record.integrity]);
+  },
+);
 async function handle(
   win: BrowserWindow,
   command: string,
@@ -1674,7 +2486,8 @@ async function handle(
   const preparationWrite =
     preparing &&
     (/^(notes_(create|update|set_editor_mode)|images_save|save_external_file)$/.test(command) ||
-      (command === "clipboard_action" && args.action === "draft.save"));
+      (command === "clipboard_action" && args.action === "draft.save") ||
+      ["config_patch", "plugin_settings_save"].includes(command));
   const readOnly = [
     "desktop_ready",
     "desktop_prepare_report",
@@ -1683,6 +2496,13 @@ async function handle(
     "app_name",
     "app_exec_path",
     "plugins_list",
+    "diagnostics_list",
+    "diagnostics_subscribe",
+    "diagnostics_unsubscribe",
+    "super_panel_status",
+    "super_panel_state",
+    "super_panel_close",
+    "backup_selection_release",
     "launcher_state",
     "notes_get",
     "notes_list",
@@ -1725,6 +2545,7 @@ async function handle(
   if (layout.pluginId) {
     const common = [
       "desktop_ready",
+      "settings_open",
       "desktop_prepare_report",
       "config_get",
       "app_version",
@@ -1745,11 +2566,210 @@ async function handle(
     if (!common.includes(command) && !business[layout.pluginId]?.includes(command))
       throw new AppError("permissionDenied", "此插件工作区不能调用宿主管理接口");
   }
+  if (command === "launcher_composition") {
+    if (layout.label !== "launcher") throw new AppError("permissionDenied", "此窗口不是启动器");
+    const input = z.strictObject({ active: z.boolean() }).parse(args);
+    if (input.active) launcherComposition.set(win.id, Date.now() + 10000);
+    else launcherComposition.delete(win.id);
+    return;
+  }
+  if (command === "plugin_settings_get" || command === "plugin_settings_save") {
+    if (!isAdminView(layout)) throw new AppError("permissionDenied", "插件配置仅限宿主管理界面");
+    const input = z
+      .strictObject({
+        pluginId: z.string().regex(/^[a-z][a-z0-9.-]*$/),
+        revision: z.string().length(64).optional(),
+        patch: z.unknown().optional(),
+      })
+      .parse(args);
+    if (command === "plugin_settings_get") return pluginSettings.get(input.pluginId);
+    if (!input.revision) throw new AppError("invalidPayload", "缺少配置版本");
+    settingsCaller = win;
+    try {
+      const result = await pluginSettings.save(input.pluginId, input.revision, input.patch);
+      emit("plugin-settings-changed", { pluginId: input.pluginId });
+      return result;
+    } finally {
+      settingsCaller = undefined;
+    }
+  }
+  if (command === "settings_open") {
+    if (
+      !isAdminView(layout) &&
+      !(layout.pluginId && args.page === "plugins" && args.pluginId === layout.pluginId)
+    )
+      throw new AppError("permissionDenied", "只能定位当前插件的设置");
+    const target = z
+      .strictObject({
+        page: z.enum(["general", "entries", "plugins", "backup", "diagnostics"]).default("general"),
+        pluginId: z
+          .string()
+          .regex(/^[a-z][a-z0-9.-]*$/)
+          .optional(),
+        tab: z.enum(["config", "functions", "matching", "info"]).optional(),
+      })
+      .parse(args);
+    if (target.pluginId) pluginHost?.manager.describe(target.pluginId);
+    const previous = windows.get("settings");
+    if (previous && ready.has(previous.id) && !(await prepare(previous))) return;
+    const existingLayout = layouts.get("settings");
+    const bounds =
+      existingLayout?.bounds ??
+      (() => {
+        const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+        const width = Math.min(1080, area.width),
+          height = Math.min(760, area.height);
+        return {
+          x: Math.round(area.x + (area.width - width) / 2),
+          y: Math.round(area.y + (area.height - height) / 2),
+          width,
+          height,
+        };
+      })();
+    const settingsLayout: Layout = {
+      label: "settings",
+      view: "launcher",
+      hostPage: "settings",
+      settingsTarget: target,
+      bounds,
+      visible: true,
+      topmost: false,
+    };
+    const settings = createWindow(settingsLayout);
+    const current = layouts.get("settings")!;
+    current.settingsTarget = target;
+    if (settings.isMinimized()) settings.restore();
+    if (ready.has(settings.id)) emit("settings-navigate", target, settings);
+    if (layout.label === "launcher") hideHostWindow(win);
+    return;
+  }
+  if (command.startsWith("super_panel_")) {
+    if (!isAdminView(layout)) throw new AppError("permissionDenied", "超级面板仅限宿主界面");
+    z.strictObject({}).parse(args);
+    if (!contextPanel) throw new AppError("pluginHostUnavailable", "超级面板尚未就绪");
+    if (command === "super_panel_status") return contextPanel.status;
+    if (command === "super_panel_retry") {
+      await contextPanel.configure(panelConfiguration(hostConfig.value));
+      return contextPanel.status;
+    }
+    if (command === "super_panel_open") {
+      const point = screen.getCursorScreenPoint();
+      contextPanel.openCommon(
+        process.platform === "win32" ? screen.dipToScreenPoint(point) : point,
+      );
+      return;
+    }
+    const caller = launcherCaller(win);
+    if (layout.label !== "context-panel" || !contextPanelCallers.has(caller))
+      throw new AppError("permissionDenied", "此操作不属于当前面板");
+    if (command === "super_panel_state") return contextPanel.state(caller);
+    if (command === "super_panel_close") {
+      await contextPanel.close(caller);
+      return;
+    }
+    if (command === "super_panel_return") return contextPanel.returnToSource(caller);
+    throw new AppError("unknownCommand", "未知超级面板操作");
+  }
+  if (command.startsWith("diagnostics_")) {
+    if (!isAdminView(layout)) throw new AppError("permissionDenied", "诊断记录仅限宿主管理界面");
+    if (!diagnostics) {
+      try {
+        diagnostics = new DiagnosticsStore(path.join(configDir, "diagnostics"));
+        diagnostics.record({ kind: "host", code: "started", level: "info" });
+      } catch {
+        /* A retry may recover after an operator repairs the dedicated log directory. */
+      }
+    }
+    if (!diagnostics) throw new AppError("diagnosticsUnavailable", "诊断记录暂不可用");
+    const caller = launcherCaller(win);
+    if (command === "diagnostics_list") {
+      const input = z.strictObject({ filter: z.unknown().optional() }).parse(args);
+      return diagnostics.snapshot(input.filter as DiagnosticFilter | undefined);
+    }
+    if (command === "diagnostics_subscribe") {
+      z.strictObject({}).parse(args);
+      diagnosticSubscriptions.get(caller)?.();
+      diagnosticSubscriptions.delete(caller);
+      const stop = diagnostics.subscribe((batch) => {
+        if (
+          !win.isDestroyed() &&
+          !win.webContents.isDestroyed() &&
+          launcherCallers.get(win.webContents.id) === caller
+        )
+          emit("diagnostics-batch", batch, win);
+      });
+      diagnosticSubscriptions.set(caller, stop);
+      return diagnostics.snapshot();
+    }
+    if (command === "diagnostics_unsubscribe") {
+      z.strictObject({}).parse(args);
+      diagnosticSubscriptions.get(caller)?.();
+      diagnosticSubscriptions.delete(caller);
+      return;
+    }
+    if (command === "diagnostics_clear") {
+      z.strictObject({}).parse(args);
+      return diagnostics.clear();
+    }
+    if (command === "diagnostics_export") {
+      const input = z.strictObject({ filter: z.unknown().optional() }).parse(args);
+      const snapshot = diagnostics.export(input.filter as DiagnosticFilter | undefined);
+      const chosen = await dialog.showSaveDialog(win, {
+        title: ui("导出诊断记录", "Export diagnostics"),
+        defaultPath: path.join(
+          app.getPath("documents"),
+          `spark233-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+        ),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (chosen.canceled || !chosen.filePath) return { exported: false };
+      if (win.isDestroyed() || launcherCallers.get(win.webContents.id) !== caller)
+        throw new AppError("permissionDenied", "导出窗口文档已失效");
+      const destination = canonical(chosen.filePath);
+      if (
+        [configDir, hostConfig.value.dataDir, backupRecoveryDir, ...privateDataRoots.list()].some(
+          (root) => inside(canonical(root), destination),
+        )
+      )
+        throw new AppError("permissionDenied", "不能将诊断导出覆盖到应用私有数据目录");
+      atomicWrite(destination, snapshot);
+      return { exported: true };
+    }
+    throw new AppError("unknownCommand", "未知诊断操作");
+  }
   if (command.startsWith("plugins_")) {
     if (!isAdminView(layout)) throw new AppError("permissionDenied", "插件管理仅限宿主主界面");
     if (!pluginHost)
       throw new AppError("pluginHostUnavailable", pluginHostStartupError || "插件宿主尚未就绪");
-    const result = await pluginHost.handle(command, args, win);
+    if (notesRecoveryPending) {
+      const state =
+        command === "plugins_confirm_install"
+          ? ((await pluginHost.handle(
+              "plugins_list",
+              undefined,
+              win,
+              launcherCaller(win),
+            )) as PluginManagementState)
+          : undefined;
+      const replacesRetainedNotes =
+        (args.pluginId === "spark233.notes" &&
+          (command === "plugins_uninstall" ||
+            (command === "plugins_enable" && args.enabled === false))) ||
+        state?.pending.some(
+          (preview) =>
+            preview.previewId === args.previewId &&
+            preview.metadata.spark233.id === "spark233.notes",
+        );
+      if (replacesRetainedNotes)
+        throw new AppError(
+          "pluginRecoveryRequired",
+          ui(
+            "请先恢复便签后台并保存保留的编辑窗口",
+            "Recover notes and save the retained editors first",
+          ),
+        );
+    }
+    const result = await pluginHost.handle(command, args, win, launcherCaller(win));
     if (
       command === "plugins_list" &&
       pluginHostStartupError &&
@@ -1764,9 +2784,15 @@ async function handle(
     if (!isHostView(layout)) throw new AppError("permissionDenied", "启动器操作仅限宿主界面");
     switch (command) {
       case "launcher_state":
-        return launcher.state();
+        return launcher.state(launcherCaller(win));
+      case "launcher_preference_update":
+        return launcher.updatePreference(args, launcherCaller(win));
+      case "launcher_learning_update":
+        if (!isAdminView(layout))
+          throw new AppError("permissionDenied", "关键词学习仅限宿主管理界面");
+        return launcher.updateLearning(args, launcherCaller(win));
       case "launcher_enter_mode":
-        return launcher.enterMode(args);
+        return launcher.enterMode(args, launcherCaller(win));
       case "launcher_take_workspace": {
         const value = workspaceRequests.get(label);
         workspaceRequests.delete(label);
@@ -1783,29 +2809,86 @@ async function handle(
             throw new Error("Search directory is not a directory");
           args = { ...args, directory };
         }
-        return launcher.query(args);
-      case "launcher_pick_directory": {
-        const picked = await dialog.showOpenDialog(win, {
-          title: ui("选择搜索目录", "Choose a search directory"),
-          properties: ["openDirectory"],
-        });
-        if (picked.canceled || !picked.filePaths[0]) return;
-        grants.grant(picked.filePaths[0], true);
-        return picked.filePaths[0];
+        return launcher.query(args, launcherCaller(win));
+      case "launcher_cancel_query": {
+        if (
+          typeof args.sessionId !== "string" ||
+          args.sessionId.length > 100 ||
+          (args.requestId !== undefined &&
+            (typeof args.requestId !== "string" || args.requestId.length > 100))
+        )
+          throw new Error("Invalid query cancellation");
+        launcher.clear(launcherCaller(win), args.sessionId, args.requestId);
+        return;
       }
-      case "launcher_execute":
-        return launcher.execute(args);
+      case "launcher_pick_directory": {
+        contextPanelDialogs.add(win.id);
+        try {
+          const picked = await dialog.showOpenDialog(win, {
+            title: ui("选择搜索目录", "Choose a search directory"),
+            properties: ["openDirectory"],
+          });
+          if (picked.canceled || !picked.filePaths[0]) return;
+          grants.grant(picked.filePaths[0], true);
+          return picked.filePaths[0];
+        } finally {
+          contextPanelDialogs.delete(win.id);
+        }
+      }
+      case "launcher_execute": {
+        const callerId = launcherCaller(win);
+        const panelExecution = contextPanelCallers.has(callerId)
+          ? contextPanel?.beginExecution(callerId)
+          : undefined;
+        const execution = {
+          callerId,
+          active: true,
+          panelExecution,
+          query: launcher.queryIdentity(callerId),
+        };
+        return launcherExecutions.run(execution, async () => {
+          try {
+            const result = await launcher.execute(args, execution.callerId);
+            if (panelExecution) {
+              const object =
+                result && typeof result === "object" && !Array.isArray(result) ? result : undefined;
+              const success =
+                result !== false &&
+                object?.ok !== false &&
+                object?.cancelled !== true &&
+                object?.canceled !== true &&
+                !["cancelled", "canceled", "closed"].includes(String(object?.status ?? ""));
+              contextPanel?.endExecution(callerId, {
+                executionId: panelExecution,
+                success,
+                keepOpen: !!object && ("launcherResults" in object || "searchPreview" in object),
+              });
+            }
+            return result;
+          } catch (error) {
+            if (panelExecution)
+              contextPanel?.endExecution(callerId, { executionId: panelExecution, success: false });
+            throw error;
+          } finally {
+            execution.active = false;
+          }
+        });
+      }
       case "launcher_complete_onboarding":
         launcher.completeOnboarding();
         return launcher.state();
       case "launcher_hide":
-        launcher.clear();
+        launcher.clear(launcherCaller(win));
         await hideAndRelease(win);
         return;
       case "launcher_context_clear":
-        clearLauncherContext();
-        return launcher.state();
+        if (contextPanelCallers.has(launcherCaller(win)))
+          contextPanel?.clearContext(launcherCaller(win));
+        else clearLauncherContext();
+        return launcher.state(launcherCaller(win));
       case "launcher_context_files": {
+        if (contextPanelCallers.has(launcherCaller(win)))
+          throw new AppError("permissionDenied", "面板捕获不能改写通用启动器上下文");
         if (!Array.isArray(args.paths) || !args.paths.length || args.paths.length > 100)
           throw new Error("拖入文件不合法");
         const files = args.paths.map((value) => grants.assert(value));
@@ -1855,22 +2938,70 @@ async function handle(
     if (!isAdminView(layout))
       throw new AppError("permissionDenied", "Custom application settings require the host view");
     if (!pluginHost) throw new Error("Plugin host is not ready");
-    if (command === "applications_entries_get")
-      return pluginHost.manager.activate("spark233.applications", {
-        commandId: "settings",
-        parameters: { action: "get" },
+    if (command === "applications_entries_pick") {
+      if (
+        (args.purpose !== "target" && args.purpose !== "cwd") ||
+        (args.directory !== undefined && typeof args.directory !== "boolean")
+      )
+        throw new AppError("invalidPayload", "Unknown entry selection purpose");
+      const caller = launcherCaller(win);
+      const picked = await dialog.showOpenDialog(win, {
+        title:
+          args.purpose === "cwd"
+            ? ui("选择程序工作目录", "Choose the working directory")
+            : args.directory
+              ? ui("选择文件夹入口", "Choose a folder shortcut")
+              : ui("选择文件或程序入口", "Choose a file or application"),
+        properties: [args.directory || args.purpose === "cwd" ? "openDirectory" : "openFile"],
       });
+      if (picked.canceled || !picked.filePaths[0]) return;
+      if (win.isDestroyed() || launcherCallers.get(win.webContents.id) !== caller)
+        throw new AppError("permissionDenied", "Entry selection belongs to a closed document");
+      return applicationEntries.admit(
+        caller,
+        picked.filePaths[0],
+        args.directory || args.purpose === "cwd" ? "directory" : undefined,
+      );
+    }
+    const installation = pluginHost.manager
+      .list()
+      .find((plugin) => plugin.pluginId === "spark233.applications");
+    if (!installation) throw new Error("Applications plugin is not installed");
+    pluginHost.manager.describe("spark233.applications");
+    const file = path.join(
+      pluginHost.manager.dataDirectory("spark233.applications"),
+      "custom-entries.json",
+    );
+    const identity = JSON.stringify([
+      installation.packageName,
+      installation.version,
+      installation.integrity,
+    ]);
+    if (command === "applications_entries_get") return readApplicationSettings(file, identity);
     if (command === "applications_entries_save") {
-      if (!Array.isArray(args.entries))
-        throw new AppError("invalidPayload", "Expected custom application entries");
+      const current = readApplicationSettings(file, identity);
+      if (args.revision !== current.revision)
+        throw new AppError("settingsConflict", "应用入口已发生变化，请重新加载后核对");
+      const entries = applicationEntries.validate(
+        launcherCaller(win),
+        current.entries,
+        args.entries,
+      );
+      if (Buffer.byteLength(JSON.stringify(entries)) > 2 * 1024 * 1024)
+        throw new Error("Application settings exceed size limit");
       launcher.clear();
-      const result = await pluginHost.manager.activate("spark233.applications", {
-        commandId: "settings",
-        parameters: { action: "save", entries: args.entries },
-      });
+      if (installation.status === "active")
+        await pluginHost.manager.activate("spark233.applications", {
+          commandId: "settings",
+          parameters: { action: "save", entries: entries.map((entry) => ({ ...entry })) },
+        });
+      else atomicWrite(file, JSON.stringify({ version: 2, entries }));
+      launcher.invalidateApplicationAvailability();
       launcher.clear();
+      launcherAvailabilityRevision++;
       emit("plugins-changed");
-      return result;
+      emit("launcher-status-changed");
+      return readApplicationSettings(file, identity);
     }
     throw new AppError("invalidPayload", "Unknown custom application command");
   }
@@ -1951,35 +3082,38 @@ async function handle(
       return backupService.create(picked.filePaths[0]);
     }
     if (command === "backup_inspect") {
+      const caller = launcherCaller(win);
+      const request = backupSelections.beginInspection(caller);
+      const current = () =>
+        !win.isDestroyed() &&
+        launcherCallers.get(win.webContents.id) === caller &&
+        backupSelections.isInspectionCurrent(caller, request);
       const picked = await dialog.showOpenDialog(win, {
         title: ui("选择 spark233 备份目录", "Choose a spark233 backup"),
         properties: ["openDirectory"],
       });
+      if (!current()) throw new AppError("backupSelectionChanged", "备份选择已失效，请重新检查");
       if (picked.canceled || !picked.filePaths[0]) return;
       const { manifestFingerprint, ...inspection } = await backupService.inspect(
         picked.filePaths[0],
       );
-      for (const [id, selection] of backupSelections)
-        if (Date.now() - selection.createdAt > 10 * 60 * 1000) backupSelections.delete(id);
-      const selectionId = randomUUID();
-      backupSelections.set(selectionId, {
+      if (!current()) throw new AppError("backupSelectionChanged", "备份选择已失效，请重新检查");
+      const selectionId = backupSelections.register(caller, request, {
         directory: inspection.snapshotDirectory,
-        createdAt: Date.now(),
         manifestFingerprint,
       });
       return { ...inspection, selectionId };
     }
+    if (command === "backup_selection_release") {
+      const { selectionId } = z.strictObject({ selectionId: z.string().uuid() }).parse(args);
+      backupSelections.release(launcherCaller(win), selectionId);
+      return;
+    }
     if (command === "backup_restore") {
-      const selectionId = text(args.selectionId),
-        selection = backupSelections.get(selectionId);
-      if (!selection || Date.now() - selection.createdAt > 10 * 60 * 1000)
-        throw new Error("备份选择已失效，请重新检查备份");
-      const report = await backupService.restore(
-        selection.directory,
-        selection.manifestFingerprint,
+      const { selectionId } = z.strictObject({ selectionId: z.string().uuid() }).parse(args);
+      return backupSelections.restore(launcherCaller(win), selectionId, (directory, fingerprint) =>
+        backupService!.restore(directory, fingerprint),
       );
-      backupSelections.delete(selectionId);
-      return report;
     }
     throw new Error("未知备份操作");
   }
@@ -2024,10 +3158,17 @@ async function handle(
     if (!isHostView(layout)) throw new AppError("permissionDenied", "翻译设置和工作区仅限宿主界面");
     if (!pluginHost) throw new Error("插件宿主尚未就绪");
     if (command === "translation_configure")
-      return pluginHost.manager.activate("spark233.translation", {
-        commandId: "configure",
-        parameters: { ...args, action: "configure" },
-      });
+      throw new AppError("obsoleteClient", "请在插件管理中保存翻译配置");
+    if (args.action === "config_status") {
+      const config = translationSettings();
+      return {
+        kind: "translation-config",
+        configured: !!config.endpoint && !!config.model,
+        endpoint: config.endpoint,
+        model: config.model,
+        hasKey: !!config.key,
+      };
+    }
     const actions: Record<string, string> = {
       search: "search",
       detail: "detail",
@@ -2097,15 +3238,24 @@ async function handle(
     )
   )
     requireNotes();
+  const data =
+    preparationWrite &&
+    notesScope?.state === "preparing" &&
+    layout.view !== "launcher" &&
+    !preparedWindows.has(win.id)
+      ? (notesMaintenanceClient ?? notesClient)
+      : notesClient;
   switch (command) {
     case "desktop_ready":
       ready.add(win.id);
+      if (layout.hostPage === "settings" && layout.settingsTarget)
+        emit("settings-navigate", layout.settingsTarget, win);
       if (pendingManagerOpen?.windowId === win.id) {
         const { payload } = pendingManagerOpen;
         pendingManagerOpen = undefined;
         emit("open-note", payload, win);
       }
-      if (layout.visible) {
+      if (layout.visible && (windowPresentations.get(win)?.() ?? true)) {
         win.show();
         win.focus();
       }
@@ -2122,23 +3272,23 @@ async function handle(
         args: app.isPackaged ? ["--mcp"] : [app.getAppPath(), "--mcp"],
       };
     case "notes_list":
-      return store.list();
+      return data.list();
     case "notes_get":
-      return store.get(text(args.id));
+      return data.get(text(args.id));
     case "notes_create": {
-      const note = store.save(args.request as SaveNoteRequest);
+      const note = await data.save(args.request as SaveNoteRequest);
       if ((layout.view === "notepad" || layout.view === "tile") && !layout.noteId)
         layout.noteId = note.id;
       changed();
       return note;
     }
     case "notes_set_editor_mode": {
-      const note = store.setEditorMode(text(args.id), args.mode);
+      const note = await data.setEditorMode(text(args.id), args.mode);
       changed();
       return note;
     }
     case "notes_update": {
-      const note = store.save(args.request as SaveNoteRequest, text(args.id));
+      const note = await data.save(args.request as SaveNoteRequest, text(args.id));
       changed();
       return note;
     }
@@ -2148,36 +3298,35 @@ async function handle(
         (entry) => entry.noteId === id && windows.has(entry.label),
       );
       if (editors.length) throw new AppError("noteInUse", "请先关闭该便签的独立窗口再删除");
-      await store.delete(id);
-      reminders?.cancelForNote(id);
+      await data.delete(id);
       for (const entry of layouts.values()) if (entry.noteId === id) layouts.delete(entry.label);
-      persistLayout();
+      await persistLayout();
       changed();
       return;
     }
     case "categories_list":
-      return store.categories();
+      return data.categories();
     case "categories_create":
-      store.createCategory(text(args.name));
+      await data.createCategory(text(args.name));
       changed();
       return;
     case "categories_rename":
-      store.renameCategory(text(args.oldName), text(args.newName));
+      await data.renameCategory(text(args.oldName), text(args.newName));
       changed();
       return;
     case "categories_delete":
-      store.deleteCategory(text(args.name));
+      await data.deleteCategory(text(args.name));
       changed();
       return;
     case "notes_move_category": {
-      const meta = store.move(text(args.id), text(args.category));
+      const meta = await data.move(text(args.id), text(args.category));
       changed();
       return meta;
     }
     case "notes_import_markdown": {
       const file = grants.assert(args.path, /\.md$/i),
         content = fs.readFileSync(file, "utf8");
-      const note = store.save({
+      const note = await data.save({
         title:
           content.match(/^\s*# (.+)$/m)?.[1]?.trim() || path.basename(file, path.extname(file)),
         content,
@@ -2187,7 +3336,7 @@ async function handle(
       return note;
     }
     case "notes_export_markdown":
-      atomicWrite(grants.assert(args.path, /\.md$/i), store.get(text(args.id)).content);
+      atomicWrite(grants.assert(args.path, /\.md$/i), (await data.get(text(args.id))).content);
       return;
     case "read_external_file":
       return fs.readFileSync(grants.assert(args.path, TEXT_FILE), "utf8");
@@ -2199,48 +3348,86 @@ async function handle(
     case "images_get_base_dir":
       return hostConfig.value.dataDir;
     case "images_save":
-      return store.saveImage(
+      return data.saveImage(
         text(args.headers?.["x-note-id"]),
         args.data,
         text(args.headers?.["x-image-ext"]),
       );
     case "images_save_from_path": {
       const file = grants.assert(args.filePath, IMAGE_FILE);
-      return store.saveImage(text(args.noteId), fs.readFileSync(file), path.extname(file).slice(1));
+      return data.saveImage(text(args.noteId), fs.readFileSync(file), path.extname(file).slice(1));
     }
     case "images_clean_unused":
-      return store.cleanImages(text(args.noteId), text(args.content));
+      return data.cleanImages(text(args.noteId), text(args.content));
     case "copy_background_image": {
-      const file = grants.assert(args.sourcePath, IMAGE_FILE),
-        dest = confined(
-          hostConfig.value.dataDir,
-          "backgrounds",
-          `${randomUUID()}${path.extname(file)}`,
-        );
-      atomicWrite(dest, fs.readFileSync(file));
-      return dest;
+      const file = grants.assert(args.sourcePath, IMAGE_FILE);
+      return data.saveBackgroundImage(fs.readFileSync(file), path.extname(file).slice(1));
     }
     case "config_get":
       return hostConfig.value;
-    case "config_save": {
+    case "config_save":
+      throw new AppError(
+        "obsoleteClient",
+        "设置页面或便签插件版本过旧，请重新加载页面或更新便签插件",
+      );
+    case "config_patch": {
       const previous = hostConfig.value;
-      const config = args.config as AppConfig;
+      const parsed = configPatchSchema.safeParse(args.patch);
+      if (!parsed.success) throw new AppError("invalidPayload", "设置补丁包含不支持的字段或值");
+      const patch = parsed.data;
+      if (args.expectedCommandShortcuts !== undefined) {
+        const expected = z
+          .record(z.string(), z.string().max(100))
+          .parse(args.expectedCommandShortcuts);
+        if (
+          Object.keys(expected).length > 128 ||
+          Object.entries(expected).some(
+            ([key, value]) => (previous.commandShortcuts?.[key] ?? "") !== value,
+          )
+        )
+          throw new AppError("settingsConflict", "快捷键设置已变化，请重新加载并核对");
+      }
+      const config = {
+        ...previous,
+        ...patch,
+        ...(patch.commandShortcuts
+          ? {
+              commandShortcuts: { ...previous.commandShortcuts, ...patch.commandShortcuts },
+            }
+          : {}),
+      };
       // Validate/write once before applying OS state, then roll back on native failure.
-      if (config?.autostart && !app.isPackaged)
+      if (patch.autostart && !app.isPackaged)
         throw new AppError("developmentOnly", "开机启动请在安装后的版本中设置");
       if (
         config?.backgroundImagePath &&
         config.backgroundImagePath !== previous.backgroundImagePath
       )
-        imagePath(hostConfig.value.dataDir, config.backgroundImagePath);
-      store.saveConfig(config);
+        await notesClient.resolveImage(config.backgroundImagePath);
+      hostConfig.save(config);
+      const shortcutsChanged =
+        patch.globalShortcut !== undefined ||
+        patch.toggleVisibilityShortcut !== undefined ||
+        patch.commandShortcuts !== undefined;
       try {
-        registerShortcuts(config);
+        if (shortcutsChanged) registerShortcuts(config);
+        if (Object.keys(patch).some((key) => key.startsWith("superPanel")))
+          await contextPanel?.configure(panelConfiguration(config));
         if (config.autostart !== previous.autostart)
           app.setLoginItemSettings({ openAtLogin: config.autostart, path: process.execPath });
+        if (notesActive && config.locale !== previous.locale)
+          await notesClient.initialize(config.locale);
       } catch (error) {
-        store.saveConfig(previous);
-        registerShortcuts(previous);
+        hostConfig.save(previous);
+        if (Object.keys(patch).some((key) => key.startsWith("superPanel")))
+          await contextPanel?.configure(panelConfiguration(previous)).catch(() => {});
+        if (shortcutsChanged) {
+          try {
+            registerShortcuts(previous);
+          } catch (restoreError) {
+            console.error("shortcut-rollback", restoreError);
+          }
+        }
         throw error;
       }
       syncMcp();
@@ -2251,14 +3438,7 @@ async function handle(
     }
     case "config_migrate_data_dir": {
       const dest = grants.assert(args.newDataDir);
-      const target = canonical(path.join(dest, "spark233")),
-        hostRoot = canonical(configDir);
-      if (inside(hostRoot, target) || inside(target, hostRoot))
-        throw new Error("便签目录必须与应用配置和插件目录分离");
-      persistLayout();
-      const config = store.migrate(dest);
-      emit("config-changed", config);
-      return config;
+      return migrateNotesDirectory(dest);
     }
     case "global_shortcut_check":
       return hostShortcuts.check(text(args.shortcut));
@@ -2273,20 +3453,20 @@ async function handle(
       return noteWindowSnapshot();
     case "note_set_pinned":
       if (typeof args.pinned !== "boolean") throw new AppError("invalidPayload", "置顶参数不合法");
-      setNotePinned(text(args.noteId), args.pinned);
+      await setNotePinned(text(args.noteId), args.pinned);
       return;
     case "reminders_list":
-      return reminders.list();
+      return data.listReminders();
     case "reminders_set": {
       const taskText = args.taskText === undefined ? undefined : text(args.taskText);
-      return reminders.set({
+      return data.setReminder({
         noteId: text(args.noteId),
         fireAt: text(args.fireAt),
         taskText,
       });
     }
     case "reminders_cancel":
-      reminders.cancel(text(args.id));
+      await data.cancelReminder(text(args.id));
       return;
     case "hide_note_on_desktop":
       await hideNoteOnDesktop(text(args.noteId));
@@ -2307,16 +3487,16 @@ async function handle(
         if (other) await hideAndRelease(other);
         else {
           entry.visible = false;
-          persistLayout();
+          await persistLayout();
         }
         return false;
       }
-      openNote(id, "tile", args.bounds ?? undefined);
+      await openNote(id, "tile", args.bounds ?? undefined);
       return true;
     }
     case "note_context_menu":
       if (layout.view === "main") return;
-      paperMenu(win).popup({ window: win });
+      (await paperMenu(win)).popup({ window: win });
       return;
     case "fold_note_window":
       if (layout.view !== "main") await foldAndRelease(win);
@@ -2326,7 +3506,7 @@ async function handle(
       return;
     case "open_note_in_editor": {
       const id = text(args.noteId);
-      openNoteWithAnchor(id);
+      await openNoteWithAnchor(id);
       return;
     }
     case "take_startup_file": {
@@ -2336,7 +3516,9 @@ async function handle(
     }
     case "surface_state": {
       if (layout.view === "main") return;
-      if (args.noteId) store.get(text(args.noteId));
+      // A final save already validated/bound this identity. Its renderer must
+      // finish acknowledging the existing surface while public reads are fenced.
+      if (args.noteId && layout.noteId !== args.noteId) await data.get(text(args.noteId));
       layout.noteId = args.noteId || undefined;
       layout.view = args.mode === "tile" ? "tile" : "notepad";
       scheduleLayout();
@@ -2363,16 +3545,24 @@ async function handle(
     case "window_control": {
       switch (args.action) {
         case "show":
+          if (!(windowPresentations.get(win)?.() ?? true)) return;
           win.show();
           return;
         case "focus":
+          if (!(windowPresentations.get(win)?.() ?? true)) return;
           win.focus();
           return;
         case "hide":
           await hideAndRelease(win);
           return;
         case "close":
-          if (isAdminView(layout) && !layout.compact && !hostConfig.value.closeToTray) await quit();
+          if (
+            isAdminView(layout) &&
+            layout.hostPage !== "settings" &&
+            !layout.compact &&
+            !hostConfig.value.closeToTray
+          )
+            await quit();
           else if (isHostView(layout)) await hideAndRelease(win);
           else await foldAndRelease(win);
           return;
@@ -2486,10 +3676,26 @@ function setupIpc(): void {
         (args !== undefined && (args === null || typeof args !== "object" || Array.isArray(args)))
       )
         throw new AppError("invalidPayload", "IPC 参数不合法");
-      const run = () => handle(win, command, (args ?? {}) as Record<string, any>);
+      const run = async () => {
+        const modal =
+          /^(dialog_|applications_entries_pick|search_scope_pick|launcher_pick_directory|plugins_import|backup_create|backup_inspect)/.test(
+            command,
+          );
+        if (modal) nativeDialogDepth.set(win.id, (nativeDialogDepth.get(win.id) ?? 0) + 1);
+        try {
+          return await handle(win, command, (args ?? {}) as Record<string, any>);
+        } finally {
+          if (modal) {
+            const count = (nativeDialogDepth.get(win.id) ?? 1) - 1;
+            if (count) nativeDialogDepth.set(win.id, count);
+            else nativeDialogDepth.delete(win.id);
+          }
+        }
+      };
       // Disk writes and read/modify/write metadata transactions are globally serialized.
       const queued =
-        /^(notes_|categories_|images_|reminders_|config_|copy_background|save_external)/.test(
+        command !== "config_migrate_data_dir" &&
+        /^(notes_|categories_|images_|reminders_|config_|plugin_settings_save|copy_background|save_external)/.test(
           command,
         );
       const value = queued ? await (mutations = mutations.catch(() => {}).then(run)) : await run();
@@ -2533,11 +3739,24 @@ function setupIpc(): void {
     for (const file of paths) grants.grant(file);
     return paths;
   });
+  ipcMain.handle("spark233:application-drop", (event, paths: unknown) => {
+    const win = sender(event);
+    if (!isAdminView(layouts.get(labelOf(win))!))
+      throw new AppError("permissionDenied", "Entry drops require the host management view");
+    if (
+      !Array.isArray(paths) ||
+      paths.length > 100 ||
+      paths.some((value) => typeof value !== "string")
+    )
+      throw new AppError("permissionDenied", "Invalid dropped entry targets");
+    const caller = launcherCaller(win);
+    return paths.map((location) => applicationEntries.admit(caller, location));
+  });
 }
 app.on("second-instance", (_event, argv) => {
   startupFile = externalArg(argv);
   const command = parseCliArgs(argv).command;
-  if (!store) {
+  if (!pluginHost || !tray) {
     if (command) pendingCliCommand = command;
     return;
   }
@@ -2569,7 +3788,6 @@ app.on("will-quit", () => {
   hostShortcuts.dispose();
   stopFullscreen();
   capsules?.dispose();
-  reminders?.dispose();
   mcpServer?.stop();
   tray?.dispose();
 });
@@ -2577,39 +3795,65 @@ app
   .whenReady()
   .then(async () => {
     if (cliArgs.mcp) return; // --mcp 进程的正常启动路径已被启动器接管
+    try {
+      diagnostics = new DiagnosticsStore(path.join(configDir, "diagnostics"));
+      diagnostics.record({ kind: "host", code: "started", level: "info" });
+    } catch {
+      console.error("diagnostics-unavailable");
+    }
     const defaultNotesRoot =
       process.env.SPARK233_DATA_DIR || path.join(app.getPath("documents"), "spark233");
     hostConfig = new HostConfigStore(
       hostConfigDir,
-      readPendingBackupNotesRoot({
+      readPendingBackupDataRoots({
         hostRoot: hostConfigDir,
         pluginRoot: path.join(configDir, "plugins"),
         recoveryRoot: backupRecoveryDir,
-        defaultNotesRoot,
-      }) || defaultNotesRoot,
+        defaultDataRoots: { "spark233.notes": defaultNotesRoot },
+        legacyMountAliases: { notes: "spark233.notes" },
+        readHostDataRoots: (directory): Record<string, string> => {
+          const file = path.join(directory, "config.json");
+          if (!fs.existsSync(file)) return {};
+          const info = fs.lstatSync(file);
+          if (info.isSymbolicLink() || !info.isFile() || info.size > 1024 * 1024)
+            throw new AppError("unsafeBackupPath", "恢复宿主配置文件不合法");
+          const config = JSON.parse(fs.readFileSync(file, "utf8"));
+          if (config?.dataDir === undefined) return {};
+          if (typeof config.dataDir !== "string" || !path.isAbsolute(config.dataDir))
+            throw new AppError("invalidBackup", "恢复宿主配置的数据位置不合法");
+          return { "spark233.notes": config.dataDir };
+        },
+      })?.["spark233.notes"] || defaultNotesRoot,
     );
-    store = new NoteStore(
-      configDir,
-      hostConfig.value.dataDir,
-      (file) => shell.trashItem(file),
-      hostConfig,
-      { initialize: false },
+    privateDataRoots = new HostPrivateDataRootsStore(
+      path.join(configDir, "private-data-roots.json"),
+      [configDir, backupRecoveryDir, hostConfig.value.dataDir],
     );
     launcher = new LauncherController({
       commandMatcher,
       getWarnings: () => (shortcutWarning ? [shortcutWarning] : []),
       stateFile: path.join(hostConfigDir, "launcher.json"),
       manager: () => pluginHost?.manager,
-      getContext: () => launcherContext,
+      onQueryUpdate: deliverLauncherQueryUpdate,
+      onPreferencesChanged: () => emit("launcher-status-changed"),
+      onLearningChanged: (learning) => emit("launcher-learning-changed", learning),
+      getContext: contextForCaller,
+      adaptContext: contextForCommand,
+      getContextRevision: contextRevisionForCaller,
+      getAvailabilityRevision: () => launcherAvailabilityRevision,
       getLocale: () => hostConfig.value.locale,
     });
     capsules = new Capsules({
       here,
       url: devUrl || "spark233://notes/index.html",
       entries: layouts,
-      store: () => store,
+      notes: () => notesStartupClient ?? notesClient,
+      getConfig: () => hostConfig.value,
+      dataRoot: () => hostConfig.value.dataDir,
       save: persistLayout,
-      open: (id) => openNote(id),
+      open: async (id) => {
+        await openNote(id);
+      },
       hide: async (id) => {
         try {
           await hideNoteOnDesktop(id);
@@ -2631,13 +3875,6 @@ app
     });
     // No note resources or metadata refreshes belong to a running plugin yet.
     capsules.setEnabled(false);
-    reminders = new Reminders({
-      file: () => path.join(hostConfig.value.dataDir, "reminders.json"),
-      getNote: (id) => store.get(id),
-      getLocale: () => hostConfig.value.locale,
-      notify: fireReminderNotification,
-      onChanged: () => emit("reminders-changed", reminders.list()),
-    });
     mcpServer = new McpServer({
       configDir: () => configDir,
       context: () => ({ permission: hostConfig.value.mcpPermission, ops: mcpOps }),
@@ -2700,11 +3937,7 @@ app
           if (!resource) return new Response("Resource expired", { status: 404 });
           file = resource.path;
         } else if (url.host === "asset")
-          file = imagePath(
-            hostConfig.value.dataDir,
-            decodeURIComponent(url.pathname.slice(1)),
-            hostConfig.value.backgroundImagePath,
-          );
+          file = await notesClient.resolveImage(decodeURIComponent(url.pathname.slice(1)));
         else return new Response("Not found", { status: 404 });
         const result = await net.fetch(pathToFileURL(file).href);
         const headers = new Headers(result.headers);
@@ -2746,12 +3979,44 @@ app
         createOfficialRuntime,
         resolveDataDirectory: (id) =>
           id === "spark233.notes" ? hostConfig.value.dataDir : undefined,
+        onBackendHostCall: async (call, { owner, signal }) => {
+          if (signal.aborted || owner.pluginId !== "spark233.notes" || !notesScope?.accepts(owner))
+            throw new AppError("permissionDenied", "便签平台操作不属于当前运行实例");
+          if (call.operation === "file.trash") await shell.trashItem(call.path);
+          else if (call.operation === "storage.protectRoot") {
+            const parent = pendingNotesMigration?.directory;
+            const target = canonical(call.path);
+            const source = canonical(hostConfig.value.dataDir);
+            const host = canonical(configDir);
+            const recovery = canonical(backupRecoveryDir);
+            if (
+              !parent ||
+              !inside(canonical(parent), target) ||
+              [source, host, recovery].some((root) => inside(root, target) || inside(target, root))
+            )
+              throw new AppError("permissionDenied", "迁移数据域不属于本次已授权的目标位置");
+            await privateDataRoots.retain([source, target]);
+            signal.throwIfAborted();
+          }
+        },
         onPluginEvent: (owner, name, payload) => {
           if (owner.pluginId === "spark233.translation" && name === "translation-chunk")
             emit(name, payload);
+          if (owner.pluginId === "spark233.notes" && notesScope?.accepts(owner)) {
+            if (name === "notes-data-changed") changed();
+            else if (name === "reminders-changed") emit(name, payload);
+            else if (name === "notes-reminder-due" && payload)
+              fireReminderNotification(payload as unknown as ReminderNotification);
+          }
         },
         resolveResource: (resource) =>
           pluginImages.get(resource.id)?.path ?? pluginFiles.get(resource.id),
+        subscribeResourceRevocations: (listener) => {
+          resourceRevocations.add(listener);
+          return () => {
+            resourceRevocations.delete(listener);
+          };
+        },
         hostVersion: app.getVersion(),
         getTheme: getPluginTheme,
         getLocale: () => hostConfig.value.locale,
@@ -2761,8 +4026,25 @@ app
             pluginThemeListeners.delete(listener);
           };
         },
+        onDiagnostic: (event) => {
+          diagnostics?.record(event);
+        },
+        onDiagnosticOutput: (owner, stream, byteCount, kind) => {
+          diagnostics?.output(owner, stream, byteCount, kind);
+        },
+        onPackageTaskChanged: (caller, task) => {
+          for (const win of windows.values())
+            if (
+              !win.isDestroyed() &&
+              !win.webContents.isDestroyed() &&
+              launcherCallers.get(win.webContents.id) === caller
+            )
+              emit("plugin-package-task-changed", task, win);
+        },
         onChange: () => {
+          launcher?.pluginsChanged();
           emit("plugins-changed");
+          refreshTray();
           if (pluginHost && !maintenance && !hostShortcuts.isRecording)
             try {
               registerShortcuts(hostConfig.value);
@@ -2776,7 +4058,14 @@ app
         hostVersion: app.getVersion(),
         hostRoot: hostConfigDir,
         pluginRoot: path.join(configDir, "plugins"),
-        notesRoot: () => hostConfig.value.dataDir,
+        externalDataRoots: () => ({ "spark233.notes": hostConfig.value.dataDir }),
+        legacyMountAliases: { notes: "spark233.notes" },
+        protectRoots: (roots) => privateDataRoots.retain(roots),
+        rewriteHostConfig: (value, roots) => {
+          if (!value || typeof value !== "object" || Array.isArray(value))
+            throw new AppError("invalidBackup", "恢复宿主配置格式不合法");
+          return { ...value, dataDir: roots["spark233.notes"] };
+        },
         recoveryRoot: backupRecoveryDir,
         pauseHost: pauseForBackup,
         reloadHost: reloadHostAfterRestore,
@@ -2795,6 +4084,7 @@ app
       pluginHostStartupError = String(error);
       console.error("plugin-host-initialization", error);
     }
+    initializeContextPanel();
     notesActive = !!pluginHost?.manager
       .list()
       .find(
@@ -2809,7 +4099,7 @@ app
       onBalloonClick: () => {
         const item = lastBalloonReminder;
         lastBalloonReminder = undefined;
-        if (item) openNoteWithAnchor(item.noteId, item.taskText);
+        if (item) void openNoteWithAnchor(item.noteId, item.taskText).catch(reportError);
       },
     });
     if (launcher.state().firstRun) await showLauncher();
@@ -2839,7 +4129,10 @@ app
             !app.commandLine.hasSwitch("no-sandbox") &&
             !app.commandLine.hasSwitch("disable-gpu-sandbox"),
         }),
-        store,
+        notes: notesClient,
+        config: () => hostConfig.value,
+        configDir,
+        dataDir: () => hostConfig.value.dataDir,
         windows,
         layouts,
         openNote,

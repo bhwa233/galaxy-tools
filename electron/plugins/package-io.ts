@@ -3,13 +3,23 @@ import * as ssri from "ssri";
 
 // npm-registry-fetch/tar provide transport and parsing. They do not impose our
 // plugin resource budgets, so this stream only counts bytes at that boundary.
-export function limitPackageBytes(maximum: number, label: string): Transform {
+export function limitPackageBytes(
+  maximum: number,
+  label: string,
+  onReceived?: (receivedBytes: number) => void,
+): Transform {
   let received = 0;
   return new Transform({
     transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback) {
       received += chunk.length;
       if (received > maximum) callback(new Error(`${label} exceeds ${maximum} bytes`));
-      else callback(null, chunk);
+      else {
+        // Progress is observational: a closed UI must never break the transport.
+        try {
+          onReceived?.(received);
+        } catch {}
+        callback(null, chunk);
+      }
     },
   });
 }

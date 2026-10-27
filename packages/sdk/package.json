@@ -1,6 +1,6 @@
 {
   "name": "@spark233/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Plugin contracts and browser client for spark233",
   "license": "MIT",

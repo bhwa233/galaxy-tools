@@ -7,6 +7,8 @@ import { z } from "zod";
 import {
   pluginCapabilitySchema,
   isPluginPackagePath,
+  commandMatchesSourceApplication,
+  sourceApplicationSchema,
   type JsonValue,
   type PluginActivation,
   type PluginCapability,
@@ -14,8 +16,9 @@ import {
   type PluginOwner,
   type StopReason,
   type PluginDataMigration,
+  type PluginCommand,
 } from "../../packages/sdk/src/index.js";
-import { AppError, atomicWrite, canonical, confined, inside, readJson } from "../store.js";
+import { AppError, atomicWrite, canonical, confined, inside, readJson } from "../persistence.js";
 import { validatePluginDirectory, type HostEnvironment } from "./manifest.js";
 import {
   getPluginVersionDirectory,
@@ -23,6 +26,7 @@ import {
   type StagedPluginPackage,
 } from "./package-installer.js";
 import { PluginResourceScope, samePluginOwner } from "./resources.js";
+import { diagnosticErrorCode, type DiagnosticEvent } from "../diagnostics.js";
 
 export const pluginTrustGrantSchema = z.strictObject({
   capabilities: z.array(pluginCapabilitySchema),
@@ -46,6 +50,14 @@ const installationSchema = z.strictObject({
   lastError: z.string().optional(),
 });
 export type PluginInstallation = z.infer<typeof installationSchema>;
+export type PluginInstallStage =
+  | "saving"
+  | "backing-up"
+  | "migrating"
+  | "switching"
+  | "starting"
+  | "recovering"
+  | "recovery-required";
 const dataVersionSchema = z.strictObject({
   packageName: z
     .string()
@@ -88,7 +100,7 @@ type PersistentState = z.infer<typeof stateSchema>;
 type Journal = z.infer<typeof journalSchema>;
 export interface ManagedPluginRuntime {
   activate(activation: PluginActivation): Promise<JsonValue | undefined>;
-  query?(activation: PluginActivation): Promise<JsonValue | undefined>;
+  query?(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
 }
 export interface PluginManagerOptions {
   stateFile: string;
@@ -103,6 +115,7 @@ export interface PluginManagerOptions {
     startupCheckOnly: boolean,
   ) => Promise<ManagedPluginRuntime>;
   onChange?: () => void;
+  onDiagnostic?: (event: DiagnosticEvent) => void;
   /** Dedicated business storage can live outside the plugin code/config root. */
   resolveDataDirectory?: (pluginId: string) => string | undefined;
   migrateData?: (
@@ -247,31 +260,14 @@ export class PluginManager {
           if (scope.state === "releasing" || scope.state === "released") continue;
           const decision = await scope.prepareStop(this.stopReason(scope, "update"));
           if (!decision.ok) {
-            for (const previous of prepared) previous.cancelStop();
+            await this.cancelPrepared(prepared);
             throw new AppError("pluginSaveRefused", decision.reason);
           }
           prepared.push(scope);
         }
         for (const id of this.instances.keys()) await this.stop(id, "update");
       };
-      const resume = async () => {
-        const failures: string[] = [];
-        for (const record of Object.values(this.state.plugins)) {
-          if (!record.enabled || record.lastError) continue;
-          if (this.instances.has(record.pluginId)) continue;
-          try {
-            const startup = this.metadata(record).spark233.activation === "on-startup";
-            if (!startup && !previouslyRunning.has(record.pluginId)) continue;
-            const runtime = await this.start(record, false, true);
-            if (startup) await runtime.activate({});
-          } catch (error) {
-            await this.activationFailed(record, error);
-            this.persist();
-            failures.push(`${record.pluginId}: ${String(error)}`);
-          }
-        }
-        if (failures.length) throw new AppError("pluginRestartFailed", failures.join("; "));
-      };
+      const resume = () => this.resumeInstances(previouslyRunning);
       const access: PluginMaintenanceAccess = {
         snapshot: () =>
           structuredClone({
@@ -296,9 +292,15 @@ export class PluginManager {
       try {
         await quiesce();
       } catch (error) {
-        for (const { scope } of this.instances.values())
-          if (scope.state === "prepared") scope.cancelStop();
+        const recovery = await Promise.allSettled([
+          this.cancelPrepared([...this.instances.values()].map(({ scope }) => scope)),
+        ]);
         await resume().catch(() => {});
+        if (recovery[0].status === "rejected")
+          throw new AggregateError(
+            [error, recovery[0].reason],
+            "Plugin preparation recovery failed",
+          );
         throw error;
       }
       let result: T | undefined;
@@ -343,6 +345,42 @@ export class PluginManager {
       if (id !== record.pluginId) throw new AppError("invalidPluginState", "插件状态身份不一致");
       this.assertDirectory(record);
     }
+  }
+
+  private async cancelPrepared(scopes: Iterable<PluginResourceScope>): Promise<void> {
+    // Resume every paused instance even if one backend cannot recover; settle all
+    // callbacks before a subsequent maintenance transaction can start.
+    const results = await Promise.allSettled(
+      [...scopes]
+        .filter((scope) => scope.state === "prepared" || scope.state === "resume-failed")
+        .map((scope) => scope.cancelStop()),
+    );
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "Plugin preparation recovery failed");
+  }
+
+  private async resumeInstances(
+    previouslyRunning: ReadonlySet<string>,
+    startupOnly = false,
+  ): Promise<void> {
+    const failures: string[] = [];
+    for (const record of Object.values(this.state.plugins)) {
+      if (!record.enabled || record.lastError || this.instances.has(record.pluginId)) continue;
+      if (startupOnly && !previouslyRunning.has(record.pluginId)) continue;
+      try {
+        const startup = this.metadata(record).spark233.activation === "on-startup";
+        if (!startup && (startupOnly || !previouslyRunning.has(record.pluginId))) continue;
+        const runtime = await this.start(record, false, true);
+        if (startup) await runtime.activate({});
+      } catch (error) {
+        await this.activationFailed(record, error);
+        this.persist();
+        failures.push(`${record.pluginId}: ${String(error)}`);
+      }
+    }
+    if (failures.length) throw new AppError("pluginRestartFailed", failures.join("; "));
   }
 
   private serial<T>(operation: () => Promise<T>): Promise<T> {
@@ -680,6 +718,13 @@ export class PluginManager {
       }
     }
   }
+  private diagnostic(event: DiagnosticEvent): void {
+    try {
+      this.options.onDiagnostic?.(event);
+    } catch {
+      /* Observations never change a transaction. */
+    }
+  }
   private start(
     record: PluginInstallation,
     startupCheckOnly = false,
@@ -722,6 +767,8 @@ export class PluginManager {
     };
     this.starting.set(record.pluginId, entry);
     entry.promise = this.factoryContext.run(token, async () => {
+      const startedAt = performance.now();
+      this.diagnostic({ kind: "lifecycle", code: "starting", level: "debug", owner: scope.owner });
       try {
         const runtime = await this.options.createRuntime(
           structuredClone(record),
@@ -736,8 +783,23 @@ export class PluginManager {
         )
           throw new AppError("pluginStarting", "初始化期间插件身份或进程状态发生变化");
         this.instances.set(record.pluginId, { scope, runtime });
+        this.diagnostic({
+          kind: "lifecycle",
+          code: "started",
+          level: "info",
+          owner: scope.owner,
+          durationMs: performance.now() - startedAt,
+        });
         return runtime;
       } catch (error) {
+        this.diagnostic({
+          kind: "lifecycle",
+          code: "failed",
+          level: "error",
+          owner: scope.owner,
+          durationMs: performance.now() - startedAt,
+          errorCode: diagnosticErrorCode(error),
+        });
         const released = await scope.stop("crash");
         if (!released.ok) {
           // Keep failed resources reachable for diagnostics/retry instead of leaking
@@ -764,14 +826,36 @@ export class PluginManager {
   private async stop(pluginId: string, reason: StopReason): Promise<void> {
     const instance = this.instances.get(pluginId);
     if (!instance) return;
-    if (instance.scope.state !== "releasing" && instance.scope.state !== "released") {
-      const decision = await instance.scope.prepareStop(this.stopReason(instance.scope, reason));
-      if (!decision.ok) throw new AppError("pluginSaveRefused", decision.reason);
+    const owner = instance.scope.owner;
+    const startedAt = performance.now();
+    this.diagnostic({ kind: "lifecycle", code: "saving", level: "debug", owner });
+    try {
+      if (instance.scope.state !== "releasing" && instance.scope.state !== "released") {
+        const decision = await instance.scope.prepareStop(this.stopReason(instance.scope, reason));
+        if (!decision.ok) throw new AppError("pluginSaveRefused", decision.reason);
+      }
+      const released = await instance.scope.release();
+      if (!released.ok) throw new AppError("pluginReleaseFailed", released.errors.join("; "));
+      this.instances.delete(pluginId);
+      this.crashedInstances.delete(owner.instanceId);
+      this.diagnostic({
+        kind: "lifecycle",
+        code: "stopped",
+        level: "info",
+        owner,
+        durationMs: performance.now() - startedAt,
+      });
+    } catch (error) {
+      this.diagnostic({
+        kind: "lifecycle",
+        code: "failed",
+        level: "error",
+        owner,
+        durationMs: performance.now() - startedAt,
+        errorCode: diagnosticErrorCode(error),
+      });
+      throw error;
     }
-    const released = await instance.scope.release();
-    if (!released.ok) throw new AppError("pluginReleaseFailed", released.errors.join("; "));
-    this.instances.delete(pluginId);
-    this.crashedInstances.delete(instance.scope.owner.instanceId);
   }
 
   private stopReason(scope: PluginResourceScope, reason: StopReason): StopReason {
@@ -787,6 +871,13 @@ export class PluginManager {
     if (!reportedRecord || !scope || !samePluginOwner(scope.owner, owner)) return Promise.resolve();
     // Fence the exact failed owner now, even while an unrelated mutation owns
     // the persistence queue. Its record is changed only inside that queue.
+    this.diagnostic({
+      kind: "lifecycle",
+      code: "crashed",
+      level: "error",
+      owner,
+      errorCode: diagnosticErrorCode(error),
+    });
     this.pendingCrashes.set(owner.pluginId, owner);
     this.crashedInstances.add(owner.instanceId);
     this.notifyChange();
@@ -860,16 +951,66 @@ export class PluginManager {
     });
   }
   activate(pluginId: string, activation: PluginActivation): Promise<JsonValue | undefined> {
-    return this.dispatch(pluginId, activation, false);
+    return this.dispatch(pluginId, activation, false).then(({ value }) => value);
   }
-  query(pluginId: string, activation: PluginActivation): Promise<JsonValue | undefined> {
-    return this.dispatch(pluginId, activation, true);
+  /** Host-only activation receipt; the exact executed owner is also returned
+   * for cold commands, without changing any renderer/plugin protocol. */
+  activateOwned(
+    pluginId: string,
+    activation: PluginActivation,
+    beforeDispatch?: () => void,
+  ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
+    return this.dispatch(pluginId, activation, false, undefined, beforeDispatch);
+  }
+  query(
+    pluginId: string,
+    activation: PluginActivation,
+    signal?: AbortSignal,
+  ): Promise<JsonValue | undefined> {
+    return this.queryOwned(pluginId, activation, signal).then(({ value }) => value);
+  }
+  /** Host routing only: provider results retain the exact instance that produced them. */
+  queryOwned(
+    pluginId: string,
+    activation: PluginActivation,
+    signal?: AbortSignal,
+    beforeDispatch?: () => void,
+  ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
+    return this.dispatch(pluginId, activation, true, signal, beforeDispatch);
+  }
+  isOwnerCurrent(owner: PluginOwner, commandId?: string): boolean {
+    const record = this.find(owner.pluginId);
+    const instance = this.instances.get(owner.pluginId);
+    if (
+      !record?.enabled ||
+      record.lastError ||
+      record.version !== owner.version ||
+      !instance ||
+      instance.scope.state !== "active" ||
+      !samePluginOwner(instance.scope.owner, owner)
+    )
+      return false;
+    try {
+      const metadata = this.metadata(record);
+      const command = commandId
+        ? metadata.spark233.commands.find((entry) => entry.id === commandId)
+        : undefined;
+      if (commandId && !command) return false;
+      this.assertDispatch(metadata, command);
+      return true;
+    } catch {
+      return false;
+    }
   }
   private async dispatch(
     pluginId: string,
     activation: PluginActivation,
     query: boolean,
-  ): Promise<JsonValue | undefined> {
+    signal?: AbortSignal,
+    beforeDispatch?: () => void,
+  ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
+    signal?.throwIfAborted();
+    activation = structuredClone(activation);
     const record = this.record(pluginId);
     if (!record.enabled || record.lastError)
       throw new AppError("pluginDisabled", "插件已停用或存在错误");
@@ -880,11 +1021,102 @@ export class PluginManager {
     if (activation.commandId && !command)
       throw new AppError("unknownPluginCommand", "插件命令未注册");
     this.assertDispatch(metadata, command);
+    this.activationForCommand(command, activation);
+    beforeDispatch?.();
     const runtime = await this.start(record);
+    signal?.throwIfAborted();
     if (this.find(pluginId) !== record || this.instances.get(pluginId)?.runtime !== runtime)
       throw new AppError("pluginStopping", "插件实例已变化，请重新调用");
-    this.assertDispatch(this.metadata(record), command);
-    return query && runtime.query ? runtime.query(activation) : runtime.activate(activation);
+    const currentMetadata = this.metadata(record);
+    const currentCommand = activation.commandId
+      ? currentMetadata.spark233.commands.find((command) => command.id === activation.commandId)
+      : undefined;
+    if (activation.commandId && !currentCommand)
+      throw new AppError("unknownPluginCommand", "插件命令未注册");
+    this.assertDispatch(currentMetadata, currentCommand);
+    const forwarded = this.activationForCommand(currentCommand, activation);
+    beforeDispatch?.();
+    const owner = this.instances.get(pluginId)!.scope.owner;
+    const kind =
+      pluginId === "spark233.search"
+        ? "search"
+        : pluginId === "spark233.ocr"
+          ? "ocr"
+          : pluginId === "spark233.translation"
+            ? "translation"
+            : "backend";
+    const startedAt = performance.now();
+    this.diagnostic({ kind, code: "started", level: "debug", owner });
+    try {
+      const value = await (query && runtime.query
+        ? runtime.query(forwarded, signal)
+        : runtime.activate(forwarded));
+      if (query) {
+        signal?.throwIfAborted();
+        beforeDispatch?.();
+        if (
+          this.find(pluginId) !== record ||
+          this.instances.get(pluginId)?.runtime !== runtime ||
+          !this.isOwnerCurrent(owner, activation.commandId)
+        )
+          throw new AppError("pluginStopping", "查询结果所属插件实例已失效，请重新查询");
+      }
+      if (this.instances.get(pluginId)?.scope.accepts(owner))
+        this.diagnostic({
+          kind,
+          code: "completed",
+          level: "info",
+          owner,
+          durationMs: performance.now() - startedAt,
+        });
+      return { value, owner: { ...owner } };
+    } catch (error) {
+      if (this.instances.get(pluginId)?.scope.accepts(owner))
+        this.diagnostic({
+          kind,
+          code: signal?.aborted ? "cancelled" : "failed",
+          level: signal?.aborted ? "debug" : "error",
+          owner,
+          durationMs: performance.now() - startedAt,
+          ...(signal?.aborted ? {} : { errorCode: diagnosticErrorCode(error) }),
+        });
+      throw error;
+    }
+  }
+  private activationForCommand(
+    command: PluginCommand | undefined,
+    activation: PluginActivation,
+  ): PluginActivation {
+    if (command && !commandMatchesSourceApplication(command, activation.context))
+      throw new AppError("pluginSourceUnavailable", "此命令不适用于当前来源程序");
+    const context = activation.context;
+    if (!context) return activation;
+    const sourceAware =
+      !!command &&
+      (!!command.sourceApplications ||
+        command.inputs.includes("window") ||
+        command.match === "window");
+    if (sourceAware && command) {
+      if (context.sourceApplication !== undefined || context.kind === "window") {
+        const source = sourceApplicationSchema.safeParse(context.sourceApplication);
+        if (!source.success) throw new AppError("invalidPayload", "来源程序身份不合法");
+        if (command.match === "window" || !command.inputs.includes(context.kind))
+          return {
+            ...activation,
+            context: { kind: "window", sourceApplication: source.data },
+          };
+        return { ...activation, context: { ...context, sourceApplication: source.data } };
+      }
+      return activation;
+    }
+    // Strict schemas shipped against older APIs must receive their old shape.
+    // A window-only context adds no old input, and host source identity stays private.
+    if (context.kind === "window") {
+      const { context: _context, ...legacy } = activation;
+      return legacy;
+    }
+    const { sourceApplication: _sourceApplication, ...legacy } = context;
+    return { ...activation, context: legacy };
   }
   setEnabled(pluginId: string, enabled: boolean): Promise<void> {
     return this.mutate(pluginId, async () => {
@@ -913,6 +1145,12 @@ export class PluginManager {
         delete record.lastError;
       }
       this.persist();
+      this.diagnostic({
+        kind: "lifecycle",
+        code: enabled ? "enabled" : "disabled",
+        level: "info",
+        target: { pluginId: record.pluginId, version: record.version },
+      });
     });
   }
 
@@ -926,7 +1164,23 @@ export class PluginManager {
   }
 
   /** Caller presents package/version/capabilities and obtains this grant first. */
-  install(staged: StagedPluginPackage, grant: PluginTrustGrant, enabled = true): Promise<void> {
+  install(
+    staged: StagedPluginPackage,
+    grant: PluginTrustGrant,
+    enabled = true,
+    onStage?: (stage: PluginInstallStage) => void,
+  ): Promise<void> {
+    const stage = (value: PluginInstallStage) => {
+      this.diagnostic({
+        kind: "package",
+        code: value,
+        level: value === "recovery-required" ? "error" : "info",
+        target: { pluginId: staged.metadata.spark233.id, version: staged.metadata.version },
+      });
+      try {
+        onStage?.(value);
+      } catch {}
+    };
     return this.mutate(staged.metadata.spark233.id, async () => {
       if (this.state.transaction)
         throw new AppError("pluginRecoveryRequired", "需要先恢复未完成的插件更新");
@@ -986,7 +1240,10 @@ export class PluginManager {
         grant: structuredClone(grant),
       };
       this.assertDirectory(after);
-      if (before) await this.stop(id, "update");
+      if (before) {
+        if (this.instances.has(id)) stage("saving");
+        await this.stop(id, "update");
+      }
       const transactionId = randomUUID();
       const journal: Journal = {
         id: transactionId,
@@ -1002,21 +1259,26 @@ export class PluginManager {
       this.state.transaction = journal;
       try {
         this.persist();
-        if (journal.dataExisted)
+        if (journal.dataExisted) {
+          stage("backing-up");
           await this.copyData(this.dataDirectory(id), confined(journal.backup, "data"));
+        }
         journal.phase = "backed-up";
         this.persist();
         if (migration) {
           journal.phase = "migrating";
           this.persist();
+          stage("migrating");
           await this.options.migrateData!(after, metadata, migration);
         }
+        stage("switching");
         this.state.plugins[id] = after;
         journal.phase = "switched";
         this.persist();
         {
           // A real runtime is created for startup validation even for on-command
           // plugins; activate is only sent for explicit on-startup policy.
+          stage("starting");
           const runtime = await this.start(after, !after.enabled, true);
           if (after.enabled && metadata.spark233.activation === "on-startup")
             await runtime.activate({});
@@ -1027,8 +1289,10 @@ export class PluginManager {
         this.persist();
       } catch (error) {
         try {
+          stage("recovering");
           await this.recover(journal);
         } catch (recovery) {
+          stage("recovery-required");
           throw new AppError("pluginRecoveryRequired", `${String(error)}; ${String(recovery)}`);
         }
         throw error;
@@ -1131,21 +1395,45 @@ export class PluginManager {
         delete this.state.dataVersions[pluginId];
         this.persist();
       }
+      this.diagnostic({
+        kind: "lifecycle",
+        code: "uninstalled",
+        level: "info",
+        target: { pluginId: record.pluginId, version: record.version },
+      });
     });
   }
   shutdown(): Promise<void> {
     return this.exclusiveSerial(async () => {
-      const prepared: PluginResourceScope[] = [];
-      for (const { scope } of this.instances.values()) {
-        if (scope.state === "releasing" || scope.state === "released") continue;
-        const decision = await scope.prepareStop(this.stopReason(scope, "quit"));
-        if (!decision.ok) {
-          for (const previous of prepared) previous.cancelStop();
-          throw new AppError("pluginSaveRefused", decision.reason);
+      const released = new Set<string>();
+      try {
+        for (const { scope } of this.instances.values()) {
+          if (scope.state === "releasing" || scope.state === "released") continue;
+          const decision = await scope.prepareStop(this.stopReason(scope, "quit"));
+          if (!decision.ok) throw new AppError("pluginSaveRefused", decision.reason);
         }
-        prepared.push(scope);
+        for (const [id] of this.instances) {
+          await this.stop(id, "quit");
+          released.add(id);
+        }
+      } catch (error) {
+        // A failed release stays tracked. Other prepared instances must resume,
+        // and startup services released earlier must be restored before quit is cancelled.
+        const failures: unknown[] = [error];
+        try {
+          await this.cancelPrepared([...this.instances.values()].map(({ scope }) => scope));
+        } catch (recovery) {
+          failures.push(recovery);
+        }
+        try {
+          await this.resumeInstances(released, true);
+        } catch (recovery) {
+          failures.push(recovery);
+        }
+        if (failures.length > 1)
+          throw new AggregateError(failures, "Plugin shutdown recovery failed");
+        throw error;
       }
-      for (const [id] of this.instances) await this.stop(id, "quit");
       this.ready = false;
     });
   }
