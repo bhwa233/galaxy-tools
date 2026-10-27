@@ -74,7 +74,7 @@ it("enters a mode through its real candidate and Escape returns subsequent queri
     await search.fill("catalog");
     await userEvent.keyboard("{Tab}");
     expect(desktop.calls.filter((call) => call.command === "launcher_enter_mode")).toEqual([]);
-    await expect.element(search).toHaveAttribute("placeholder", "输入应用、命令或插件关键词…");
+    await expect.element(search).toHaveAttribute("placeholder", "输入应用、插件或操作关键词…");
     await entryOption.click();
     await expect.element(search).toHaveAttribute("placeholder", "在测试模式中查询");
     await expect.element(page.getByRole("button", { name: "返回全部入口" })).toBeVisible();

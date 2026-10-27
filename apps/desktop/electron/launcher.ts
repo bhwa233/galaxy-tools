@@ -1096,7 +1096,7 @@ export class LauncherController {
     );
     const commandsGroup: LauncherResultGroup = {
       id: "commands",
-      title: locale.startsWith("en") ? "Commands" : "命令",
+      title: locale.startsWith("en") ? "Actions" : "操作",
       status: "ready",
       items: [],
     };

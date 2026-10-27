@@ -48,7 +48,7 @@ test("disabling a plugin prevents its old candidate from executing while another
   });
   const view = await render(<Launcher />);
   try {
-    const search = page.getByRole("combobox", { name: "搜索命令与插件" });
+    const search = page.getByRole("combobox", { name: "搜索应用、插件与操作" });
     await search.fill("可用性");
     const oldCandidate = page.getByRole("option", { name: retired.title, exact: false });
     const otherCandidate = page.getByRole("option", { name: available.title, exact: false });

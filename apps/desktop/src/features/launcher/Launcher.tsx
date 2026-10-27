@@ -1,4 +1,4 @@
-import { PluginIcon } from "../plugins/PluginIcon";
+import { PluginIcon, pluginEntryCommands } from "../plugins/PluginIcon";
 import {
   useCallback,
   useEffect,
@@ -45,6 +45,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { OcrWorkspace } from "../ocr/OcrWorkspace";
 import { TranslationWorkspace } from "../translation/TranslationWorkspace";
 import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
@@ -88,6 +95,17 @@ function message(value: unknown): string {
       : String(value);
 }
 const itemKey = (item: LauncherItem) => JSON.stringify([item.pluginId, item.id]);
+
+// Installed application backends append static search instructions to their
+// diagnostics. Hide that boilerplate while retaining actual source warnings.
+function applicationStatus(hint?: string): string | undefined {
+  return hint
+    ?.replace(
+      /\s*(?:支持应用原名、中文全拼、拼音首字母与中英混排。|Search original names, full pinyin, initials, or mixed Chinese and Latin text\.)\s*$/,
+      "",
+    )
+    .trim();
+}
 
 /** Host-side search is authoritative; cmdk supplies selection and keyboard
  * navigation. The frontend owns only input, mode and request-session state. */
@@ -568,6 +586,7 @@ export function Launcher() {
     }
   };
   const onKeyDown = (event: KeyboardEvent) => {
+    if ((event.target as HTMLElement).closest('[data-slot="context-menu-content"]')) return;
     const isComposition =
       composition.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (
@@ -599,6 +618,52 @@ export function Launcher() {
       event.stopPropagation();
       returnFromMode();
       return;
+    }
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      const fromInput = event.target === input.current;
+      if (fromInput && (event.key === "ArrowLeft" || event.key === "ArrowRight")) return;
+      const target = event.target as HTMLElement;
+      if (target.closest("button")) return;
+      // cmdk provides linear navigation; use the rendered rows for this grid so
+      // resizing the window does not leave keyboard selection on the wrong row.
+      const grid = event.currentTarget.querySelector('[data-query-group="applications"]');
+      const current = fromInput
+        ? grid?.querySelector<HTMLElement>('[aria-selected="true"]')
+        : target.closest<HTMLElement>("[data-result-key]");
+      if (!current || !grid?.contains(current)) return;
+      const cards = Array.from(
+        grid.querySelectorAll<HTMLElement>('[data-result-key]:not([aria-disabled="true"])'),
+      );
+      const index = cards.indexOf(current);
+      if (index < 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      let next: HTMLElement | undefined;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        next = cards[index + (event.key === "ArrowRight" ? 1 : -1)];
+      } else {
+        const origin = current.getBoundingClientRect();
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        next = cards
+          .map((card) => ({ card, rect: card.getBoundingClientRect() }))
+          .filter(({ rect }) => direction * (rect.top - origin.top) > 1)
+          .sort(
+            (a, b) =>
+              Math.abs(a.rect.top - origin.top) - Math.abs(b.rect.top - origin.top) ||
+              Math.abs(a.rect.left - origin.left) - Math.abs(b.rect.left - origin.left),
+          )[0]?.card;
+        if (!next && direction === 1)
+          next =
+            event.currentTarget.querySelector<HTMLElement>(
+              '[data-query-group]:not([data-query-group="applications"]) [data-result-key]:not([aria-disabled="true"])',
+            ) ?? undefined;
+        if (!next && direction === -1) input.current?.focus();
+      }
+      if (next) {
+        setSelected(next.dataset.resultKey ?? "");
+        if (!fromInput) next.focus();
+        next.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
   };
   const finishOnboarding = async () => {
@@ -658,6 +723,7 @@ export function Launcher() {
       focusInput();
     } catch (value) {
       setPreferenceError(message(value));
+      if (!actionItem) setError(message(value));
     } finally {
       setPreferenceBusy(false);
     }
@@ -669,43 +735,40 @@ export function Launcher() {
   };
   const openSettings = () => openSettingsWindow().catch((value) => setError(message(value)));
 
-  const modeTitle = mode
-    ? (state?.commands.find((command) => command.mode === mode.key)?.title ?? mode.title)
+  const modeCommand = mode
+    ? state?.commands.find((command) => command.mode === mode.key)
     : undefined;
+  const modeTitle = mode ? (modeCommand?.title ?? mode.title) : undefined;
+  const resultHint =
+    modeCommand?.pluginId === "spark233.applications"
+      ? applicationStatus(result?.hint)
+      : result?.hint;
   const modeOptions = mode ? state?.modeOptions?.[mode.key] : undefined;
-  const isHorizontalEntry = (item: LauncherItem) =>
+  const pluginEntries = new Map<string, string>();
+  for (const command of state?.commands ?? [])
+    if (command.enabled && !pluginEntries.has(command.pluginId))
+      pluginEntries.set(command.pluginId, pluginEntryCommands[command.pluginId] ?? command.id);
+  const isGridEntry = (item: LauncherItem) =>
     item.kind === "application" ||
-    item.kind === "command" ||
-    (item.unavailable &&
-      (item.preference?.kind === "command" || item.preference?.kind === "application"));
-  const horizontalItems = result?.items.filter(isHorizontalEntry) ?? [];
-  const renderItem = (item: LauncherItem, horizontal = false) => {
+    item.preference?.kind === "application" ||
+    ((item.kind === "command" || item.preference?.kind === "command") &&
+      item.commandId === pluginEntries.get(item.pluginId));
+  const gridItems = result?.items.filter(isGridEntry) ?? [];
+  const renderItem = (item: LauncherItem, grid = false) => {
     const command = findCommand(item);
     const key = itemKey(item);
     const isMode = !mode && !!command?.mode;
-    return (
+    const card = (
       <CommandItem
         tabIndex={0}
         data-result-key={key}
         onFocus={() => setSelected(key)}
         className={
-          horizontal
-            ? "relative min-h-28 w-28 shrink-0 flex-col justify-center gap-2 rounded-xl border px-2 py-3 text-center"
+          grid
+            ? "min-h-18 min-w-0 flex-col justify-center gap-1 rounded-lg px-2 py-1.5 text-center [&>svg:last-child]:hidden"
             : undefined
         }
-        onKeyDown={(event) => {
-          if (!horizontal || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const cards = Array.from(
-            event.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[data-result-key]") ??
-              [],
-          );
-          const index = cards.indexOf(event.currentTarget);
-          cards[
-            Math.max(0, Math.min(cards.length - 1, index + (event.key === "ArrowRight" ? 1 : -1)))
-          ]?.focus();
-        }}
+        title={grid ? item.title : undefined}
         key={key}
         value={key}
         disabled={
@@ -721,49 +784,44 @@ export function Launcher() {
         }}
       >
         {item.kind === "command" || item.preference?.kind === "command" ? (
-          <PluginIcon
-            pluginId={item.pluginId}
-            className={horizontal ? "size-9 shrink-0 text-primary" : "size-7 shrink-0 text-primary"}
-          />
+          <PluginIcon pluginId={item.pluginId} className="size-7 shrink-0 text-primary" />
         ) : item.icon && /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(item.icon) ? (
           <img
             src={item.icon}
             alt=""
-            className={
-              horizontal ? "size-9 shrink-0 object-contain" : "size-7 shrink-0 object-contain"
-            }
-            width={horizontal ? 36 : 28}
-            height={horizontal ? 36 : 28}
+            className="size-7 shrink-0 object-contain"
+            width={28}
+            height={28}
           />
-        ) : horizontal ? (
-          <AppWindowIcon aria-hidden="true" className="size-9 shrink-0 text-muted-foreground" />
+        ) : grid ? (
+          <AppWindowIcon aria-hidden="true" className="size-7 shrink-0 text-muted-foreground" />
         ) : null}
         <div
           className={
-            horizontal
-              ? "flex w-full min-w-0 flex-col gap-0.5"
-              : "flex min-w-0 flex-1 flex-col gap-0.5"
+            grid ? "flex w-full min-w-0 flex-col gap-0.5" : "flex min-w-0 flex-1 flex-col gap-0.5"
           }
         >
           <span
             className={
-              horizontal ? "block truncate text-center text-xs" : "flex items-center gap-2 truncate"
+              grid
+                ? "block h-8 overflow-hidden break-words whitespace-normal text-center text-xs leading-4 text-balance"
+                : "flex items-center gap-2 truncate"
             }
           >
             {item.title}
-            {item.preference?.pinned && (
+            {!grid && item.preference?.pinned && (
               <Badge variant="secondary">{t("launcher.preferences.pinned")}</Badge>
             )}
-            {item.unavailable && (
+            {!grid && item.unavailable && (
               <Badge variant="outline">{t("launcher.preferences.unavailable")}</Badge>
             )}
-            {item.usage && (
+            {!grid && item.usage && (
               <Badge variant="outline">
                 {item.usage.count > 1 ? t("launcher.frequentlyUsed") : t("launcher.recentlyUsed")}
               </Badge>
             )}
           </span>
-          {item.learned && (
+          {!grid && item.learned && (
             <Badge
               variant="outline"
               className="h-auto max-w-full self-start whitespace-normal py-0.5"
@@ -772,15 +830,14 @@ export function Launcher() {
               {t("launcher.learning.learned")}
             </Badge>
           )}
-          {!horizontal && item.description && (
+          {!grid && item.description && (
             <span className="truncate text-xs text-muted-foreground">{item.description}</span>
           )}
         </div>
-        {!item.unavailable && (!!item.actions?.length || item.preference) && (
+        {!grid && !item.unavailable && (!!item.actions?.length || item.preference) && (
           <Button
             variant="ghost"
             size="icon-sm"
-            className={horizontal ? "absolute right-0 top-0" : undefined}
             aria-label={t("launcher.resultActions", {
               title: item.title,
               defaultValue: i18n.resolvedLanguage?.startsWith("en")
@@ -801,7 +858,7 @@ export function Launcher() {
             <MoreHorizontalIcon />
           </Button>
         )}
-        {executing.includes(key) ? (
+        {grid ? null : executing.includes(key) ? (
           <Spinner />
         ) : item.unavailable ? null : isMode ? (
           <CommandShortcut>
@@ -811,6 +868,62 @@ export function Launcher() {
           <CommandShortcut>↵</CommandShortcut>
         )}
       </CommandItem>
+    );
+    if (!grid || (!item.preference && !item.actions?.length)) return card;
+    return (
+      <ContextMenu key={key}>
+        <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+        <ContextMenuContent onKeyDown={(event) => event.stopPropagation()}>
+          <ContextMenuGroup>
+            {item.preference && (
+              <>
+                <ContextMenuItem
+                  disabled={preferenceBusy || !state?.pluginsReady}
+                  onSelect={() =>
+                    void mutateItemPreference(item, item.preference!.pinned ? "unpin" : "pin")
+                  }
+                >
+                  <PinIcon />
+                  {t(
+                    item.preference.pinned
+                      ? "launcher.preferences.unpin"
+                      : "launcher.preferences.pin",
+                  )}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  disabled={preferenceBusy || !state?.pluginsReady}
+                  onSelect={() => editItemAliases(item)}
+                >
+                  {t("launcher.preferences.editAliases")}
+                </ContextMenuItem>
+                {item.preference.kind === "command" && (
+                  <ContextMenuItem
+                    disabled={preferenceBusy || !state?.pluginsReady}
+                    onSelect={() =>
+                      void mutateItemPreference(item, item.preference!.hidden ? "show" : "hide")
+                    }
+                  >
+                    {t(
+                      item.preference.hidden
+                        ? "launcher.preferences.show"
+                        : "launcher.preferences.hide",
+                    )}
+                  </ContextMenuItem>
+                )}
+              </>
+            )}
+            {item.actions?.map((action) => (
+              <ContextMenuItem
+                key={action.id}
+                disabled={!state?.pluginsReady || item.unavailable || preferenceBusy}
+                onSelect={() => void selectAction(item, action)}
+              >
+                {action.title}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
     );
   };
   const close = () => {
@@ -1003,7 +1116,7 @@ export function Launcher() {
             </CardTitle>
             <CardDescription>
               {t("launcher.welcome.description", {
-                defaultValue: "从这里呼出命令、进入插件模式。便签、搜索和其他能力由各自插件提供。",
+                defaultValue: "从这里呼出操作、进入插件模式。便签、搜索和其他能力由各自插件提供。",
               })}
             </CardDescription>
           </CardHeader>
@@ -1057,14 +1170,14 @@ export function Launcher() {
           <AlertTitle>{t("launcher.starting", { defaultValue: "插件正在准备中" })}</AlertTitle>
           <AlertDescription>
             {t("launcher.startingHint", {
-              defaultValue: "准备完成后可执行命令，也可以先检查插件状态。",
+              defaultValue: "准备完成后可执行操作，也可以先检查插件状态。",
             })}
           </AlertDescription>
         </Alert>
       )}
 
       <Command
-        label={t("launcher.searchLabel", { defaultValue: "搜索命令与插件" })}
+        label={t("launcher.searchLabel", { defaultValue: "搜索应用、插件与操作" })}
         shouldFilter={false}
         loop
         value={selected}
@@ -1141,7 +1254,7 @@ export function Launcher() {
           aria-label={
             mode
               ? `${modeTitle} ${t("launcher.input", { defaultValue: "查询" })}`
-              : t("launcher.searchLabel", { defaultValue: "搜索命令与插件" })
+              : t("launcher.searchLabel", { defaultValue: "搜索应用、插件与操作" })
           }
           placeholder={
             mode
@@ -1150,7 +1263,7 @@ export function Launcher() {
                   title: modeTitle,
                   defaultValue: "在 {{title}} 中搜索…",
                 }))
-              : t("launcher.placeholder", { defaultValue: "输入应用、命令或插件关键词…" })
+              : t("launcher.placeholder", { defaultValue: "输入应用、插件或操作关键词…" })
           }
           onCompositionStart={() => {
             composition.current = true;
@@ -1171,13 +1284,13 @@ export function Launcher() {
           className="flex max-h-none min-h-0 flex-1 flex-col overflow-hidden"
           aria-busy={loading}
         >
-          {!!horizontalItems.length && (
+          {!!gridItems.length && (
             <CommandGroup
               heading={t("launcher.applicationRegion")}
               data-query-group="applications"
-              className="shrink-0 border-b pb-3 [&_[cmdk-group-items]]:flex [&_[cmdk-group-items]]:gap-2 [&_[cmdk-group-items]]:overflow-x-auto [&_[cmdk-group-items]]:pb-2"
+              className="shrink-0 border-b pb-2 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] [&_[cmdk-group-items]]:gap-1.5"
             >
-              {horizontalItems.map((item) => renderItem(item, true))}
+              {gridItems.map((item) => renderItem(item, true))}
             </CommandGroup>
           )}
           <div
@@ -1204,7 +1317,7 @@ export function Launcher() {
               result?.groups ?? [
                 {
                   id: "results",
-                  title: modeTitle ?? t("launcher.results", { defaultValue: "入口与本地结果" }),
+                  title: modeTitle ?? t("launcher.results", { defaultValue: "操作与本地结果" }),
                   status: "ready",
                   items: result?.items ?? [],
                 },
@@ -1212,7 +1325,12 @@ export function Launcher() {
             )
               .map((group) => ({
                 ...group,
-                items: group.items.filter((item) => !isHorizontalEntry(item)),
+                title: group.pluginId === "spark233.applications" ? undefined : group.title,
+                hint:
+                  group.pluginId === "spark233.applications" && group.status !== "error"
+                    ? applicationStatus(group.hint)
+                    : group.hint,
+                items: group.items.filter((item) => !isGridEntry(item)),
               }))
               .filter((group) => group.items.length || group.status !== "ready" || group.hint)
               .map((group) => (
@@ -1259,7 +1377,7 @@ export function Launcher() {
       </Command>
       <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span role="status">
-          {result?.hint ??
+          {resultHint ||
             t("launcher.navigation", { defaultValue: "↑ ↓ 选择 · Enter 执行 · Esc 返回或隐藏" })}
         </span>
       </footer>

@@ -283,7 +283,7 @@
       "needsModifier": "快捷键需要包含 Ctrl、Option/Alt 或 Command/Meta",
       "notSet": "未设置",
       "pressHint": "按下快捷键；按 Delete 清空。",
-      "forCommandAction": "用于已分配的命令操作"
+      "forCommandAction": "用于已分配的操作"
     },
     "theme": {
       "dark": "深色",
@@ -514,24 +514,24 @@
     "hide": "隐藏启动器",
     "welcome": {
       "title": "欢迎使用 spark233",
-      "description": "从这里呼出命令、进入插件模式。便签、搜索和其他能力由各自插件提供。",
+      "description": "从这里呼出操作、进入插件模式。便签、搜索和其他能力由各自插件提供。",
       "keys": "输入关键词查找入口，↑ ↓ 选择，Enter 执行；选中模式后继续输入，Esc 返回。插件可在管理页独立启停。",
       "complete": "完成引导，开始使用"
     },
     "error": "暂时无法完成操作",
     "retry": "重试",
     "starting": "插件正在准备中",
-    "startingHint": "准备完成后可执行命令，也可以先检查插件状态。",
-    "searchLabel": "搜索命令与插件",
+    "startingHint": "准备完成后可执行操作，也可以先检查插件状态。",
+    "searchLabel": "搜索应用、插件与操作",
     "back": "返回全部入口",
     "input": "查询",
     "modePlaceholder": "在 {{title}} 中搜索…",
-    "placeholder": "输入应用、命令或插件关键词…",
+    "placeholder": "输入应用、插件或操作关键词…",
     "searching": "正在查询…",
     "empty": "没有匹配的入口，试试其他关键词或检查插件是否启用。",
-    "results": "入口与本地结果",
+    "results": "操作与本地结果",
     "enterMode": "进入模式",
-    "navigation": "Tab 切换区域 · ← → 选择应用 · ↑ ↓ 选择信息 · Enter 执行 · Esc 返回或隐藏",
+    "navigation": "Tab 切换区域 · 方向键选择 · Enter 执行 · 右键更多操作 · Esc 返回或隐藏",
     "settingsDescription": "修改应用设置并保存到宿主。",
     "savingSettings": "正在保存设置",
     "loadingSettings": "正在读取设置",
@@ -549,7 +549,7 @@
       "filterLabel": "查找入口",
       "filterPlaceholder": "名称、别名或所属插件",
       "listLabel": "可管理的启动器入口",
-      "command": "命令",
+      "command": "操作",
       "application": "应用",
       "pinned": "已固定",
       "hidden": "已隐藏",
@@ -575,7 +575,7 @@
     "learning": {
       "title": "关键词选择记忆",
       "enable": "允许学习成功的选择（默认关闭）",
-      "privacy": "仅关联短关键词与明确选中且执行成功的应用或普通命令；不学习正文、AI 输入，也不学习图片、剪贴板或文件上下文。",
+      "privacy": "仅关联短关键词与明确选中且执行成功的应用或普通操作；不学习正文、AI 输入，也不学习图片、剪贴板或文件上下文。",
       "offHint": "关闭后停止记录，也不再用已有记录排序；已有记录保留，仍可单独清除。",
       "rankingHint": "只在同组、同匹配等级内影响顺序；固定入口、精确应用名和精确个人别名优先，不会自动执行。",
       "recordCount": "已记 {{value}} 条关联",
@@ -586,7 +586,7 @@
       "learned": "曾为此关键词选择"
     },
     "applicationRegion": "应用与插件",
-    "informationRegion": "信息与结果"
+    "informationRegion": "操作与结果"
   },
   "ocr": {
     "results": "取字结果",
@@ -685,7 +685,7 @@
     "error": "操作未完成",
     "errorHint": "展开详细信息查看原因，再重试相关操作。",
     "errorDetails": "查看详细信息",
-    "commandRunning": "插件命令正在运行",
+    "commandRunning": "插件操作正在运行",
     "working": "正在处理，请稍候。",
     "commandRunningHint": "你仍可以停用插件；宿主会先请求保存并取消任务。",
     "add": {
@@ -734,7 +734,7 @@
     "optionalDependencies": "可选依赖",
     "updateAvailable": "有可用更新",
     "updateHint": "准备更新后，请核对新版本的来源和能力，再确认安装。",
-    "commands": "可用命令",
+    "commands": "可用操作",
     "open": "打开",
     "switching": "正在更改插件状态",
     "disable": "停用",
@@ -773,7 +773,7 @@
       "search": {
         "index": "搜索索引"
       },
-      "commands": "调用其他插件的公开命令"
+      "commands": "调用其他插件的公开操作"
     },
     "currentVersion": "当前版本：{{version}}",
     "candidateVersion": "候选版本：{{version}}",

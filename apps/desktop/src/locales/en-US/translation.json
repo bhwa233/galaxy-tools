@@ -283,7 +283,7 @@
       "needsModifier": "Shortcut must include Ctrl, Option/Alt, or Command/Meta",
       "notSet": "Not set",
       "pressHint": "Press shortcut...; press Delete to clear.",
-      "forCommandAction": "Runs the assigned command action"
+      "forCommandAction": "Runs the assigned action"
     },
     "theme": {
       "dark": "Dark",
@@ -514,24 +514,24 @@
     "clearContext": "Clear content",
     "welcome": {
       "title": "Welcome to spark233",
-      "description": "Find commands and enter plugin workspaces here. Notes, search, and other tools are provided by their plugins.",
+      "description": "Find actions and enter plugin workspaces here. Notes, search, and other tools are provided by their plugins.",
       "keys": "Type a keyword, choose with ↑ ↓, and press Enter. Keep typing inside a mode, or press Esc to return. Enable or disable each plugin in plugin management.",
       "complete": "Finish setup and get started"
     },
     "error": "Unable to complete this action",
     "retry": "Retry",
     "starting": "Preparing plugins",
-    "startingHint": "Commands will be available when preparation finishes. You can check plugin status now.",
-    "searchLabel": "Search commands and plugins",
-    "back": "Back to all commands",
+    "startingHint": "Actions will be available when preparation finishes. You can check plugin status now.",
+    "searchLabel": "Search applications, plugins, and actions",
+    "back": "Back to all entries",
     "input": "search",
     "modePlaceholder": "Search in {{title}}…",
-    "placeholder": "Search applications, commands, or plugin keywords…",
+    "placeholder": "Search applications, plugins, or actions…",
     "searching": "Searching…",
-    "empty": "No matching commands. Try another keyword or check whether the plugin is enabled.",
-    "results": "Commands and local results",
+    "empty": "No matching actions. Try another keyword or check whether the plugin is enabled.",
+    "results": "Actions and local results",
     "enterMode": "Enter mode",
-    "navigation": "Tab switch areas · ← → apps · ↑ ↓ results · Enter run · Esc back or hide",
+    "navigation": "Tab switch areas · Arrow keys select · Enter run · Right-click actions · Esc back or hide",
     "settingsDescription": "Change application preferences and save them to spark233.",
     "savingSettings": "Saving preferences",
     "loadingSettings": "Loading preferences",
@@ -549,7 +549,7 @@
       "filterLabel": "Find an entry",
       "filterPlaceholder": "Name, alias or plugin",
       "listLabel": "Manageable launcher entries",
-      "command": "Command",
+      "command": "Action",
       "application": "Application",
       "pinned": "Pinned",
       "hidden": "Hidden",
@@ -575,7 +575,7 @@
     "learning": {
       "title": "Keyword selection memory",
       "enable": "Allow learning successful choices (off by default)",
-      "privacy": "Associates only short keywords with explicitly selected applications or ordinary commands that execute successfully. Text bodies, AI input, images, clipboard context, and file context are excluded.",
+      "privacy": "Associates only short keywords with explicitly selected applications or ordinary actions that execute successfully. Text bodies, AI input, images, clipboard context, and file context are excluded.",
       "offHint": "Turning this off stops recording and learned ranking. Existing records remain and can still be cleared separately.",
       "rankingHint": "Affects order only within the same group and match tier. Pinned entries, exact application names, and exact personal aliases take priority. Nothing runs automatically.",
       "recordCount": "Saved associations: {{value}}",
@@ -586,7 +586,7 @@
       "learned": "Previously chosen for this keyword"
     },
     "applicationRegion": "Applications & plugins",
-    "informationRegion": "Information and results"
+    "informationRegion": "Actions and results"
   },
   "ocr": {
     "results": "Recognized text",
@@ -685,7 +685,7 @@
     "error": "Operation did not complete",
     "errorHint": "Expand the details to see the cause, then retry the affected action.",
     "errorDetails": "View details",
-    "commandRunning": "Plugin command is running",
+    "commandRunning": "Plugin action is running",
     "working": "Working. Please wait.",
     "commandRunningHint": "You can still disable the plugin. The host will ask it to save and cancel its tasks first.",
     "add": {
@@ -733,7 +733,7 @@
     "optionalDependencies": "Optional dependencies",
     "updateAvailable": "Update available",
     "updateHint": "Prepare the update, then review its source and capabilities before confirming installation.",
-    "commands": "Available commands",
+    "commands": "Available actions",
     "open": "Open",
     "switching": "Changing plugin state",
     "disable": "Disable",
@@ -773,7 +773,7 @@
       "search": {
         "index": "Search indexing"
       },
-      "commands": "Run other plugins’ public commands"
+      "commands": "Run other plugins’ public actions"
     },
     "currentVersion": "Current: {{version}}",
     "candidateVersion": "Candidate: {{version}}",
