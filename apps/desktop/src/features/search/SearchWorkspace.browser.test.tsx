@@ -62,7 +62,9 @@ it("lists index rows with the workspace columns", async () => {
     await expect.element(page.getByRole("cell", { name: "D:\\work" })).toBeVisible();
     await expect.element(page.getByRole("cell", { name: "Excel 工作表" })).toBeVisible();
     await expect.element(page.getByRole("cell", { name: "1.5 KB" })).toBeVisible();
-    await expect.element(page.getByTestId("search-result-count")).toHaveTextContent("516");
+    await expect
+      .poll(() => page.getByTestId("search-result-count").element().textContent)
+      .toContain("516");
   } finally {
     await view.unmount();
     desktop.restore();
@@ -74,7 +76,9 @@ it("re-queries with a category token and a column sort", async () => {
   const view = await render(<SearchWorkspace onClose={() => {}} />);
   try {
     await userEvent.fill(page.getByRole("textbox", { name: "按文件名、路径或拼音搜索" }), "report");
-    await expect.element(page.getByTestId("search-result-count")).toHaveTextContent("516");
+    await expect
+      .poll(() => page.getByTestId("search-result-count").element().textContent)
+      .toContain("516");
 
     await page.getByRole("button", { name: "Excel" }).click();
     await expect
