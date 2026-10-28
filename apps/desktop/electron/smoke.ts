@@ -148,11 +148,10 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(modeCommand.title)});
         input.dispatchEvent(new Event('input', { bubbles: true }));
       })()`);
-      await untilRenderer(
-        `${settledCommands} && Array.from(document.querySelectorAll('[role="option"][data-result-key]')).some(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}))`,
-        "Notes search mode did not appear for its explicit query",
-        300, // Native providers have a bounded 10-second RPC budget.
-      );
+      // Ready command rows remain actionable while independent native search
+      // providers are pending; a populated machine index can take much longer.
+      const modeAvailable = `Array.from(document.querySelectorAll('[role="option"][data-result-key]')).some(node => node.getAttribute('aria-disabled') !== 'true' && node.textContent.includes(${JSON.stringify(modeCommand.title)}))`;
+      await untilRenderer(modeAvailable, "Notes search mode did not appear for its explicit query");
       resume = await context.pauseForBackup();
       const clicked = await launcher.webContents.executeJavaScript(`(() => {
           const item = Array.from(document.querySelectorAll('[role="option"][data-result-key]')).find(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}));

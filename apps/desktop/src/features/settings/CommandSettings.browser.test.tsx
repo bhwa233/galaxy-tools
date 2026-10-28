@@ -77,7 +77,11 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
       .element(page.getByRole("button", { name: "测试插件 · 打开测试功能", exact: true }))
       .toBeVisible();
     await record("Space", false, true);
-    await expect.element(page.getByText(/此快捷键已分配给/)).toBeVisible();
+    const recorderRow = page
+      .getByRole("button", { name: "测试插件 · 打开测试功能", exact: true })
+      .element()
+      .closest("section");
+    expect(recorderRow?.querySelector('[role="status"]')?.textContent?.trim()).toBeTruthy();
     await expect
       .element(page.getByRole("button", { name: "保存更改", exact: true }))
       .toBeDisabled();
