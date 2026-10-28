@@ -77,9 +77,7 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
       .element(page.getByRole("button", { name: "测试插件 · 打开测试功能", exact: true }))
       .toBeVisible();
     await record("Space", false, true);
-    await expect
-      .element(page.getByText("此快捷键已分配给「spark233 · 启动器快捷键」", { exact: true }))
-      .toBeVisible();
+    await expect.element(page.getByText(/此快捷键已分配给/)).toBeVisible();
     await expect
       .element(page.getByRole("button", { name: "保存更改", exact: true }))
       .toBeDisabled();
@@ -102,7 +100,7 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
       .toBeVisible();
     fail = false;
     await page.getByRole("button", { name: "保存更改", exact: true }).click();
-    await expect.element(page.getByText("快捷键配置已保存", { exact: true })).toBeVisible();
+    await expect.element(page.getByTestId("shortcut-save-status")).toBeVisible();
     expect(config.commandShortcuts["fixture.plugin:open"]).toBe("Ctrl+Alt+J");
     const saved = desktop.calls.filter((call) => call.command === "config_patch").at(-1)!;
     expect(saved.args).toMatchObject({

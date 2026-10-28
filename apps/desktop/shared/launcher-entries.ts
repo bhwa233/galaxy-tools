@@ -7,6 +7,13 @@ export const pluginEntryCommands: Record<string, string> = {
   "spark233.screenshot": "history",
 };
 
+// Keyword-only entries stay reachable by typing, but never occupy the empty
+// launcher or the plugin tile grid: the same input already searches that
+// content, so an "open the search view" tile only repeats the search box.
+export const pluginKeywordOnlyCommands: Record<string, readonly string[]> = {
+  "spark233.applications": ["search"],
+};
+
 // One-shot actions belong to the operation list, not to the plugin tile: the tile
 // is the plugin's own view (history), these run once and end.
 export const pluginActionCommands: Record<string, readonly string[]> = {

@@ -55,7 +55,7 @@ export class NativeSelectionReader {
         {
           windowsHide: true,
           encoding: "utf8",
-          timeout: 1500,
+          timeout: 2500,
           maxBuffer: 262144,
           signal,
         },

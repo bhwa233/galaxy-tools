@@ -188,6 +188,7 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
                         id={id}
                         disabled={busy}
                         rows={4}
+                        placeholder={t("pluginConfig.linesPlaceholder")}
                         value={Array.isArray(value) ? value.join("\n") : ""}
                         onChange={(event) =>
                           change(
@@ -263,7 +264,11 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
           )}
           {!!snapshot.fields.length && (
             <footer className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t bg-background py-4">
-              <span role="status" className="mr-auto text-xs text-muted-foreground">
+              <span
+                role="status"
+                data-testid="plugin-save-status"
+                className="mr-auto text-xs text-muted-foreground"
+              >
                 {t(
                   dirty
                     ? "settingsEditor.unsaved"

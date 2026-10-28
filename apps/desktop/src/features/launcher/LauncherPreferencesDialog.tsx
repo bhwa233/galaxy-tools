@@ -162,7 +162,7 @@ export function LauncherPreferencesDialog({
                 id={learningId}
                 checked={learning?.enabled === true}
                 disabled={busy || !learning}
-                aria-describedby={`${learningId}-privacy ${learningId}-off`}
+                aria-describedby={`${learningId}-privacy`}
                 onCheckedChange={(checked) => {
                   void mutateLearning({ enabled: checked === true });
                 }}
@@ -174,12 +174,6 @@ export function LauncherPreferencesDialog({
                 </FieldDescription>
               </FieldContent>
             </Field>
-            <p id={`${learningId}-off`} className="text-xs leading-relaxed text-muted-foreground">
-              {t("launcher.learning.offHint")}
-            </p>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {t("launcher.learning.rankingHint")}
-            </p>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">
                 {t("launcher.learning.recordCount", {
@@ -198,7 +192,6 @@ export function LauncherPreferencesDialog({
                 {t("launcher.learning.clear")}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">{t("launcher.learning.clearHint")}</p>
           </section>
           <p className="shrink-0 text-xs leading-relaxed text-muted-foreground">
             {t("launcher.preferences.hideScope")}

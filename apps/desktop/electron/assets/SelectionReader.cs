@@ -2,8 +2,10 @@
 // simulated keys, mouse hooks or background listeners are installed.
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Automation;
 
@@ -18,6 +20,7 @@ class SelectionReader {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
     [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
     [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     static IntPtr Focus(IntPtr window) {
         uint pid; uint thread=GetWindowThreadProcessId(window,out pid);
         var info=new GuiInfo(); info.Size=Marshal.SizeOf(typeof(GuiInfo));
@@ -26,26 +29,27 @@ class SelectionReader {
     static long Identity(uint pid) {
         using(var process=Process.GetProcessById((int)pid)) return process.StartTime.ToUniversalTime().Ticks;
     }
-    static string Read(int ownPid) {
-        IntPtr window=GetForegroundWindow(); uint pid; GetWindowThreadProcessId(window,out pid);
-        if(window==IntPtr.Zero || pid==0 || pid==ownPid) return "";
-        long identity=Identity(pid); IntPtr focus=Focus(window);
-        if(focus==IntPtr.Zero) return "";
-        var element=AutomationElement.FocusedElement;
-        if(element==null) return "";
-        // UIA providers may live in a browser renderer process. Bind the focused
-        // element to the actual foreground HWND, not just a matching process ID.
-        bool belongs=false;
-        var ancestor=element;
-        for(int i=0;ancestor!=null && i<64;i++) {
-            if(ancestor.Current.IsPassword) return "";
-            IntPtr handle=new IntPtr(ancestor.Current.NativeWindowHandle);
-            if(handle==window || (handle!=IntPtr.Zero && IsChild(window,handle))) { belongs=true; break; }
-            ancestor=TreeWalker.RawViewWalker.GetParent(ancestor);
+    static bool Modifiers() {
+        foreach(int key in new int[] {0x10,0x11,0x12,0x5b,0x5c}) if(GetAsyncKeyState(key)<0) return true;
+        return false;
+    }
+    static List<AutomationElement> SourceAncestors(AutomationElement element,IntPtr window) {
+        var ancestors=new List<AutomationElement>(); bool belongs=false;
+        for(int i=0;element!=null && i<64;i++) {
+            if(element.Current.IsPassword) return null;
+            ancestors.Add(element);
+            IntPtr handle=new IntPtr(element.Current.NativeWindowHandle);
+            if(handle==window) return ancestors;
+            if(handle!=IntPtr.Zero && IsChild(window,handle)) belongs=true;
+            element=TreeWalker.RawViewWalker.GetParent(element);
         }
-        if(!belongs) return "";
+        return belongs?ancestors:null;
+    }
+    // null means this node has no text provider. An empty selection from an
+    // actual text provider remains authoritative; never read its whole value.
+    static string Selection(AutomationElement element) {
         object pattern;
-        if(!element.TryGetCurrentPattern(TextPattern.Pattern,out pattern)) return "";
+        if(!element.TryGetCurrentPattern(TextPattern.Pattern,out pattern)) return null;
         var ranges=((TextPattern)pattern).GetSelection();
         if(ranges==null || ranges.Length==0 || ranges.Length>16) return "";
         var text=new StringBuilder();
@@ -55,9 +59,57 @@ class SelectionReader {
             text.Append(part);
             if(text.Length>Limit || Encoding.UTF8.GetByteCount(text.ToString())>Limit) return "";
         }
+        return text.ToString();
+    }
+    static string SelectedDocument(AutomationElement focused,IntPtr focus,IntPtr window) {
+        var ancestors=SourceAncestors(focused,window);
+        if(ancestors==null) return "";
+        foreach(var element in ancestors) {
+            string selected=Selection(element);
+            if(selected!=null) return selected;
+        }
+        // Alt-based hotkeys can leave UIA focus on a menu. The native focus
+        // HWND still scopes the active document. Read only visible text
+        // providers' selections there, and reject conflicting selections.
+        var scope=AutomationElement.FromHandle(focus);
+        if(scope==null || SourceAncestors(scope,window)==null) return "";
+        string scopedSelection=Selection(scope);
+        if(scopedSelection!=null) return scopedSelection;
+        var providers=scope.FindAll(TreeScope.Descendants,new AndCondition(
+            new PropertyCondition(AutomationElement.IsTextPatternAvailableProperty,true),
+            new PropertyCondition(AutomationElement.IsOffscreenProperty,false)));
+        if(providers.Count>64) return "";
+        string result=null;
+        for(int i=0;i<providers.Count;i++) {
+            var element=providers[i];
+            if(SourceAncestors(element,window)==null) continue;
+            string selected=Selection(element);
+            if(String.IsNullOrEmpty(selected)) continue;
+            if(result!=null && result!=selected) return "";
+            result=selected;
+        }
+        return result??"";
+    }
+    static string Read(int ownPid) {
+        IntPtr window=GetForegroundWindow(); uint pid; GetWindowThreadProcessId(window,out pid);
+        if(window==IntPtr.Zero || pid==0 || pid==ownPid) return "";
+        long identity=Identity(pid);
+        // RegisterHotKey fires on keydown. Allow Alt/menu focus to settle while
+        // keeping the external source window foreground throughout the read.
+        var settling=Stopwatch.StartNew();
+        while(Modifiers() && settling.ElapsedMilliseconds<500) {
+            if(GetForegroundWindow()!=window) return "";
+            Thread.Sleep(10);
+        }
+        if(GetForegroundWindow()!=window) return "";
+        IntPtr focus=Focus(window);
+        if(focus==IntPtr.Zero) return "";
+        var element=AutomationElement.FocusedElement;
+        if(element==null) return "";
+        string text=SelectedDocument(element,focus,window);
         uint currentPid; GetWindowThreadProcessId(window,out currentPid);
         if(GetForegroundWindow()!=window || Focus(window)!=focus || currentPid!=pid || Identity(pid)!=identity) return "";
-        return text.ToString();
+        return text;
     }
     [STAThread] static int Main(string[] args) {
         Console.OutputEncoding=new UTF8Encoding(false);

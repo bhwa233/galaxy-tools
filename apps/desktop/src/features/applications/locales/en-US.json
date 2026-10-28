@@ -1,6 +1,6 @@
 {
   "title": "Custom launch entries",
-  "description": "Add programs, shortcuts, ordinary documents or folders to application search, with custom names, pinyin and initials.",
+  "description": "Add programs, documents or folders to app search.",
   "add": "Add application",
   "empty": "No custom entries yet.",
   "name": "Search name",

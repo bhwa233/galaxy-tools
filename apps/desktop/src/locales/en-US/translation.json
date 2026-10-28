@@ -307,7 +307,7 @@
     "tileSaveReturnsToPin": "Return to tile after saving",
     "renderHtmlMarkdown": "Render HTML tags in Markdown",
     "splitScrollSync": "Split view scroll sync",
-    "imageAutoCompress": "Auto-compress large images (paste/drop, not window drops)",
+    "imageAutoCompress": "Auto-compress large images",
     "imageDisplay": {
       "label": "Preview image display",
       "show": "Show",
@@ -317,7 +317,7 @@
     "reminderSound": "Reminder sound",
     "mcp": {
       "label": "AI interface (MCP)",
-      "enable": "Enable MCP service (--mcp for AI clients)",
+      "enable": "Enable MCP service",
       "read": "Read-only",
       "append": "Append writes",
       "full": "Full control",
@@ -555,7 +555,7 @@
       "manage": "Manage entries",
       "title": "Launcher entries",
       "description": "Manage frequent entries, pin order and personal aliases.",
-      "hideScope": "Hiding affects launcher entries, aliases and pins only; the plugin keeps running. Existing shortcuts and internal calls still follow their original authorization.",
+      "hideScope": "Hiding affects launcher entries only; the plugin keeps running.",
       "filterLabel": "Find an entry",
       "filterPlaceholder": "Name, alias or plugin",
       "listLabel": "Manageable launcher entries",
@@ -584,13 +584,10 @@
     },
     "learning": {
       "title": "Keyword selection memory",
-      "enable": "Allow learning successful choices (off by default)",
-      "privacy": "Associates only short keywords with explicitly selected applications or ordinary actions that execute successfully. Text bodies, AI input, images, clipboard context, and file context are excluded.",
-      "offHint": "Turning this off stops recording and learned ranking. Existing records remain and can still be cleared separately.",
-      "rankingHint": "Affects order only within the same group and match tier. Pinned entries, exact application names, and exact personal aliases take priority. Nothing runs automatically.",
+      "enable": "Allow learning successful choices",
+      "privacy": "Records only short keywords and results that ran successfully. Turning it off stops recording and removes its ranking effect.",
       "recordCount": "Saved associations: {{value}}",
       "clear": "Clear learned choices",
-      "clearHint": "Clearing learned choices does not change pins, personal aliases, or hidden entries.",
       "cleared": "Learned choices cleared.",
       "saved": "Learning settings saved.",
       "learned": "Previously chosen for this keyword"
@@ -624,7 +621,7 @@
   },
   "backup": {
     "title": "Backup and restore",
-    "description": "Save preferences, note text and attachments, plugin versions and enabled states, and plugin data such as clipboard history together. Restore verifies every file and preserves a copy of the current data.",
+    "description": "Saves settings, notes, plugins and plugin data. Restore verifies files and keeps a copy of current data.",
     "create": "Create backup",
     "inspect": "Choose and verify backup",
     "inspecting": "Verifying the backup manifest and files…",
@@ -713,7 +710,7 @@
     "actionUnavailable": "This action is unavailable. Enable or recover the corresponding plugin in plugin management.",
     "catalog": {
       "title": "Official offline plugin catalog",
-      "description": "The seven official plugins included with this installer. Install or reinstall offline, then review the installation and requested capabilities.",
+      "description": "Official plugins bundled with the installer. Works offline.",
       "prepare": "Prepare installation",
       "preparing": "Preparing official offline plugin",
       "installed": "Installed",
@@ -731,7 +728,7 @@
       "released": "Stopped"
     },
     "title": "Plugin management",
-    "description": "Review imported plugins before installation. Updates are checked automatically; you choose when to install them.",
+    "description": "Plugins install after you confirm; updates wait for your approval.",
     "error": "Operation did not complete",
     "errorHint": "Expand the details to see the cause, then retry the affected action.",
     "errorDetails": "View details",
@@ -740,7 +737,7 @@
     "commandRunningHint": "You can still disable the plugin. The host will ask it to save and cancel its tasks first.",
     "add": {
       "title": "Add plugin",
-      "description": "Import a local .tgz, a prebuilt development directory, or an npm package. Packages must contain a valid spark233 plugin manifest."
+      "description": "Accepts .tgz, development folders and npm packages."
     },
     "importing": "Importing plugin package",
     "importingDirectory": "Preparing development directory",
@@ -749,9 +746,9 @@
     "import": "Import local .tgz",
     "preparing": "Preparing installation preview",
     "packageName": "npm package name",
-    "registry": "Registry (optional)",
+    "registry": "Registry",
     "registryHint": "Leave blank for the official npm registry. Other registries must use HTTPS.",
-    "channel": "Update channel (optional)",
+    "channel": "Update channel",
     "channelHint": "Leave blank to use the latest stable channel.",
     "prepare": "Prepare installation preview",
     "pending": "Awaiting installation confirmation",
@@ -763,7 +760,7 @@
     "manifest": "View full manifest and integrity information",
     "native": {
       "title": "This plugin can run Node or native code",
-      "description": "This code has your user account’s full system access, including files and networks. Web capability restrictions do not constrain Node or native code. Install it only if you trust its source.",
+      "description": "These plugins run with your full system access. Process isolation is not a sandbox. Install trusted sources only.",
       "confirm": "I trust this source and allow Node / native execution"
     },
     "installing": "Installing and validating plugin",
@@ -777,7 +774,7 @@
     "loading": "Loading plugin status",
     "empty": {
       "title": "No plugins installed",
-      "description": "Add a local package or a specific npm source, then confirm installation to use it."
+      "description": "Add a plugin to get started."
     },
     "dependencies": "Required dependencies",
     "optionalDependencies": "Optional dependencies",
@@ -870,8 +867,8 @@
   },
   "diagnostics": {
     "title": "Diagnostics",
-    "description": "Review host and plugin status and counts. Content, raw output, and request bodies are excluded.",
-    "retention": "Keeps up to {{count}} recent entries. Clear removes all diagnostic logs, regardless of the current filters.",
+    "description": "Status and counts only, with no content or request bodies.",
+    "retention": "Keeps the latest {{count}} entries; clearing removes all logs.",
     "retry": "Reconnect",
     "refresh": "Refresh",
     "export": "Export current filters",
@@ -879,7 +876,7 @@
     "loading": "Connecting to diagnostics…",
     "entryCount": "Showing {{count}} entries",
     "catchingUp": "Showing {{count}} entries; receiving remaining batches…",
-    "entries": "Diagnostic entries (newest first)",
+    "entries": "Diagnostic entries",
     "unknownTime": "Time unavailable",
     "duration": "Duration: {{value}} ms",
     "bytes": "{{value}} bytes",
@@ -1010,7 +1007,6 @@
       "shortcuts": "Keyboard shortcuts",
       "tray": "System tray"
     },
-    "savePolicy": "General settings save automatically. Save shortcut and plugin changes explicitly.",
     "autoSave": "Changes save automatically",
     "unsaved": "Unsaved changes",
     "unsavedDescription": "Save before continuing, discard changes, or cancel to stay here.",
@@ -1046,18 +1042,19 @@
     },
     "fields": {
       "paused": "Pause clipboard capture",
-      "excludedApps": "Excluded applications (one per line)",
-      "excludedText": "Excluded text (one per line)",
+      "excludedApps": "Excluded apps",
+      "excludedText": "Excluded text",
       "retentionDays": "Visible days",
       "visibleCount": "Visible entries",
       "quickKeys": "Quick keys",
       "quickAction": "Quick action",
       "compactPosition": "Compact window position",
-      "excludedRoots": "Excluded folders or volumes (one per line)",
-      "extensions": "Content extensions (one per line; empty uses defaults)",
+      "excludedRoots": "Excluded folders or volumes",
+      "extensions": "Content extensions (empty uses defaults)",
       "maxFileMiB": "Maximum content file size (MiB)",
       "includeHidden": "Include hidden files"
     },
+    "linesPlaceholder": "One per line",
     "options": {
       "digits": "Digits",
       "function": "Function keys",

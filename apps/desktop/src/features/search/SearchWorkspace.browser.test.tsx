@@ -56,13 +56,13 @@ it("lists index rows with the workspace columns", async () => {
   const desktop = workspace();
   const view = await render(<SearchWorkspace onClose={() => {}} />);
   try {
-    await expect.element(page.getByText("输入关键词开始搜索")).toBeVisible();
+    await expect.element(page.getByTestId("search-empty-prompt")).toBeVisible();
     await userEvent.fill(page.getByRole("textbox", { name: "按文件名、路径或拼音搜索" }), "report");
     await expect.element(page.getByText("report", { exact: true })).toBeVisible();
     await expect.element(page.getByRole("cell", { name: "D:\\work" })).toBeVisible();
     await expect.element(page.getByRole("cell", { name: "Excel 工作表" })).toBeVisible();
     await expect.element(page.getByRole("cell", { name: "1.5 KB" })).toBeVisible();
-    await expect.element(page.getByText(/共约 516 条/)).toBeVisible();
+    await expect.element(page.getByTestId("search-result-count")).toHaveTextContent("516");
   } finally {
     await view.unmount();
     desktop.restore();
@@ -74,7 +74,7 @@ it("re-queries with a category token and a column sort", async () => {
   const view = await render(<SearchWorkspace onClose={() => {}} />);
   try {
     await userEvent.fill(page.getByRole("textbox", { name: "按文件名、路径或拼音搜索" }), "report");
-    await expect.element(page.getByText(/共约 516 条/)).toBeVisible();
+    await expect.element(page.getByTestId("search-result-count")).toHaveTextContent("516");
 
     await page.getByRole("button", { name: "Excel" }).click();
     await expect
@@ -95,7 +95,7 @@ it("offers the service installation when the index is missing", async () => {
   const view = await render(<SearchWorkspace onClose={() => {}} />);
   try {
     await userEvent.fill(page.getByRole("textbox", { name: "按文件名、路径或拼音搜索" }), "report");
-    await expect.element(page.getByText("需要安装文件搜索服务")).toBeVisible();
+    await expect.element(page.getByTestId("search-empty-service")).toBeVisible();
     await page.getByRole("button", { name: "安装服务" }).click();
     expect(
       desktop.calls.some(

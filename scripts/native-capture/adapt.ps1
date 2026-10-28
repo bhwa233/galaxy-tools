@@ -29,6 +29,11 @@ function Edit-Exact([string]$File, [string]$Before, [string]$After) {
 
 $capture = Join-Path $adapted 'ScreenCapture/Src'
 $reader = Join-Path $adapted 'ImageReader/ImageReader'
+# rc.exe resolves resource filenames through the machine ANSI code page even
+# with /c65001. Keep the embedded resource ID and JSON bytes, use an ASCII alias.
+Copy-Item -LiteralPath (Join-Path $adapted 'ScreenCapture/Lang/简体中文.zh-CN.json') -Destination (Join-Path $adapted 'ScreenCapture/Lang/zh-CN.json')
+Edit-Exact (Join-Path $capture 'Res/Resource.rc') '../../Lang/简体中文.zh-CN.json' '../../Lang/zh-CN.json'
+
 $header = Join-Path $PSScriptRoot '../../native/capture/SessionResult.h'
 Copy-Item $header (Join-Path $capture 'SessionResult.h')
 Copy-Item $header (Join-Path $reader 'SessionResult.h')

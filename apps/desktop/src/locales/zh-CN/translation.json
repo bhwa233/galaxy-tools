@@ -307,7 +307,7 @@
     "tileSaveReturnsToPin": "保存后回到磁贴",
     "renderHtmlMarkdown": "允许 HTML 标签渲染",
     "splitScrollSync": "分栏同步滚动",
-    "imageAutoCompress": "自动压缩大图（粘贴/拖入，窗口拖入除外）",
+    "imageAutoCompress": "自动压缩大图",
     "imageDisplay": {
       "label": "预览图片显示",
       "show": "直接显示",
@@ -317,7 +317,7 @@
     "reminderSound": "提醒提示音",
     "mcp": {
       "label": "AI 接口（MCP）",
-      "enable": "启用 MCP 服务（--mcp 供 AI 客户端接入）",
+      "enable": "启用 MCP 服务",
       "read": "只读",
       "append": "追加写入",
       "full": "完全控制",
@@ -555,7 +555,7 @@
       "manage": "入口管理",
       "title": "启动器入口",
       "description": "管理常用入口、固定顺序和个人别名。",
-      "hideScope": "隐藏仅影响启动器中的入口、别名与固定区；不停止插件后台。已有快捷键和内部调用仍遵循原有授权。",
+      "hideScope": "隐藏只影响启动器入口，不停止插件后台。",
       "filterLabel": "查找入口",
       "filterPlaceholder": "名称、别名或所属插件",
       "listLabel": "可管理的启动器入口",
@@ -584,13 +584,10 @@
     },
     "learning": {
       "title": "关键词选择记忆",
-      "enable": "允许学习成功的选择（默认关闭）",
-      "privacy": "仅关联短关键词与明确选中且执行成功的应用或普通操作；不学习正文、AI 输入，也不学习图片、剪贴板或文件上下文。",
-      "offHint": "关闭后停止记录，也不再用已有记录排序；已有记录保留，仍可单独清除。",
-      "rankingHint": "只在同组、同匹配等级内影响顺序；固定入口、精确应用名和精确个人别名优先，不会自动执行。",
+      "enable": "允许学习成功的选择",
+      "privacy": "只记录短关键词与执行成功的结果；关闭后停止记录并取消排序影响。",
       "recordCount": "已记 {{value}} 条关联",
       "clear": "清除学习记录",
-      "clearHint": "清除学习记录不会更改固定入口、个人别名或隐藏设置。",
       "cleared": "学习记录已清除。",
       "saved": "学习设置已保存。",
       "learned": "曾为此关键词选择"
@@ -685,7 +682,7 @@
   },
   "backup": {
     "title": "备份与恢复",
-    "description": "一起保存设置、便签正文与附件、插件版本和启停状态，以及剪贴板等插件数据。恢复前会验证全部文件并保留当前数据副本。",
+    "description": "保存设置、便签、插件与插件数据；恢复前验证并保留当前副本。",
     "create": "创建备份",
     "inspect": "选择备份并验证",
     "inspecting": "正在核对备份清单和文件……",
@@ -713,7 +710,7 @@
     "actionUnavailable": "目标动作不可用，请在插件管理中启用或恢复对应插件。",
     "catalog": {
       "title": "官方离线插件目录",
-      "description": "随安装包提供的七个官方插件，无需联网即可安装或重装。选择后仍需确认安装和申请能力。",
+      "description": "随安装包提供的官方插件，离线可装。",
       "prepare": "准备安装",
       "preparing": "正在准备官方离线插件",
       "installed": "已安装",
@@ -731,7 +728,7 @@
       "enabled": "已启用"
     },
     "title": "插件管理",
-    "description": "导入插件后确认安装；更新只提示，由你决定何时安装。",
+    "description": "插件经你确认后安装，更新也由你决定。",
     "error": "操作未完成",
     "errorHint": "展开详细信息查看原因，再重试相关操作。",
     "errorDetails": "查看详细信息",
@@ -740,7 +737,7 @@
     "commandRunningHint": "你仍可以停用插件；宿主会先请求保存并取消任务。",
     "add": {
       "title": "添加插件",
-      "description": "支持本地 .tgz、预构建开发目录和 npm 包。只有符合 spark233 清单的插件才能安装。"
+      "description": "支持 .tgz、开发目录与 npm 包。"
     },
     "importing": "正在导入插件包",
     "importingDirectory": "正在准备开发目录",
@@ -749,9 +746,9 @@
     "import": "导入本地 .tgz",
     "preparing": "正在准备安装预览",
     "packageName": "npm 包名",
-    "registry": "Registry（可选）",
+    "registry": "Registry",
     "registryHint": "留空使用 npm 官方源，其他源需 HTTPS。",
-    "channel": "更新通道（可选）",
+    "channel": "更新通道",
     "channelHint": "留空使用 latest 稳定通道。",
     "prepare": "准备安装预览",
     "pending": "待确认安装",
@@ -763,7 +760,7 @@
     "manifest": "查看完整清单与校验信息",
     "native": {
       "title": "此插件可运行 Node 或原生代码",
-      "description": "这类代码拥有当前用户的完整系统权限，可直接访问文件、网络及其他用户可访问的资源，不受网页能力清单限制。进程隔离不是权限沙箱，请只安装你信任的来源。",
+      "description": "这类插件拥有完整系统权限，进程隔离不是权限沙箱，请只安装可信来源。",
       "confirm": "我信任此来源，并允许运行 Node / 原生代码"
     },
     "installing": "正在安装并验证插件",
@@ -777,7 +774,7 @@
     "loading": "正在读取插件状态",
     "empty": {
       "title": "尚未安装插件",
-      "description": "从本地包或明确的 npm 来源添加插件，确认后即可使用。"
+      "description": "添加插件后即可使用。"
     },
     "dependencies": "必需依赖",
     "listSeparator": "、",
@@ -870,8 +867,8 @@
   },
   "diagnostics": {
     "title": "诊断日志",
-    "description": "查看宿主与插件的运行状态和计数；不包含正文、原始输出或请求内容。",
-    "retention": "最多保留最近 {{count}} 条记录；清空会删除全部诊断日志，筛选条件不影响清空范围。",
+    "description": "查看运行状态与计数，不含正文和请求内容。",
+    "retention": "最多保留最近 {{count}} 条；清空会删除全部日志。",
     "retry": "重新连接",
     "refresh": "刷新",
     "export": "导出当前筛选",
@@ -879,7 +876,7 @@
     "loading": "正在连接诊断日志…",
     "entryCount": "当前显示 {{count}} 条记录",
     "catchingUp": "当前显示 {{count}} 条记录，正在接收后续批次…",
-    "entries": "诊断记录（最新在前）",
+    "entries": "诊断记录",
     "unknownTime": "时间不可用",
     "duration": "耗时 {{value}} 毫秒",
     "bytes": "{{value}} 字节",
@@ -1010,7 +1007,6 @@
       "shortcuts": "快捷键管理",
       "tray": "托盘菜单"
     },
-    "savePolicy": "常规设置自动保存；快捷键和插件配置需明确保存。",
     "autoSave": "更改自动保存",
     "unsaved": "有未保存的更改",
     "unsavedDescription": "保存这些更改后继续，或放弃更改。取消将留在当前页面。",
@@ -1046,18 +1042,19 @@
     },
     "fields": {
       "paused": "暂停剪贴板记录",
-      "excludedApps": "排除应用（每行一项）",
-      "excludedText": "排除文本（每行一项）",
+      "excludedApps": "排除应用",
+      "excludedText": "排除文本",
       "retentionDays": "显示最近天数",
       "visibleCount": "显示条数",
       "quickKeys": "快捷按键",
       "quickAction": "快捷动作",
       "compactPosition": "小窗位置",
-      "excludedRoots": "排除目录或卷（每行一项）",
-      "extensions": "正文扩展名（每行一项，留空使用默认范围）",
+      "excludedRoots": "排除目录或卷",
+      "extensions": "正文扩展名（留空使用默认范围）",
       "maxFileMiB": "正文文件上限（MiB）",
       "includeHidden": "包含隐藏文件"
     },
+    "linesPlaceholder": "每行一项",
     "options": {
       "digits": "数字键",
       "function": "功能键",

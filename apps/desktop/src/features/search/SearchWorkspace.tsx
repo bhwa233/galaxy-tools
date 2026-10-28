@@ -435,7 +435,7 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
         >
           {status.state === "service-not-installed" ||
           status.state === "service-update-required" ? (
-            <Empty>
+            <Empty data-testid="search-empty-service">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <Search aria-hidden="true" />
@@ -486,7 +486,7 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
               </EmptyContent>
             </Empty>
           ) : !query ? (
-            <Empty>
+            <Empty data-testid="search-empty-prompt">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <Search aria-hidden="true" />
@@ -496,7 +496,7 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
               </EmptyHeader>
             </Empty>
           ) : rows.length === 0 && busy !== "first" ? (
-            <Empty>
+            <Empty data-testid="search-empty-result">
               <EmptyHeader>
                 <EmptyTitle>{t("emptyTitle")}</EmptyTitle>
                 <EmptyDescription>{t("emptyHelp")}</EmptyDescription>
@@ -603,7 +603,7 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
       </div>
 
       <footer className="flex h-8 shrink-0 items-center justify-between border-t border-border px-3 text-xs text-muted-foreground">
-        <span>
+        <span data-testid="search-result-count">
           {countLabel}
           {selectedId && page.total > 0 ? ` · ${t("selectedCount", { count: 1 })}` : ""}
         </span>

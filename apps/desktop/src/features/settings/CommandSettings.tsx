@@ -287,7 +287,11 @@ function ShortcutEditor({
         )}
       </fieldset>
       <footer className="flex items-center justify-end gap-3 border-t pt-3">
-        <span role="status" className="mr-auto text-xs text-muted-foreground">
+        <span
+          role="status"
+          data-testid="shortcut-save-status"
+          className="mr-auto text-xs text-muted-foreground"
+        >
           {t(dirty ? "settingsEditor.unsaved" : "commandSettings.saved")}
         </span>
         <Button variant="outline" disabled={!dirty || busy} onClick={discard}>

@@ -9,7 +9,7 @@ import {
   Puzzle,
   type LucideIcon,
 } from "lucide-react";
-export { pluginEntryCommands } from "../../../shared/launcher-entries";
+export { pluginEntryCommands, pluginKeywordOnlyCommands } from "../../../shared/launcher-entries";
 
 // Share the installed Lucide library between launcher entries and management;
 // plugin IDs select trusted local components, never arbitrary SVG from packages.

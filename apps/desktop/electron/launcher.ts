@@ -24,6 +24,7 @@ import type { CommandPinyinMatcher } from "./launcher-command-matcher.js";
 import {
   pluginActionCommands,
   pluginEntryCommands,
+  pluginKeywordOnlyCommands,
   pluginManagedCommands,
 } from "../shared/launcher-entries.js";
 
@@ -1239,8 +1240,12 @@ export class LauncherController {
               return false;
             if (needle || inputContext) return true;
             const target = this.commandTarget(pluginId, command.id);
+            if (!!target && pinnedKeys.has(launcherTargetKey(target))) return true;
+            // A pinned keyword-only entry still shows; an unpinned one waits for
+            // the user to type, so the empty launcher stays free of entries that
+            // only re-enter the same search box.
+            if (pluginKeywordOnlyCommands[pluginId]?.includes(command.id)) return false;
             return (
-              (!!target && pinnedKeys.has(launcherTargetKey(target))) ||
               !Object.hasOwn(pluginEntryCommands, pluginId) ||
               pluginEntryCommands[pluginId] === command.id ||
               !!pluginActionCommands[pluginId]?.includes(command.id) ||

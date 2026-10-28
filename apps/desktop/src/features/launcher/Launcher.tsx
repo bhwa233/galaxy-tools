@@ -5,7 +5,7 @@ import {
   returnToLauncher,
   setLauncherComposition,
 } from "./api";
-import { PluginIcon, pluginEntryCommands } from "../plugins/PluginIcon";
+import { PluginIcon, pluginEntryCommands, pluginKeywordOnlyCommands } from "../plugins/PluginIcon";
 import { activatePlugin } from "../plugins/api";
 import {
   useCallback,
@@ -728,11 +728,14 @@ export function Launcher() {
   for (const command of state?.commands ?? [])
     if (command.enabled && !pluginEntries.has(command.pluginId))
       pluginEntries.set(command.pluginId, pluginEntryCommands[command.pluginId] ?? command.id);
+  const isKeywordOnlyEntry = (item: LauncherItem) =>
+    !!item.commandId && !!pluginKeywordOnlyCommands[item.pluginId]?.includes(item.commandId);
   const isGridEntry = (item: LauncherItem) =>
     item.kind === "application" ||
     item.preference?.kind === "application" ||
     ((item.kind === "command" || item.preference?.kind === "command") &&
-      item.commandId === pluginEntries.get(item.pluginId));
+      item.commandId === pluginEntries.get(item.pluginId) &&
+      !isKeywordOnlyEntry(item));
   const gridItems = result?.items.filter(isGridEntry) ?? [];
   const renderItem = (item: LauncherItem, grid = false) => {
     const command = findCommand(item);
@@ -1208,6 +1211,7 @@ export function Launcher() {
               <div
                 className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
                 role="status"
+                data-testid="launcher-query-status"
               >
                 <Spinner />
                 {t("launcher.searching", { defaultValue: "正在查询…" })}

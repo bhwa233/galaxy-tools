@@ -61,12 +61,29 @@ app
       throw new Error(
         "Existing search service preserved; use a clean Windows test account/machine",
       );
-    const { validatePluginDirectory, defaultHostEnvironment, resolvePluginEntries } =
-      await load("plugins/manifest");
+    const { defaultHostEnvironment, resolvePluginEntries } = await load("plugins/manifest");
     const { PluginResourceScope } = await load("plugins/resources");
     const { createSearchRuntime } = await load("plugins/official/search");
-    const pluginRoot = path.join(root, "packages/official/search");
-    const metadata = validatePluginDirectory(pluginRoot, defaultHostEnvironment("1.2.0"));
+    const { stageLocalPluginPackage } = await load("plugins/package-installer");
+    const bundled = path.join(root, "dist-plugins");
+    const index = JSON.parse(fs.readFileSync(path.join(bundled, "index.json"), "utf8"));
+    const entry = index.plugins.find((item) => item.pluginId === "spark233.search");
+    assert.ok(entry, "Build the independent search plugin package before acceptance");
+    const staged = await stageLocalPluginPackage(
+      path.join(bundled, entry.file),
+      defaultHostEnvironment("1.2.0"),
+      {
+        stagingRoot: path.join(run, "staging"),
+        versionsRoot: path.join(run, "versions"),
+        cacheRoot: path.join(run, "package-cache"),
+      },
+      { integrity: entry.integrity },
+    );
+    const pluginRoot = staged.directory;
+    const metadata = staged.metadata;
+    assert.equal(metadata.spark233.id, entry.pluginId);
+    assert.equal(metadata.version, entry.version);
+    report.package = { version: metadata.version, integrity: staged.integrity };
     const descriptor = resolvePluginEntries(pluginRoot, metadata).native.search;
     helper = descriptor.path;
     let installed = before;
@@ -114,10 +131,18 @@ app
         throw new Error("Acceptance must not launch a document");
       },
     });
-    const status = await runtime.activate({
-      commandId: "service",
-      parameters: { action: "status" },
-    });
+    // SCM Running precedes named-pipe readiness during a real service upgrade.
+    // Retry only startup unavailability; other permission/version failures stay fatal.
+    const readinessDeadline = Date.now() + 45_000;
+    let status;
+    do {
+      status = await runtime.activate({
+        commandId: "service",
+        parameters: { action: "status" },
+      });
+      if (status.status !== "service-unavailable" || Date.now() >= readinessDeadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } while (Date.now() < readinessDeadline);
     report.status = status;
     assert.equal(status.status, "ok");
     report.checks.push("productionAdapterConnectsToInstalledService");

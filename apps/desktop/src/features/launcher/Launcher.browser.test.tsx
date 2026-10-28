@@ -79,9 +79,9 @@ it("shows one loading status until all query groups finish", async () => {
   });
   const view = await render(<Launcher />);
   try {
-    await expect.element(page.getByText("正在查询…", { exact: true })).toBeVisible();
+    await expect.element(page.getByTestId("launcher-query-status")).toBeVisible();
     await expect.poll(() => sessionId).not.toBe("");
-    expect(page.getByText("正在查询…", { exact: true }).elements()).toHaveLength(1);
+    expect(page.getByTestId("launcher-query-status").elements()).toHaveLength(1);
     desktop.emit("launcher-query-updated", {
       sessionId,
       requestId: "stream",
@@ -90,7 +90,7 @@ it("shows one loading status until all query groups finish", async () => {
       items: [],
       groups: [{ id: "commands", title: "操作", status: "ready", items: [] }],
     });
-    await expect.element(page.getByText("正在查询…", { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByTestId("launcher-query-status")).not.toBeInTheDocument();
   } finally {
     await view.unmount();
     desktop.restore();
@@ -134,6 +134,13 @@ it("searches, navigates real candidates in both directions and executes the sele
       commandId: "new",
       kind: "command",
       title: "新建便签",
+    },
+    {
+      id: "owned-applications-entry",
+      pluginId: "spark233.applications",
+      commandId: "search",
+      kind: "command",
+      title: "搜索应用入口样本",
     },
     {
       id: "owned-document",
@@ -258,10 +265,12 @@ it("searches, navigates real candidates in both directions and executes the sele
     nameLines.selectNodeContents(applicationName);
     expect(nameLines.getClientRects()).toHaveLength(2);
     expect(applicationName.textContent).toBe("匹配应用完整样本");
-    await expect.element(page.getByText("搜索应用", { exact: true })).not.toBeInTheDocument();
     await expect
-      .element(page.getByText("支持应用原名、中文全拼、拼音首字母与中英混排。", { exact: true }))
+      .element(page.getByRole("option", { name: "搜索应用", exact: true }))
       .not.toBeInTheDocument();
+    const keywordOnly = page.getByRole("option", { name: /^搜索应用入口样本/ });
+    await expect.element(keywordOnly).toBeVisible();
+    expect(keywordOnly.element().closest('[data-query-group="applications"]')).toBeNull();
     expect(file.element().getBoundingClientRect().top).toBeGreaterThan(firstBox.bottom);
     expect(newNote.element().getBoundingClientRect().top).toBeGreaterThanOrEqual(nextRowBox.bottom);
     expect(file.element().getBoundingClientRect().top).toBeGreaterThan(
