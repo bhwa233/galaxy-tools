@@ -14,7 +14,7 @@ export function unsubscribeDiagnostics(): Promise<void> {
 }
 
 export function watchDiagnostics(callback: (batch: DiagnosticBatch) => void): Promise<() => void> {
-  return listen<DiagnosticBatch>("diagnostics-batch", ({ payload }) => callback(payload));
+  return listen("diagnostics-batch", ({ payload }) => callback(payload));
 }
 
 export function clearDiagnostics(): Promise<DiagnosticSnapshot> {

@@ -43,12 +43,26 @@ Edit-Exact (Join-Path $capture 'Win/WinCap.cpp') '    if (isRight) {' "    if (i
 Edit-Exact (Join-Path $capture 'Util.cpp') '#include "pch.h"' "#include `"pch.h`"`n#include `"SessionResult.h`""
 Edit-Exact (Join-Path $capture 'Util.cpp') 'auto exePath = findImageReader();' @'
 if (Spark233Session::enabled()) {
-        const auto path = Spark233Session::directory() / L"selection.png";
-        if (std::filesystem::exists(path) || !saveToFile(path.wstring(), w, h, data)) return false;
-        Spark233Session::capture(w, h);
-        return true; // Host owns the OCR child; no detached native process.
+        // The host owns the OCR child; no detached native process. Publishing here
+        // also records the selection under the OCR action.
+        return Spark233Session::captureImage(w, h, data, L"ocr");
     }
     auto exePath = findImageReader();
+'@
+# Every completion path (copy, save, pin, long capture) funnels through these two
+# helpers, so one injection point records the selection for all of them. The
+# adapter claims the session image once; later completions reuse the record.
+Edit-Exact (Join-Path $capture 'Util.cpp') 'if (w <= 0 || h <= 0 || !data) return;' @'
+if (w <= 0 || h <= 0 || !data) return;
+	Spark233Session::captureImage(w, h, data, L"copy");
+'@
+Edit-Exact (Join-Path $capture 'Util.cpp') 'return encodePng(stream.Get(), w, h, data);' @'
+const auto wrote = encodePng(stream.Get(), w, h, data);
+    // The OCR channel's own temporary file is not a user save: it keeps the
+    // selection under its OCR action instead of claiming a second record.
+    if (wrote && std::filesystem::path(path) != Spark233Session::selectionPath())
+        Spark233Session::captureImage(w, h, data, L"save");
+    return wrote;
 '@
 Edit-Exact (Join-Path $capture 'Setting.cpp') '#include "pch.h"' "#include `"pch.h`"`n#include `"SessionResult.h`""
 Edit-Exact (Join-Path $capture 'Setting.cpp') 'PWSTR pathTmp;' @'
@@ -159,6 +173,62 @@ void WinCap::startOcr()
         return;
     }
 '@
+# Expose the upstream pin glyph and translations in both screenshot toolbars.
+# Pinning reuses WinPin and keeps the current image/history alive; it only ends
+# text editing and hides the editing controls, as the existing right-click does.
+$toolHeader = Join-Path $capture 'Tool/ToolCap.h'
+Edit-Exact $toolHeader 'L"spliter",L"close"' 'L"spliter",L"pin",L"close"'
+Edit-Exact $toolHeader 'L"",L"\ue62d"' 'L"",L"\ue6a2",L"\ue62d"'
+Edit-Exact $toolHeader 'L"",L"tool.close"' 'L"",L"tool.pin",L"tool.close"'
+Edit-Exact $tool 'Lang::get(btnTips[i])' 'Lang::get(btnIds[i] == L"pin" ? L"tool.pin" : btnTips[i])'
+Edit-Exact $tool 'else if (btn->id == L"long")' @'
+else if (btn->id == L"pin") {
+        win->startPin(true);
+    }
+    else if (btn->id == L"long")
+'@
+
+$mainTool = Join-Path $capture 'Tool/ToolMain.cpp'
+$mainHeader = Join-Path $capture 'Tool/ToolMain.h'
+Edit-Exact $mainHeader 'L"|",L"close"' 'L"|",L"pin",L"close"'
+Edit-Exact $mainHeader 'L"|",L"\ue62d"' 'L"|",L"\ue6a2",L"\ue62d"'
+Edit-Exact $mainTool 'else if (btn->id == L"save")' @'
+else if (btn->id == L"pin") {
+        tip->hide();
+        win->pin();
+        return;
+    }
+    else if (btn->id == L"save")
+'@
+
+$capWindow = Join-Path $capture 'Win/WinCap.cpp'
+Edit-Exact (Join-Path $capture 'Win/WinCap.h') 'void startPin();' 'void startPin(bool pinned = false);'
+Edit-Exact $capWindow 'void WinCap::startPin()' 'void WinCap::startPin(bool pinned)'
+Edit-Exact $capWindow 'int(maskRect.right - maskRect.left), int(maskRect.bottom - maskRect.top));' 'int(maskRect.right - maskRect.left), int(maskRect.bottom - maskRect.top), pinned);'
+
+$pinWindow = Join-Path $capture 'Win/WinPin.cpp'
+$pinHeader = Join-Path $capture 'Win/WinPin.h'
+Edit-Exact $pinHeader 'static void init(int x, int y, int w, int h);' 'static void init(int x, int y, int w, int h, bool pinned = false);'
+Edit-Exact $pinHeader 'void layoutTools();' "void layoutTools();`n    void pin();"
+Edit-Exact $pinWindow 'void WinPin::init(int x, int y, int w, int h)' 'void WinPin::init(int x, int y, int w, int h, bool pinned)'
+Edit-Exact $pinWindow 'ptr->createNativeWindow(WS_EX_TOPMOST| WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);' @'
+ptr->createNativeWindow(WS_EX_TOPMOST| WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
+    if (pinned) ptr->pin();
+'@
+Edit-Exact $pinWindow 'void WinPin::onDown(POINT pos, BOOL isRight)' @'
+void WinPin::pin()
+{
+    if (editingText) editingText->finishEdit();
+    shapeHover = nullptr;
+    toolMain->cancelSelect();
+    toolMain->hide();
+    toolSub->hideTools();
+    refresh();
+}
+
+void WinPin::onDown(POINT pos, BOOL isRight)
+'@
+
 # Headless OCR keeps one TinyOCR engine for a bounded sequence of host tasks.
 # The normal ImageReader UI and screenshot protocol retain their existing entry.
 Copy-Item (Join-Path $PSScriptRoot '../../native/capture/OcrWorker.h') (Join-Path $reader 'OcrWorker.h')

@@ -1,4 +1,22 @@
 @theme inline {
+  /* Compatibility aliases for the note surfaces; semantic tokens own colors. */
+  --color-paper: var(--sidebar);
+  --color-paper-warm: var(--secondary);
+  --color-paper-deep: var(--border);
+  --color-ink: var(--foreground);
+  --color-ink-soft: var(--secondary-foreground);
+  --color-ink-faint: var(--spark233-ink-faint);
+  --color-ink-ghost: var(--spark233-ink-ghost);
+  --color-bamboo: var(--primary);
+  --color-bamboo-light: var(--spark233-accent-hover);
+  --color-bamboo-mist: var(--accent);
+  --color-bamboo-glow: var(--spark233-accent-selected);
+  --color-stone: var(--spark233-stone);
+  --color-cloud: var(--background);
+  --color-shadow: var(--spark233-shadow);
+  --color-shadow-deep: var(--spark233-shadow-deep);
+  --color-danger-bg: var(--spark233-danger-background);
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

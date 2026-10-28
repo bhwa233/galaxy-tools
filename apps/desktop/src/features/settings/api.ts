@@ -1,12 +1,8 @@
+import type { ShortcutCheckResult, SettingsTarget } from "./types";
+export type { ShortcutCheckResult, SettingsTarget, SettingsPage } from "./types";
 import { invoke } from "../../platform/desktop";
 import { open } from "../../platform/desktop";
 import type { AppConfig, AppConfigPatch, ViewMode } from "./types";
-
-export interface ShortcutCheckResult {
-  available: boolean;
-  conflictType: "none" | "current" | "invalid" | "system" | "registered" | "unknown";
-  message: string;
-}
 
 export function getConfig(): Promise<AppConfig> {
   return invoke("config_get");
@@ -14,7 +10,10 @@ export function getConfig(): Promise<AppConfig> {
 
 export function patchConfig(
   patch: AppConfigPatch,
-  options?: { expectedCommandShortcuts: Record<string, string> },
+  options?: {
+    expectedCommandShortcuts?: Record<string, string>;
+    expectedShortcuts?: Pick<AppConfig, "globalShortcut" | "toggleVisibilityShortcut">;
+  },
 ): Promise<AppConfig> {
   return invoke("config_patch", { patch, ...options });
 }
@@ -54,12 +53,6 @@ export function normalizeViewMode(value: string): ViewMode {
   return "edit";
 }
 
-export type SettingsPage = "general" | "entries" | "plugins" | "backup" | "diagnostics";
-export interface SettingsTarget {
-  page?: SettingsPage;
-  pluginId?: string;
-  tab?: "config" | "functions" | "matching" | "info";
-}
 export function openSettingsWindow(target: SettingsTarget = {}): Promise<void> {
   return invoke("settings_open", target);
 }

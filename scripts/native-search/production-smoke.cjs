@@ -446,9 +446,18 @@ app
         "declinedHostAuthorizationIsRetryable",
         report.declined.items[0].commandId === "install-service",
       );
-      const stoppingQuery = query("content", "中文");
+      const stoppingQuery = query("content", "中文").then(
+        (value) => ({ value }),
+        (error) => ({ error: String(error) }),
+      );
       await manager.setEnabled("spark233.search", false);
-      await stoppingQuery;
+      const stoppedQuery = await stoppingQuery;
+      check(
+        "disabledQueryCannotPublishBusinessResults",
+        stoppedQuery.error
+          ? /disabled|cancelled|stopping/i.test(stoppedQuery.error)
+          : stoppedQuery.value === undefined,
+      );
       check(
         "disableCompletesAndClearsSessions",
         !manager.list()[0].enabled &&

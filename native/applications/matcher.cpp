@@ -77,14 +77,15 @@ int wmain(int argc, wchar_t** argv) {
     const auto cancelled = [&] {
       if (WaitForSingleObject(parent, 0) != WAIT_TIMEOUT) return true;
       const auto file = directory / L"cancel.request";
-      return fs::exists(file) && Wide(ReadBytes(file, 128)) == session;
+      try { return fs::exists(file) && Wide(ReadBytes(file, 128)) == session; }
+      catch (...) { return false; }
     };
     const auto tokens = Tokens(query);
     const ULONGLONG started = GetTickCount64();
     std::wstring matches;
     bool wasCancelled = false;
     for (size_t index = 0; index < names.size(); ++index) {
-      if (cancelled()) { wasCancelled = true; break; }
+      if ((index % 256 == 0) && cancelled()) { wasCancelled = true; break; }
       if (GetTickCount64() - started > 5000) throw std::runtime_error("Application pinyin query exceeded its work budget");
       if (names[index].size() > 2048) throw std::runtime_error("Application name exceeds its bounds");
       if (!idx::HasPinyinCharacters(names[index])) continue;

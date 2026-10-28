@@ -43,6 +43,7 @@ const responseSchema = z.object({
   ]),
   error: z.number().int().nonnegative().optional(),
   message: z.string().optional(),
+  verifiedServiceVersion: z.string().max(8192).optional(),
   revision: z.string().optional(),
   hasMore: z.boolean().optional(),
   service: z
@@ -155,6 +156,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
   const callers = new Map<string, CallerState>();
   const sessions = new Set<Session>();
   let generation = 0;
+  let verifiedServiceVersion: string | undefined;
   let disposed = false;
   function caller(parameters: Record<string, JsonValue>): CallerState {
     const id = parameters.callerId ?? "legacy";
@@ -309,6 +311,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
     const stale = () =>
       signal?.aborted || epoch !== generation || (state && requestGeneration !== state.generation);
     const statusOnly = action === "service-status";
+    if (action !== "search" && !statusOnly) verifiedServiceVersion = undefined;
     // Serialize only replacement/start. Holding this lock until completion would
     // prevent a newer query from cancelling a slow content search.
     const session = await serialize(async () => {
@@ -351,6 +354,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
           maxFileMiB: settings.maxFileMiB,
           includeHidden: settings.includeHidden,
           ...serviceParameters,
+          ...(verifiedServiceVersion ? { verifiedServiceVersion } : {}),
           ...(options.fixture
             ? { fixturePipe: options.fixture.pipeName, fixtureRoots: options.fixture.roots }
             : {}),
@@ -398,6 +402,8 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         )
       )
         throw new Error("Search helper returned a stale owner/session");
+      if (result.status === "ok" && result.verifiedServiceVersion && !stale())
+        verifiedServiceVersion = result.verifiedServiceVersion;
       return result;
     } finally {
       signal?.removeEventListener("abort", abort);

@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-ocr",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "spark233 offline ImageReader OCR with embedded models",
   "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
   "files": [
@@ -14,7 +14,8 @@
   "type": "module",
   "scripts": {
     "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.ocr",
-    "build:native": "node build.mjs"
+    "build:native": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "spark233": {
     "schemaVersion": 1,
@@ -83,6 +84,13 @@
     "entry": "renderer/index.html",
     "ui": {
       "theme": "^1.0.0"
-    }
+    },
+    "tray": [
+      {
+        "id": "ocr",
+        "commandId": "ocr",
+        "order": 0
+      }
+    ]
   }
 }

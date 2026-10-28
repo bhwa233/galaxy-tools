@@ -1,6 +1,6 @@
 # spark233 一期实施 TODO
 
-**2026-10-27 重构**：本文件只保留**当前还没做完的事**。历史验收叙述、状态演进、测试数字、候选包身份与版本基线表已冻结到 [launcher-todo-archive.md](launcher-todo-archive.md)（425 行，含全部 evidence 链接）。需要追溯验收依据时查归档，需要知道现在做什么时看本文件。
+**2026-10-27 重构**：本文件只保留**当前还没做完的事**。历史验收叙述、状态演进、测试数字、候选包身份与版本基线表已冻结到 [launcher-todo-archive.md](archive/2026-10/launcher-todo-archive.md)（425 行，含全部 evidence 链接）。需要追溯验收依据时查归档，需要知道现在做什么时看本文件。
 
 **状态：110 项任务，60 项已完成，50 项待办。**
 
@@ -36,7 +36,7 @@
 - [ ] **P3.9** 整体替换产品名、包名、appId、默认数据目录、服务与通信命名空间、安装包与快捷方式，不保留旧身份别名。**剩余**：安装后快捷方式与文件关联（目标机）。
 - [ ] **P3.10** uTools 式启动器主界面与首次引导，不自动创建空便签，后续恢复布局并驻留托盘。**剩余**：物理托盘与全局热键。
 - [ ] **P3.11** 预装七个官方插件并默认启用，OCR 按需加载、剪贴板启动记录。**剩余**：真实启动记录与服务授权状态。
-- [ ] **P3.17** 上下文超级面板：鼠标按键/长按在鼠标附近呼出，按选中文字/图片/文件/活动窗口展示动作。**剩余**：实机鼠标、OS 选区、原应用焦点、IME、多屏位置。见[超级面板续记](evidence/spark233-context-panel-followup.md)。
+- [ ] **P3.17** 已按 2026-10-28 用户决定替换为“原生划词 → 现有启动器自动填入”。独立上下文窗口、鼠标监听、复制备选及其设置已移除。**剩余**：目标应用 UIA 兼容性与物理全局快捷键实机验收。
 
 ## P4：ScreenCapture + ImageReader（16）
 
@@ -54,8 +54,8 @@
 - [ ] **P4.15** 取消不改写原剪贴板，其他程序同时复制时不误收旧图。**剩余**：实机验收。
 - [ ] **P4.17** 单屏与多屏/DPI 代表配置下实际检查保存图片与选字坐标。**剩余**：目标机验收。
 - [ ] **P4.18** 更新截图或 OCR 插件时另一插件版本与能力状态一致，未保存会话按规则处理。**剩余**：活动会话独立升级交互。
-- [ ] **P4.19** ~~建立截图历史~~ **判定不做**（已被剪贴板插件覆盖），改为验证"截图→剪贴板→图库"链路。**剩余**：确认 ScreenCapture 写剪贴板的格式落在 `PNG`/`CF_DIB`(8)/`CF_DIBV5`(17) 内——`clipboard-history.ts:154-157` **不认 `CF_BITMAP`**(2)，若只写 CF_BITMAP 则漏记；并清理死事件 `emit("screenshot-result")`（`main.ts:1182`，无消费者）。详见[截图补强 TODO](screenshot-enhancement-todo.md) 第 1 节。
-- [ ] **P4.20** **待决策**：GIF 编码路径。upstream gifski 实现已在 `adapt.ps1:62-71` 整段删除（注释 include + 删 `createGif` 函数体 + 调用点改 `createGif2`），当前走 cgif；gifski 为 Rust 库且 `sources.lock.json` 未收录。**剩余**：三选一——恢复 gifski（需引入 Rust 构建树）/ 优化 cgif 参数 / 主输出改 MP4-WebP；录屏本身无任何验收记录。详见[截图补强 TODO](screenshot-enhancement-todo.md) 第 2 节。
+- [ ] **P4.19** ~~建立截图历史~~ **判定不做**（已被剪贴板插件覆盖），改为验证"截图→剪贴板→图库"链路。**剩余**：确认 ScreenCapture 写剪贴板的格式落在 `PNG`/`CF_DIB`(8)/`CF_DIBV5`(17) 内——`clipboard-history.ts:154-157` **不认 `CF_BITMAP`**(2)，若只写 CF_BITMAP 则漏记；并清理死事件 `emit("screenshot-result")`（`main.ts:1182`，无消费者）。详见[截图补强 TODO](archive/2026-10/screenshot-enhancement-todo.md) 第 1 节。
+- [ ] **P4.20** **待决策**：GIF 编码路径。upstream gifski 实现已在 `adapt.ps1:62-71` 整段删除（注释 include + 删 `createGif` 函数体 + 调用点改 `createGif2`），当前走 cgif；gifski 为 Rust 库且 `sources.lock.json` 未收录。**剩余**：三选一——恢复 gifski（需引入 Rust 构建树）/ 优化 cgif 参数 / 主输出改 MP4-WebP；录屏本身无任何验收记录。详见[截图补强 TODO](archive/2026-10/screenshot-enhancement-todo.md) 第 2 节。
 
 ## P5：应用与 Pulse 搜索（8）
 
@@ -115,9 +115,13 @@
 
 ## 相关文档
 
-- [截图能力补强 TODO](screenshot-enhancement-todo.md)：P4.19 / P4.20 / 部分选字的实现定位与决策记录
+- [截图能力补强 TODO](archive/2026-10/screenshot-enhancement-todo.md)：P4.19 / P4.20 / 部分选字的实现定位与决策记录
 - [架构设计](launcher-architecture.md)：产品范围与模块边界
-- [Electron 迁移与后续验收](electron-todo.md)：迁移期遗留的验收项
-- [历史归档](launcher-todo-archive.md)：重构前的完整 TODO 与全部 evidence 链接
+- [Electron 迁移与后续验收](archive/2026-10/electron-todo.md)：迁移期遗留的验收项
+- [历史归档](archive/2026-10/launcher-todo-archive.md)：重构前的完整 TODO 与全部 evidence 链接
 
 **规则**：任务框只在实际实现与对应验收完成后勾选；版本查询和方案确认不算实现完成。新增条目直接加到对应阶段，不在本文件累积历史叙述——验收证据写入 `evidence/`，需要长叙述时进归档。
+
+## 历史待办与证据入口
+
+当前实施清单集中在本文件。迁移与截图历史待办保留在 [2026-10 归档](archive/2026-10/)，其中未勾选的验收要求仍然有效；移动文档不表示对应功能已经完成。

@@ -94,6 +94,23 @@ export function isValidGlobalShortcut(shortcut: string): boolean {
   return parsed.ctrl || parsed.alt || parsed.meta;
 }
 
+/** Reuse the recorder parser for conflict matching, including Electron aliases. */
+export function shortcutIdentity(shortcut: string, platform: ShortcutPlatform = "windows"): string {
+  const aliases = shortcut
+    .trim()
+    .split("+")
+    .map((part) => {
+      const key = part.trim().toLowerCase();
+      if (["commandorcontrol", "cmdorctrl", "mod"].includes(key)) return "Mod";
+      if (["control", "ctrl"].includes(key)) return "Ctrl";
+      if (["alt", "option"].includes(key)) return "Alt";
+      if (key === "shift") return "Shift";
+      if (["meta", "super", "win", "command", "cmd"].includes(key)) return "Meta";
+      return key === "esc" ? "ESCAPE" : key.toUpperCase();
+    });
+  return hotkeyToConfigString(aliases.join("+"), platform);
+}
+
 export function formatHeldKeys(keys: string[], platform: ShortcutPlatform = "windows"): string {
   const modifierOrder =
     platform === "mac" ? ["Meta", "Alt", "Control", "Shift"] : ["Control", "Alt", "Shift", "Meta"];

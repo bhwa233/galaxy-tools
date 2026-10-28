@@ -1,6 +1,4 @@
 ## .NET / Visual Studio
-bin/
-obj/
 *.user
 *.suo
 *.userosscache
@@ -9,14 +7,6 @@ obj/
 
 ## NuGet
 *.nupkg
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
-!/packages/sdk/
-!/packages/sdk/**
-!/packages/ui/
-!/packages/ui/**
-!/packages/official/
-!/packages/official/**
 
 ## Build results
 [Dd]ebug/
@@ -27,12 +17,10 @@ x86/
 *.dmg
 *.app
 
-## Node / Tauri
+## Node
 node_modules/
 .pnpm-store/
 dist/
-src-tauri/target/
-src-tauri/gen/
 
 ## Local hooks
 .husky/pre-push
@@ -65,7 +53,6 @@ Desktop.ini
 *.psd
 *.ai
 *.icon
-src-tauri/icons/macOS
 
 ## Generated
 
@@ -91,3 +78,6 @@ packages/ui/dist/
 
 # Local agent state
 /.workbuddy/
+
+.playwright-mcp/console-*.log
+packages/official/notes/backend.mjs

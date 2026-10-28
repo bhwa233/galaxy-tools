@@ -1,8 +1,8 @@
 import path from "node:path";
-import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, opendir, realpath, rename, rm, stat } from "node:fs/promises";
+import { createReadStream, createWriteStream, type Stats } from "node:fs";
+import { lstat, mkdir, mkdtemp, open, opendir, realpath, rm, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
-import { setTimeout as retryDelay } from "node:timers/promises";
+import { renameWithRetry } from "../filesystem.js";
 import npmFetch from "npm-registry-fetch";
 import * as semver from "semver";
 import * as ssri from "ssri";
@@ -202,32 +202,16 @@ async function stagePackage(
       metadata.spark233.id,
       metadata.version,
     );
-    // Staging and version roots should share a filesystem. EXDEV fails without
-    // copying or exposing a partially validated package as a committed version.
-    // Windows can temporarily deny this directory rename immediately after EXE
-    // extraction (observed EPERM in the packaged first-install path). Node's
-    // promise rename has no retry option. Retry only that platform's transient
-    // access/busy errors, for at most 2.75 seconds of delay; never replace code.
-    for (let attempt = 0; ; attempt++) {
-      options.signal?.throwIfAborted();
-      await exactVersionParent(versionsRoot, directory);
-      options.signal?.throwIfAborted();
-      try {
-        const identity = await lstat(unpacked);
-        await rename(unpacked, directory);
-        createdDirectory = directory;
-        createdIdentity = identity;
-        break;
-      } catch (error) {
-        if (
-          process.platform !== "win32" ||
-          !["EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "") ||
-          attempt >= 8
-        )
-          throw error;
-        await retryDelay(Math.min(50 * 2 ** attempt, 500), undefined, { signal: options.signal });
-      }
-    }
+    let identity: Stats;
+    await renameWithRetry(unpacked, directory, {
+      signal: options.signal,
+      beforeAttempt: async () => {
+        await exactVersionParent(versionsRoot, directory);
+        identity = await lstat(unpacked);
+      },
+    });
+    createdDirectory = directory;
+    createdIdentity = identity!;
     options.signal?.throwIfAborted();
     return { metadata, directory, integrity, source, releaseNotes };
   } catch (error) {

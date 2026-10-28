@@ -10,6 +10,7 @@ import type {
 } from "./index.js";
 
 export type PluginWindowStopReason = StopReason | "window-close";
+/** A refusal reason is limited to 1000 characters on the wire. */
 export type PluginSaveDecision = { ok: true } | { ok: false; reason: string };
 export interface PluginWebContext extends PluginSessionContext {
   activationId?: string;
@@ -89,6 +90,7 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
     ) => PluginLauncherPage | Promise<PluginLauncherPage>
   >();
   const pendingQueries = new Map<string, AbortController>();
+  const queryWaiters = new Map<string, Set<() => void>>();
   const request = (operation: PluginWebOperation, payload?: JsonValue) => {
     if (!active) return Promise.reject(new Error("Plugin browser client was released"));
     return transport.request(operation, payload);
@@ -132,9 +134,25 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
       void (async () => {
         let result: { value: PluginLauncherPage } | { error: string };
         try {
-          const handler = event.activation.commandId
-            ? queries.get(event.activation.commandId)
-            : undefined;
+          const id = event.activation.commandId;
+          if (id && !queries.has(id))
+            await new Promise<void>((resolve) => {
+              const waiting = queryWaiters.get(id) ?? new Set<() => void>();
+              const finish = () => {
+                clearTimeout(timer);
+                waiting.delete(finish);
+                if (!waiting.size) queryWaiters.delete(id);
+                controller.signal.removeEventListener("abort", finish);
+                resolve();
+              };
+              const timer = setTimeout(finish, 250);
+              waiting.add(finish);
+              queryWaiters.set(id, waiting);
+              controller.signal.addEventListener("abort", finish, { once: true });
+              if (controller.signal.aborted) finish();
+            });
+          controller.signal.throwIfAborted();
+          const handler = id ? queries.get(id) : undefined;
           if (!handler) throw new Error("Plugin query handler is not registered");
           result = { value: await handler(event.activation, controller.signal) };
         } catch (error) {
@@ -147,7 +165,12 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
           await request("query.result", {
             requestId: event.requestId,
             ...result,
-          } as unknown as JsonValue);
+          } as unknown as JsonValue).catch(() =>
+            request("query.result", {
+              requestId: event.requestId,
+              error: "Plugin query result is invalid or exceeds the payload limit",
+            }),
+          );
       })()
         .catch(() => {})
         .finally(() => {
@@ -165,6 +188,7 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
         } catch (error) {
           decision = { ok: false, reason: error instanceof Error ? error.message : String(error) };
         }
+        if (!decision.ok) decision = { ok: false, reason: String(decision.reason).slice(0, 1000) };
         if (active) await request("lifecycle.result", { requestId: event.requestId, decision });
       })().catch(() => {}); // A released host fences late save acknowledgements.
     }
@@ -217,6 +241,7 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
     },
     registerQuery: async (id, handler) => {
       queries.set(id, handler);
+      for (const notify of [...(queryWaiters.get(id) ?? [])]) notify();
       try {
         await ready;
         await request("command.register", { id });

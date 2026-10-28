@@ -107,8 +107,15 @@ class UtilityBackend implements PluginBackendController {
     this.exitPromise = new Promise((resolve) => {
       this.finishExit = resolve;
     });
+    const log = (stream: "stdout" | "stderr", text: string) => {
+      try {
+        options.onLog?.(stream, text);
+      } catch (error) {
+        console.error("backend-log-observer", error);
+      }
+    };
     child.on("message", (message: unknown) => this.receive(message));
-    child.on("error", (type, location) => options.onLog?.("stderr", `${type}: ${location}`));
+    child.on("error", (type, location) => log("stderr", `${type}: ${location}`));
     child.once("exit", (code) => {
       this.exited = true;
       this.finishExit(code);
@@ -120,8 +127,16 @@ class UtilityBackend implements PluginBackendController {
       this.pending.clear();
       for (const controller of this.hostCalls.values()) controller.abort();
       this.hostCalls.clear();
-      if (!this.disposing) options.onCrash?.(error);
+      if (!this.disposing) {
+        try {
+          options.onCrash?.(error);
+        } catch (failure) {
+          console.error("backend-crash-observer", failure);
+        }
+      }
     });
+    for (const stream of ["stdout", "stderr"] as const)
+      child[stream]?.on("error", (error) => log("stderr", String(error)));
     for (const stream of ["stdout", "stderr"] as const)
       child[stream]?.on("data", (chunk: Buffer) => {
         if (options.scope.accepts(this.owner)) {
@@ -131,7 +146,7 @@ class UtilityBackend implements PluginBackendController {
             /* Numeric observation only. */
           }
         }
-        options.onLog?.(stream, String(chunk));
+        log(stream, String(chunk));
       });
   }
 
@@ -453,13 +468,19 @@ export async function createTrustedBackend(
     prepareStop: (reason) => controller.prepareStop(reason),
     cancelStop: () => controller.cancelStop(),
     dispose: () => controller.dispose(),
+    forceTerminate: () => controller.abortFailedStartup(),
   });
   try {
     await controller.initialize(entryPath);
     return controller;
   } catch (error) {
-    await controller.abortFailedStartup();
-    await release();
+    try {
+      await controller.abortFailedStartup();
+    } catch (cleanup) {
+      throw new AggregateError([error, cleanup], "Backend startup and cleanup failed");
+    } finally {
+      await release().catch((cleanup) => console.error("backend-startup-release", cleanup));
+    }
     throw error;
   }
 }
@@ -518,7 +539,7 @@ export async function createTrustedNativeProcess(
     prepared = false,
     failure: string | undefined;
   const completion = new Promise<NativeProcessExit>((resolve) => {
-    child.once("error", (error) => {
+    child.on("error", (error) => {
       failure = error.message;
     });
     child.once("close", (code, signal) => {
@@ -532,6 +553,10 @@ export async function createTrustedNativeProcess(
       resolve(result);
     });
   });
+  for (const stream of [child.stdin, child.stdout, child.stderr])
+    stream.on("error", (error) => {
+      failure = error.message;
+    });
   for (const stream of ["stdout", "stderr"] as const)
     child[stream].on("data", (chunk: Buffer) => {
       if (options.scope.accepts(owner)) {
@@ -582,6 +607,14 @@ export async function createTrustedNativeProcess(
   const release = options.scope.own("process", {
     prepareStop: (reason) => controller.prepareStop(reason),
     dispose: () => controller.dispose(),
+    forceTerminate: async () => {
+      if (!ended) child.kill();
+      await waitWithTimeout(
+        completion,
+        options.timeoutMs ?? 10_000,
+        "Native process remains tracked after forced exit",
+      );
+    },
   });
   try {
     await new Promise<void>((resolve, reject) => {

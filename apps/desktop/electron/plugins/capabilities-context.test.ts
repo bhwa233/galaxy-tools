@@ -46,7 +46,7 @@ test("expired or retargeted context references cannot become durable picker perm
   const broker = createCapabilityBroker({
     scope,
     manifest,
-    manager: () => ({}) as PluginManager,
+    manager: () => ({ assertCommandAvailable: () => {} }) as unknown as PluginManager,
     resolveResource: (handle) => references.get(handle.id),
   });
   const read = (id: string) =>
@@ -108,7 +108,7 @@ test("raw native capability payloads cannot manufacture a source application", a
   const broker = createCapabilityBroker({
     scope,
     manifest,
-    manager: () => ({}) as PluginManager,
+    manager: () => ({ assertCommandAvailable: () => {} }) as unknown as PluginManager,
     invokeNative,
   });
   const invoke = (commandId: string) =>

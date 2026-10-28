@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   Database,
   LayoutList,
+  Keyboard,
+  PanelBottom,
   Maximize2,
   Minus,
   Package,
@@ -43,23 +45,31 @@ import {
   patchConfig,
   migrateDataDir,
   type SettingsTarget,
-  type SettingsPage,
 } from "./api";
 import type { AppConfig, AppConfigPatch } from "./types";
+import { CommandSettings } from "./CommandSettings";
 
-const pages = ["general", "entries", "plugins", "backup", "diagnostics"] as const;
+const pages = [
+  "general",
+  "shortcuts",
+  "tray",
+  "entries",
+  "plugins",
+  "backup",
+  "diagnostics",
+] as const;
 function initialTarget(): SettingsTarget {
   const params = new URLSearchParams(location.search);
   return {
-    page: pages.includes(params.get("page") as SettingsPage)
-      ? (params.get("page") as SettingsPage)
-      : "general",
+    page: pages.find((page) => page === params.get("page")) ?? "general",
     pluginId: params.get("pluginId") ?? undefined,
     tab: (params.get("tab") as SettingsTarget["tab"]) ?? "config",
   };
 }
 const icons = {
   general: Settings,
+  shortcuts: Keyboard,
+  tray: PanelBottom,
   entries: LayoutList,
   plugins: Package,
   backup: Database,
@@ -99,11 +109,18 @@ export function SettingsWindow() {
         if (mounted.current) setState(value);
       })
       .catch(() => {});
-    const configListener = listen<AppConfig>("config-changed", ({ payload }) =>
+    const configListener = listen("config-changed", ({ payload }) =>
       setConfig({ ...payload, ...hostPending.current }),
     );
-    const targetListener = listen<SettingsTarget>("settings-navigate", ({ payload }) => {
-      if (pages.includes(payload.page as SettingsPage)) setTarget(payload);
+    const statusListener = listen("launcher-status-changed", () => {
+      void getLauncherState()
+        .then((value) => {
+          if (mounted.current) setState(value);
+        })
+        .catch(() => {});
+    });
+    const targetListener = listen("settings-navigate", ({ payload }) => {
+      if (pages.some((page) => page === payload.page)) setTarget(payload);
     });
     const stop = registerHostPreparation(async () => {
       await writes.current;
@@ -114,6 +131,7 @@ export function SettingsWindow() {
       mounted.current = false;
       stop();
       void configListener.then((fn) => fn());
+      void statusListener.then((fn) => fn());
       void targetListener.then((fn) => fn());
     };
   }, [retry, t]);
@@ -296,6 +314,17 @@ export function SettingsWindow() {
                   pluginId={target.pluginId}
                   initialTab={target.tab}
                   onOpenChange={() => {}}
+                />
+              )}
+              {(page === "shortcuts" || page === "tray") && (
+                <CommandSettings
+                  key={page + (target.pluginId ?? "")}
+                  kind={page}
+                  config={config}
+                  onChange={change}
+                  onSaved={setConfig}
+                  warnings={state?.warnings}
+                  pluginId={target.pluginId}
                 />
               )}
               {page === "entries" && (

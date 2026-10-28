@@ -344,6 +344,24 @@ class ClipboardController implements ClipboardRuntime {
     options.scope.own("process", {
       prepareStop: (reason) => this.prepareStop(reason),
       dispose: () => this.dispose(),
+      forceTerminate: async () => {
+        this.stopping = true;
+        if (!this.ended) this.child.kill();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            this.exit,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("Clipboard process remains tracked after forced exit")),
+                10000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      },
     });
   }
   get pid() {

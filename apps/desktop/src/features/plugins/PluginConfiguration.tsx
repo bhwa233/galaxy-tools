@@ -12,7 +12,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { getConfig } from "../settings/api";
 import type { AppConfig } from "../settings/types";
 import { useUnsavedChanges } from "../settings/useUnsavedChanges";
-import { getPluginSettings, savePluginSettings } from "./api";
+import { activatePlugin, getPluginSettings, savePluginSettings } from "./api";
 import type { PluginSettingsSnapshot } from "./settingsTypes";
 
 export function PluginConfiguration({ pluginId }: { pluginId: string }) {
@@ -24,6 +24,7 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [refreshed, setRefreshed] = useState(false);
   const [retry, setRetry] = useState(0);
   const mounted = useRef(true);
   useEffect(() => {
@@ -113,6 +114,33 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
       )}
       {snapshot && (
         <>
+          {pluginId === "spark233.applications" && (
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setError(undefined);
+                  setRefreshed(false);
+                  void activatePlugin(pluginId, "refresh")
+                    .then(() => setRefreshed(true))
+                    .catch((value) =>
+                      setError(value instanceof Error ? value.message : String(value)),
+                    )
+                    .finally(() => setBusy(false));
+                }}
+              >
+                {t("launcher.refreshApplications")}
+              </Button>
+              {refreshed && (
+                <span role="status" className="text-sm">
+                  {t("launcher.applicationsRefreshed")}
+                </span>
+              )}
+            </div>
+          )}
           {!snapshot.fields.length && (
             <p className="text-sm text-muted-foreground">{t("pluginConfig.noSettings")}</p>
           )}

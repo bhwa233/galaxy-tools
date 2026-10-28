@@ -52,7 +52,7 @@ Electron main
 
 本机 AMD Radeon 780M（驱动 32.0.13032.11）的 D3D11 初始化在进程继承 WSL UNC 工作目录时会抛出未处理 C++ 异常，随后以 `0xC0000409 / FAST_FAIL_FATAL_APP_EXIT` 退出。原生调试器栈定位到 `amdxx64.dll`；Electron 44 对比也可复现。中文 exe 名、ASAR 开关、D3D11/GL 后端和视频加速开关均不能单独消除问题。
 
-同一份 exe 只把 WorkingDirectory 改成 `C:\Windows` 后，功能检查通过且 GPU stderr 归零。`electron/windows.ts` 因此在 Windows 启动阶段将进程工作目录切到本地 Electron 可执行文件所在目录。所有业务存储仍通过明确的绝对路径管理。
+同一份 exe 只把 WorkingDirectory 改成 `C:\Windows` 后，功能检查通过且 GPU stderr 归零。`apps/desktop/electron/windows-runtime.ts` 因此在 Windows 启动阶段将进程工作目录切到本地 Electron 可执行文件所在目录。所有业务存储仍通过明确的绝对路径管理。
 
 GPU 硬件加速保持开启；不关闭 GPU sandbox，不使用 `--no-sandbox`，不更改系统显卡设置或驱动。运行探针同时检查 GPU 崩溃次数、`gpu_compositing=enabled` 与沙箱开关，避免把软件回退时“界面能打开”当作修复证明。
 
@@ -76,13 +76,13 @@ metadata 损坏时先备份，再从 Markdown 文件重建。损坏的配置不�
 
 React、Tailwind、Markdown、KaTeX、i18next、现有 UI 控件均复用。不新装编辑器、组件库、状态库或数据库。前端库随 Vite 编译，放在 devDependencies；主进程只使用 Node/Electron 内置 API，发布包不携带开发 node_modules。
 
-原插件、Tauri CLI 和 Rust 构建依赖已从 npm 入口移除。`src-tauri/` 仅保留供对照；现行命令不需要 Rust。
+原插件、Tauri CLI 和 Rust 构建依赖已从 npm 入口移除。当前仓库已移除 `src-tauri/`；历史材料保存在 `Docs/upstream/`，现行命令不需要 Rust。
 
 ## 验证与运行限制
 
 2026-10-23 本机验证：
 
-- `npm run typecheck`、`npm run lint`、`npm test`、`npm run build`。
+- `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`。
 - Vitest：24 个文件、100 项测试通过。新增用例只覆盖真实持久化与路径信任边界；旧更新面板的 305 行交互测试随停用逻辑移除，沿用现有 runner。
 - Windows 11 原生 Electron 及 ASAR 打包版：中文 Markdown 读写、关闭前立即修改保存、回收 renderer 后重开、窗口程序化移动、1×1 本地 PNG 解码、拒绝未授权读取与资源越界均通过。
 - 真实文件系统写入失败：保留窗口和未保存正文，关闭被拒绝。不是只用 mock 模拟的成功链路。

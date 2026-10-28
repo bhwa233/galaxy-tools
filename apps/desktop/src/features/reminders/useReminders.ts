@@ -13,9 +13,7 @@ export function useReminders(): ReminderItem[] {
         if (!disposed) setItems(list);
       })
       .catch(console.error);
-    const unlisten = listen<ReminderItem[]>(REMINDERS_CHANGED, (event) =>
-      setItems(event.payload ?? []),
-    );
+    const unlisten = listen(REMINDERS_CHANGED, (event) => setItems(event.payload ?? []));
     return () => {
       disposed = true;
       void unlisten.then((fn) => fn());

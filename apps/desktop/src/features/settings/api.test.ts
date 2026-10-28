@@ -27,12 +27,6 @@ describe("settings api", () => {
   test("gets config through the desktop adapter", async () => {
     const config: AppConfig = {
       locale: "zh-CN",
-      superPanelEnabled: false,
-      superPanelButton: "middle",
-      superPanelTrigger: "hold",
-      superPanelHoldMs: 500,
-      superPanelExcludedApps: [],
-      superPanelCopyFallback: false,
       dataDir: "D:\\notes",
       globalShortcut: "Ctrl+Space",
       closeToTray: true,
@@ -71,12 +65,6 @@ describe("settings api", () => {
   test("patches only the changed config fields through the desktop adapter", async () => {
     const config: AppConfig = {
       locale: "zh-CN",
-      superPanelEnabled: false,
-      superPanelButton: "middle",
-      superPanelTrigger: "hold",
-      superPanelHoldMs: 500,
-      superPanelExcludedApps: [],
-      superPanelCopyFallback: false,
       dataDir: "D:\\notes",
       globalShortcut: "Alt+Space",
       closeToTray: false,

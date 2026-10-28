@@ -1,5 +1,20 @@
 /* Theme protocol 1.x. Plain CSS works with React, other frameworks and DOM. */
 :root {
+  color-scheme: light;
+  --sidebar: #f6f3ec;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --spark233-ink-faint: #8a8a80;
+  --spark233-ink-ghost: #b8b8ae;
+  --spark233-stone: #6b6b62;
+  --spark233-shadow: rgba(26, 26, 24, 0.06);
+  --spark233-shadow-deep: rgba(26, 26, 24, 0.12);
+  --spark233-danger-background: #fef2f2;
   --spark233-accent: #2d5a3d;
   --spark233-accent-hover: #3a7a52;
   --spark233-accent-soft: #e8f0eb;
@@ -25,6 +40,14 @@
   --radius: 0.625rem;
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
+  --sidebar: #222120;
+  --spark233-ink-faint: #928f87;
+  --spark233-ink-ghost: #706d67;
+  --spark233-stone: #8a8880;
+  --spark233-shadow: rgba(0, 0, 0, 0.3);
+  --spark233-shadow-deep: rgba(0, 0, 0, 0.5);
+  --spark233-danger-background: rgba(220, 38, 38, 0.15);
   --spark233-accent: #4faa70;
   --spark233-accent-hover: #5fc085;
   --spark233-accent-soft: #1c2e22;

@@ -56,10 +56,10 @@ export class ShutdownCoordinator<Window> {
       await this.options.awaitReleases();
       await this.options.awaitWrites();
       this.assertNotBlocked();
-      const saved = await Promise.all(
+      const saved = await Promise.allSettled(
         [...this.options.windows()].map((window) => this.options.prepare(window)),
       );
-      if (!saved.every(Boolean))
+      if (!saved.every((result) => result.status === "fulfilled" && result.value))
         throw new AppError(
           "saveFailed",
           this.english()

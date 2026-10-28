@@ -26,18 +26,23 @@ ECDICT 固定提交的根许可证为 MIT，Copyright (c) 2025 Linwei；原文�
 
 ## 后台与宿主合同
 
-| 命令              | 参数 action                             | 行为                                          |
-| ----------------- | --------------------------------------- | --------------------------------------------- |
-| search            | search / query / limit                  | 本地查词、词形与短语；返回详情选择 ID，不联网 |
-| detail（内部）    | detail / id                             | 只打开已查询登记的词条详情                    |
-| translate         | translate / text / target? / requestId? | 显式发起模型翻译                              |
-| configure（内部） | configure / endpoint / model / key?     | 原子保存单个配置，只返回 hasKey               |
-| status（内部）    | config_status                           | 读取不含密钥的当前配置                        |
-| cancel（内部）    | cancel / requestId                      | 中止此请求的 HTTP 流                          |
+| 命令                    | 参数 action                                     | 行为                                          |
+| ----------------------- | ----------------------------------------------- | --------------------------------------------- |
+| search                  | search / query / limit                          | 本地查词、词形与短语；返回详情选择 ID，不联网 |
+| detail（内部）          | detail / id                                     | 只打开已查询登记的词条详情                    |
+| translate               | translate / text / target? / requestId?         | 显式发起模型翻译                              |
+| configure（内部）       | configure / endpoint / model / key?             | 原子保存单个配置，只返回 hasKey               |
+| status（内部）          | config_status                                   | 读取不含密钥的当前配置                        |
+| cancel（内部）          | cancel / requestId                              | 中止此请求的 HTTP 流                          |
+| history-list（内部）    | history_list                                    | 返回历史列表与当前记录开关                    |
+| history-delete（内部）  | history_delete / id                             | 删除单条历史并返回剩余列表                    |
+| history-clear（内部）   | history_clear                                   | 清空历史并返回空列表                          |
+| preferences-get（内部） | preferences_get                                 | 读取工作区偏好                                |
+| preferences-set（内部） | preferences_set / autoLookup? / historyEnabled? | 保存工作区偏好并回传                          |
 
 `search` 清单标记 `search: "word"`，允许宿主即时本地查询；AI 命令没有自动查询标记。根查询会话保存返回 item 的 parameters；renderer 执行通过 opaque 选择 ID 路由，不能自行注入内部动作。
 
-`TranslationWorkspace` 的 props 为 `{ initialResult?: unknown, onClose: () => void }`，代码在仓库 `src/features/translation/`。工作区通过 `translation_action` 调用查询、详情、状态、翻译和取消，通过专用 `translation_configure` 保存配置。宿主检查来源窗口、插件启用状态和清单命令；通用动作桥不应开放 configure。
+`TranslationWorkspace` 的 props 见下文「工作区历史与偏好」，代码在仓库 `src/features/translation/`。工作区通过 `translation_action` 调用查询、详情、状态、翻译、取消、历史与偏好，通过专用 `translation_configure` 保存配置。宿主检查来源窗口、插件启用状态和清单命令；通用动作桥不应开放 configure。
 
 后台通过 `translation-chunk` 事件发送 `{ requestId, text: delta, done }`；宿主验证活动实例后转发同名事件。最终返回 `{ kind: "translation", requestId, text, target, translatedText, cached }`。取消后保留界面已有文本，工作区关闭时取消未完成任务。
 
@@ -52,6 +57,14 @@ ECDICT 固定提交的根许可证为 MIT，Copyright (c) 2025 Linwei；原文�
 翻译结果按 endpoint/model/目标/原文的 SHA-256 键缓存到插件私有目录，最多 64 条和 4 MiB；缓存不含密钥，不缓存取消、错误或不完整结果。配置更新清空缓存。本地词典仍能在缺少配置或配置损坏时工作。
 
 协议依据：[Node 24 SQLite 官方文档](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)、[OpenAI Chat Completions 官方参考](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。Context7 因月度额度耗尽无法查询，本次读取了这些官方页面。
+
+## 工作区历史与偏好
+
+翻译成功后把原文与译文写入插件私有 `data/history.json`，与配置共用同一串行写队列和原子替换；最多 200 条、单条正文 2000 字符、文件上限 2 MiB，相同原文与目标去重并前移到最前。历史写入失败只丢弃该次记录，不让翻译结果失败。关闭记录开关后不再新增条目，已有条目保留，可逐条删除或一次清空。工作区偏好保存在 `data/workspace.json`（`autoLookup`、`historyEnabled`）。
+
+**历史包含译文正文并落盘在本机插件私有目录**，这是相对旧行为的口径变化：配置、状态与查询结果仍不回传密钥，提供方错误仍只返回固定文本，但历史文件本身不是不落盘数据，也不声称硬件加密。界面在历史抽屉内明示存储位置，并提供清空入口。
+
+工作区 props 为 `{ initialResult?: unknown, onClose: () => void, notesAvailable: boolean, unavailableTargetReason: string }`。界面为三栏：可收起的历史抽屉、原文译文上下对照的翻译主区、按需出现的词典半栏；宽度不足 900px 时词典栏转为覆盖层。选中原文或译文中的词（`autoLookup` 开启且长度不超过 64 字符）会在 250ms 防抖后查词。
 
 ## 已执行验证
 

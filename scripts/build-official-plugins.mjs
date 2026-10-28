@@ -63,6 +63,7 @@ const rendererPlugins = new Set([
   "spark233.clipboard",
   "spark233.translation",
   "spark233.ocr",
+  "spark233.screenshot",
 ]);
 const uiMetadata = JSON.parse(
   await fs.readFile(path.join(project, "packages/ui/package.json"), "utf8"),

@@ -56,7 +56,8 @@ function ops(overrides: Partial<McpOps> = {}): McpOps {
   } as McpOps;
 }
 
-function payload(line: string): any {
+function payload(line: string | null): any {
+  if (line === null) throw new Error("Expected a JSON-RPC response");
   return JSON.parse(line);
 }
 
@@ -178,6 +179,30 @@ describe("handleLine", () => {
       content: undefined,
       category: undefined,
     });
+  });
+
+  // Append permission previously allowed a destructive whole-document replacement.
+  it("requires full permission for replacement while retaining append access", async () => {
+    const operations = ops();
+    const call = (mode: string, permission: "append" | "full") =>
+      handleLine(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 30,
+          method: "tools/call",
+          params: {
+            name: "spark233_write_note",
+            arguments: { id: "n1", content: "replacement", mode },
+          },
+        }),
+        { permission, ops: operations },
+      );
+    expect(payload(await call("replace", "append")).error.code).toBe(-32602);
+    expect(operations.writeNote).not.toHaveBeenCalled();
+    await call("append", "append");
+    expect(operations.writeNote).toHaveBeenCalledWith("n1", "append", "replacement");
+    await call("replace", "full");
+    expect(operations.writeNote).toHaveBeenCalledWith("n1", "replace", "replacement");
   });
 
   it("turns tool argument errors into isError results", async () => {

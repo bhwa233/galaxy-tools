@@ -40,7 +40,15 @@ export function createPinyinMatcher({ cacheDir, signal: lifetimeSignal }) {
         cancel() {
           task.cancelled = true;
           if (task.directoryReady)
-            void fs.writeFile(path.join(directory, "cancel.request"), sessionId).catch(() => {});
+            void (async () => {
+              const temporary = path.join(directory, randomUUID() + ".cancel");
+              try {
+                await fs.writeFile(temporary, sessionId, { flag: "wx" });
+                await fs.rename(temporary, path.join(directory, "cancel.request"));
+              } finally {
+                await fs.rm(temporary, { force: true });
+              }
+            })().catch(() => {});
         },
         done: undefined,
       };

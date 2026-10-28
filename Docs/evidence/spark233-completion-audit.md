@@ -2,7 +2,7 @@
 
 2026-10-27 最新补证：[集中代码包及功能测试](spark233-source-restore-functional-tests.md)已通过 42 文件/192 项测试、lint 和含 typecheck 的 build；未新增 UI/Windows 验收，本文旧报告仍保留原范围。
 
-2026-10-27执行顺序更新：本轮按[剩余实施基线](../spark233-remaining-implementation-2026-10-27.md)先补文档、集中实现、最后统一验证。复核新发现的来源程序匹配、文档正清单及恢复状态/令牌缺口仍需补齐，旧候选绿色不覆盖新增修补；完成数保持60/108。
+2026-10-27执行顺序更新：本轮按[剩余实施基线](../archive/2026-10/spark233-remaining-implementation-2026-10-27.md)先补文档、集中实现、最后统一验证。复核新发现的来源程序匹配、文档正清单及恢复状态/令牌缺口仍需补齐，旧候选绿色不覆盖新增修补；完成数保持60/108。
 
 续作状态（2026-10-26）：notes 0.1.1 utility/main、通用外置数据备份、私有根保护、崩溃恢复及设置字段补丁已经接齐。已有完整类型检查、lint、33 文件/163 项测试、真实 utility、main 七组和备份七组通过证据，Windows `dist:win` 已成功生成目录包与 NSIS。早期缺失 Windows 原生资源、没有新安装包的阻塞已解除。最终同一输入的固定旧样本 `seeded-smoke-pQcL2D` 和完整 Windows GUI smoke `c94c7be6-ea9b-4abe-a711-da40a9378cf0` 均通过；后者实际 ExitCode 0、212.288 秒、未超时、renderer `errors: []`。P3.1 据原条目范围完成，见[本轮收口](spark233-notes-finalization.md)。下文旧冻结候选继续只证明各自历史输入；完整一期及人工/目标机验收仍未完成。
 

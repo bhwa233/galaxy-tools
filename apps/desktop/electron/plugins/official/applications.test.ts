@@ -43,7 +43,7 @@ describe("independent applications document boundaries", () => {
     };
     const settings = path.join(directory, "settings.json");
     await writeSettingsFile(settings, [entry]);
-    expect((await readSettingsFile(settings)).entries).toEqual([entry]);
+    expect((await readSettingsFile(settings))?.entries).toEqual([entry]);
     await expect(assertEntryTarget(entry)).resolves.toBeUndefined();
     const saved = fs.readFileSync(settings);
 

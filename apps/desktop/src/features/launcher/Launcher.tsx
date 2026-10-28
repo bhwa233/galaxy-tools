@@ -1,22 +1,23 @@
+import {
+  takeLauncherWorkspace,
+  setLauncherContextFiles,
+  clearLauncherContext,
+  returnToLauncher,
+  setLauncherComposition,
+} from "./api";
 import { PluginIcon, pluginEntryCommands } from "../plugins/PluginIcon";
+import { activatePlugin } from "../plugins/api";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  AppWindowIcon,
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  MoreHorizontalIcon,
-  PinIcon,
-  SettingsIcon,
-  XIcon,
-} from "lucide-react";
+import { AppWindowIcon, ArrowLeftIcon, ArrowRightIcon, SettingsIcon, XIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,22 +50,16 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuGroup,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { OcrWorkspace } from "../ocr/OcrWorkspace";
+import { ScreenshotHistoryWorkspace } from "../screenshot/ScreenshotHistoryWorkspace";
 import { TranslationWorkspace } from "../translation/TranslationWorkspace";
 import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
+import { LauncherItemActions } from "./LauncherItemActions";
 import { ClipboardPanel } from "./ClipboardPanel";
 import { prepareHostWindow } from "../windows/hostPreparation";
 import { SearchPreviewDialog, type SearchPreview } from "../search/SearchPreviewDialog";
-import {
-  closeContextPanel,
-  getContextPanelState,
-  returnFromContextPanel,
-  watchContextPanelState,
-} from "../context-panel/api";
-import type { ContextPanelViewState } from "../context-panel/types";
 import { openSettingsWindow } from "../settings/api";
 import {
   cancelLauncherQuery,
@@ -96,29 +91,11 @@ function message(value: unknown): string {
 }
 const itemKey = (item: LauncherItem) => JSON.stringify([item.pluginId, item.id]);
 
-// Installed application backends append static search instructions to their
-// diagnostics. Hide that boilerplate while retaining actual source warnings.
-function applicationStatus(hint?: string): string | undefined {
-  return hint
-    ?.replace(
-      /\s*(?:支持应用原名、中文全拼、拼音首字母与中英混排。|Search original names, full pinyin, initials, or mixed Chinese and Latin text\.)\s*$/,
-      "",
-    )
-    .trim();
-}
-
 /** Host-side search is authoritative; cmdk supplies selection and keyboard
  * navigation. The frontend owns only input, mode and request-session state. */
 export function Launcher() {
   const { t, i18n } = useTranslation();
   const { t: searchText } = useTranslation("search");
-  const isContextPanel = getCurrentWindow().label === "context-panel";
-  const [panelView, setPanelView] = useState<ContextPanelViewState>();
-  const panelRevision = useRef(-1);
-  const panelEvents = useRef(0);
-  const [panelBusy, setPanelBusy] = useState(false);
-  const panelOperation = useRef<{ sessionId?: string; revision: number } | undefined>(undefined);
-  const [panelReadFailed, setPanelReadFailed] = useState(false);
   const [state, setState] = useState<LauncherState>();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<{ key: string; title: string }>();
@@ -127,6 +104,8 @@ export function Launcher() {
   const [result, setResult] = useState<LauncherQueryResult>();
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(false);
+  const [ocrExecuting, setOcrExecuting] = useState(false);
+  const ocrTasks = useRef(0);
   const [composing, setComposing] = useState(false);
   const [error, setError] = useState<string>();
   const [stateError, setStateError] = useState<string>();
@@ -140,8 +119,8 @@ export function Launcher() {
   const routeParams = new URLSearchParams(window.location.search);
   const compactWorkspace = routeParams.get("compact") === "1";
   const separateWorkspace = routeParams.has("workspace");
-  const [workspace, setWorkspace] = useState<{ kind: string; result: unknown } | undefined>(() =>
-    ["clipboard", "translation"].includes(routeParams.get("workspace") ?? "")
+  const [workspace, setWorkspace] = useState<{ kind: string; result?: unknown } | undefined>(() =>
+    ["clipboard", "translation", "screenshot-history"].includes(routeParams.get("workspace") ?? "")
       ? { kind: routeParams.get("workspace")!, result: undefined }
       : undefined,
   );
@@ -183,35 +162,68 @@ export function Launcher() {
   const composition = useRef(false);
   const compositionEnded = useRef(0);
   const queryGeneration = useRef(0);
+  const actionGeneration = useRef(0);
   const stateGeneration = useRef(0);
   const stateSnapshot = useRef<LauncherState | undefined>(undefined);
   const stateRequest = useRef<number | undefined>(undefined);
   const tasks = useRef(new Set<string>());
   const finishingOnboarding = useRef(false);
+  const workspaceGeneration = useRef(0);
+  const inputRevision = useRef(0);
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => input.current?.focus());
   }, []);
-  const acceptPanelView = useCallback(
-    (next: ContextPanelViewState) => {
-      if (next.revision <= panelRevision.current) return;
-      panelRevision.current = next.revision;
-      panelOperation.current = undefined;
-      setPanelBusy(false);
-      queryGeneration.current++;
-      setPanelView(next);
-      setPanelReadFailed(false);
-      setQuery(next.suggestedQuery ?? "");
-      setMode(undefined);
-      setDirectory(undefined);
-      setWorkspace(undefined);
-      setActionItem(undefined);
-      setPreviewOpen(false);
-      setResult(undefined);
-      setSelected("");
-      setError(undefined);
-      setQueryError(undefined);
-      focusInput();
+  const acceptWorkspace = useCallback(
+    (value: { kind: string; result?: unknown }) => {
+      if (
+        value.kind === "launcher-input" &&
+        value.result &&
+        typeof value.result === "object" &&
+        "text" in value.result &&
+        typeof value.result.text === "string" &&
+        "revision" in value.result &&
+        typeof value.result.revision === "number"
+      ) {
+        if (value.result.revision <= inputRevision.current) return;
+        inputRevision.current = value.result.revision;
+        queryGeneration.current++;
+        actionGeneration.current++;
+        setWorkspace(undefined);
+        setMode(undefined);
+        setDirectory(undefined);
+        setQuery(value.result.text);
+        setResult(undefined);
+        setSelected("");
+        setError(undefined);
+        setQueryError(undefined);
+        setActionItem(undefined);
+        setPreviewOpen(false);
+        focusInput();
+        return;
+      }
+      if (
+        value.kind === "launcher-mode" &&
+        value.result &&
+        typeof value.result === "object" &&
+        "key" in value.result &&
+        typeof value.result.key === "string" &&
+        "title" in value.result &&
+        typeof value.result.title === "string"
+      ) {
+        queryGeneration.current++;
+        setWorkspace(undefined);
+        setMode({ key: value.result.key, title: value.result.title });
+        setDirectory(undefined);
+        setQuery("");
+        setResult(undefined);
+        setSelected("");
+        setError(undefined);
+        setQueryError(undefined);
+        setActionItem(undefined);
+        setPreviewOpen(false);
+        focusInput();
+      } else setWorkspace({ kind: value.kind, result: value.result });
     },
     [focusInput],
   );
@@ -236,7 +248,7 @@ export function Launcher() {
     void refreshState();
     focusInput();
     const subscriptions = [
-      listen<NonNullable<LauncherState["learning"]>>("launcher-learning-changed", ({ payload }) => {
+      listen("launcher-learning-changed", ({ payload }) => {
         // Automatic learning is metadata only: never invalidate an executing
         // result or restart its query just because the record count changed.
         const replacePendingSnapshot = stateRequest.current !== undefined;
@@ -268,39 +280,48 @@ export function Launcher() {
         focusInput();
       }),
       listen("ocr-result", (event) => setWorkspace({ kind: "ocr", result: event.payload })),
-      listen<{ kind: string; result?: unknown }>("open-workspace", (event) => {
-        void invoke<{ kind: string; result?: unknown } | undefined>("launcher_take_workspace")
-          .then((value) =>
-            setWorkspace({
-              kind: value?.kind ?? event.payload.kind,
-              result: value?.result ?? event.payload.result,
-            }),
+      listen("open-workspace", (event) => {
+        const generation = ++workspaceGeneration.current;
+        void takeLauncherWorkspace()
+          .then(
+            (value) =>
+              mounted.current &&
+              generation === workspaceGeneration.current &&
+              acceptWorkspace({
+                kind: value?.kind ?? event.payload.kind,
+                result: value?.result ?? event.payload.result,
+              }),
           )
-          .catch((value) => setError(message(value)));
+          .catch((value) => {
+            if (mounted.current && generation === workspaceGeneration.current)
+              setError(message(value));
+          });
       }),
     ];
-    void invoke<{ kind: string; result?: unknown } | undefined>("launcher_take_workspace")
+    const workspaceRequest = ++workspaceGeneration.current;
+    void takeLauncherWorkspace()
       .then((value) => {
-        if (value && mounted.current) setWorkspace({ kind: value.kind, result: value.result });
+        if (value && mounted.current && workspaceRequest === workspaceGeneration.current)
+          acceptWorkspace(value);
       })
       .catch((value) => {
-        if (mounted.current) setError(message(value));
+        if (mounted.current && workspaceRequest === workspaceGeneration.current)
+          setError(message(value));
       });
-    const drop =
-      separateWorkspace || isContextPanel
-        ? Promise.resolve(() => {})
-        : getCurrentWindow().onDragDropEvent((event) => {
-            const generation = ++stateGeneration.current;
-            void invoke<LauncherState>("launcher_context_files", { paths: event.payload.paths })
-              .then((next) => {
-                if (!mounted.current || generation !== stateGeneration.current) return;
-                setWorkspace(undefined);
-                stateSnapshot.current = next;
-                setState(next);
-                focusInput();
-              })
-              .catch((value) => setError(message(value)));
-          });
+    const drop = separateWorkspace
+      ? Promise.resolve(() => {})
+      : getCurrentWindow().onDragDropEvent((event) => {
+          const generation = ++stateGeneration.current;
+          void setLauncherContextFiles(event.payload.paths)
+            .then((next) => {
+              if (!mounted.current || generation !== stateGeneration.current) return;
+              setWorkspace(undefined);
+              stateSnapshot.current = next;
+              setState(next);
+              focusInput();
+            })
+            .catch((value) => setError(message(value)));
+        });
     for (const subscription of subscriptions)
       void subscription.catch((value: unknown) => {
         if (mounted.current) setError(message(value));
@@ -313,87 +334,28 @@ export function Launcher() {
         void subscription.then((stop) => stop()).catch(() => {});
       void drop.then((stop) => stop()).catch(() => {});
     };
-  }, [focusInput, refreshState, i18n.resolvedLanguage, isContextPanel]);
-
-  useEffect(() => {
-    if (!isContextPanel) return;
-    let disposed = false;
-    let stop: (() => void) | undefined;
-    void watchContextPanelState((next) => {
-      if (disposed) return;
-      panelEvents.current++;
-      acceptPanelView(next);
-    })
-      .then(async (unlisten) => {
-        if (disposed) {
-          unlisten();
-          return;
-        }
-        stop = unlisten;
-        const revision = panelEvents.current;
-        const next = await getContextPanelState();
-        if (disposed || revision !== panelEvents.current) return;
-        if (next) acceptPanelView(next);
-        else setPanelReadFailed(true);
-      })
-      .catch(() => {
-        if (!disposed) setPanelReadFailed(true);
-      });
-    return () => {
-      disposed = true;
-      stop?.();
-    };
-  }, [isContextPanel, acceptPanelView]);
-
-  const panelAction = async (action: "close" | "return") => {
-    if (panelOperation.current) return;
-    const operation = { sessionId: panelView?.sessionId, revision: panelRevision.current };
-    panelOperation.current = operation;
-    const currentOperation = () =>
-      mounted.current &&
-      panelOperation.current === operation &&
-      panelRevision.current === operation.revision;
-    setPanelBusy(true);
-    try {
-      if (action === "close") await closeContextPanel();
-      else {
-        const result = await returnFromContextPanel();
-        if (!result.restored && currentOperation()) setError(t("contextPanel.returnFailed"));
-      }
-    } catch {
-      if (currentOperation()) setError(t("contextPanel.operationFailed"));
-    } finally {
-      if (currentOperation()) {
-        panelOperation.current = undefined;
-        setPanelBusy(false);
-      }
-    }
-  };
+  }, [focusInput, refreshState, i18n.resolvedLanguage]);
 
   // Runtime cold-start notifications do not restart a live query. Catalog,
   // capability, locale and actual input changes still create a new generation.
-  const queryStateKey = JSON.stringify([
-    state?.pluginsReady,
-    state?.catalogSignature,
-    state?.commands,
-    state?.modeOptions,
-    isContextPanel ? undefined : state?.contextLabel,
-    isContextPanel ? undefined : state?.contextRevision,
-    state?.preferenceRevision,
-    state?.learning?.enabled,
-    isContextPanel ? panelView?.revision : undefined,
-    i18n.resolvedLanguage,
-  ]);
+  const queryStateKey = useMemo(
+    () =>
+      JSON.stringify([
+        state?.pluginsReady,
+        state?.catalogSignature,
+        state?.commands,
+        state?.modeOptions,
+        state?.contextLabel,
+        state?.contextRevision,
+        state?.preferenceRevision,
+        state?.learning?.enabled,
+        i18n.resolvedLanguage,
+      ]),
+    [state, i18n.resolvedLanguage],
+  );
   useEffect(() => {
     const generation = ++queryGeneration.current;
-    setResult(undefined);
-    setSelected("");
-    if (
-      !state ||
-      composing ||
-      workspace ||
-      (isContextPanel && (!panelView || panelView.status === "capturing"))
-    ) {
+    if (!state || composing || workspace) {
       setLoading(false);
       if (workspace) setQueryError(undefined);
       return;
@@ -402,6 +364,7 @@ export function Launcher() {
     let requestId: string | undefined;
     let revision = -1;
     let live = true;
+    let dispatched = false;
     const accept = (next: LauncherQueryResult) => {
       if (
         !live ||
@@ -428,15 +391,14 @@ export function Launcher() {
     };
     // Subscribe before dispatch. A fast provider event may precede the initial
     // IPC response; revision checks prevent that response rolling the UI back.
-    const subscription = listen<LauncherQueryResult>("launcher-query-updated", (event) =>
-      accept(event.payload),
-    );
+    const subscription = listen("launcher-query-updated", (event) => accept(event.payload));
     setLoading(true);
     const timer = setTimeout(
       () => {
         void subscription
           .then(() => {
             if (!live) return;
+            dispatched = true;
             return queryLauncher(query, sessionId, mode?.key, directory).then(accept);
           })
           .catch((value: unknown) => {
@@ -454,7 +416,7 @@ export function Launcher() {
       clearTimeout(timer);
       queryGeneration.current++;
       void subscription.then((stop) => stop()).catch(() => {});
-      void cancelLauncherQuery(sessionId, requestId).catch(() => {});
+      if (dispatched) void cancelLauncherQuery(sessionId, requestId).catch(() => {});
     };
   }, [query, mode?.key, directory, scopeRevision, queryStateKey, composing, workspace]);
 
@@ -473,17 +435,13 @@ export function Launcher() {
     await prepareHostWindow();
     if (separateWorkspace) {
       if (compactWorkspace) await getCurrentWindow().close();
-      else await invoke("launcher_return");
+      else await returnToLauncher();
     } else {
       setWorkspace(undefined);
       focusInput();
     }
   };
   const escape = () => {
-    if (isContextPanel) {
-      void panelAction("close");
-      return;
-    }
     if (workspace || separateWorkspace) {
       void closeWorkspace().catch((value) => setError(message(value)));
     } else if (mode) returnFromMode();
@@ -511,10 +469,15 @@ export function Launcher() {
     document.addEventListener("keydown", onEscape);
     return () => document.removeEventListener("keydown", onEscape);
   });
+  const commandsById = useMemo(
+    () =>
+      new Map(
+        state?.commands.map((command) => [JSON.stringify([command.pluginId, command.id]), command]),
+      ),
+    [state?.commands],
+  );
   const findCommand = (item: LauncherItem) =>
-    state?.commands.find(
-      (command) => command.pluginId === item.pluginId && command.id === (item.commandId ?? item.id),
-    );
+    commandsById.get(JSON.stringify([item.pluginId, item.commandId ?? item.id]));
   const enterMode = (command: LauncherCommand, remainder = "") => {
     if (!command.mode || !command.enabled) return;
     void recordLauncherMode(command.mode).catch((value) => setError(message(value)));
@@ -529,14 +492,7 @@ export function Launcher() {
     focusInput();
   };
   const selectItem = async (item: LauncherItem) => {
-    if (
-      composition.current ||
-      !state?.pluginsReady ||
-      item.unavailable ||
-      panelBusy ||
-      (isContextPanel && (!panelView || panelView.status === "capturing"))
-    )
-      return;
+    if (composition.current || !state?.pluginsReady || item.unavailable) return;
     const command = findCommand(item);
     if (command && !command.enabled) return;
     if (!mode && command?.mode) {
@@ -547,39 +503,63 @@ export function Launcher() {
     if (tasks.current.has(key)) return;
     tasks.current.add(key);
     setExecuting([...tasks.current]);
+    const isOcr = item.pluginId === "spark233.ocr" && item.commandId === "ocr";
+    if (isOcr) {
+      ocrTasks.current++;
+      setOcrExecuting(true);
+    }
     setError(undefined);
-    const generation = ++queryGeneration.current;
+    const generation = queryGeneration.current;
+    const execution = ++actionGeneration.current;
     try {
       const value = await executeLauncherItem(item);
-      if (mounted.current && generation === queryGeneration.current) acceptResult(value);
+      if (
+        mounted.current &&
+        generation === queryGeneration.current &&
+        execution === actionGeneration.current
+      )
+        acceptResult(value);
     } catch (value) {
-      if (mounted.current && generation === queryGeneration.current) setError(message(value));
+      if (
+        mounted.current &&
+        generation === queryGeneration.current &&
+        execution === actionGeneration.current
+      )
+        setError(message(value));
     } finally {
       tasks.current.delete(key);
-      if (mounted.current) setExecuting([...tasks.current]);
+      if (isOcr) ocrTasks.current--;
+      if (mounted.current) {
+        setExecuting([...tasks.current]);
+        if (isOcr) setOcrExecuting(ocrTasks.current > 0);
+      }
     }
   };
   const selectAction = async (item: LauncherItem, action: LauncherItemAction) => {
-    if (
-      !state?.pluginsReady ||
-      composition.current ||
-      item.unavailable ||
-      panelBusy ||
-      (isContextPanel && (!panelView || panelView.status === "capturing"))
-    )
-      return;
+    if (!state?.pluginsReady || composition.current || item.unavailable) return;
     const key = JSON.stringify([item.pluginId, action.id]);
     if (tasks.current.has(key)) return;
     tasks.current.add(key);
     setExecuting([...tasks.current]);
     setActionItem(undefined);
     setError(undefined);
-    const generation = ++queryGeneration.current;
+    const generation = queryGeneration.current;
+    const execution = ++actionGeneration.current;
     try {
       const value = await executeLauncherAction(item, action);
-      if (mounted.current && generation === queryGeneration.current) acceptResult(value);
+      if (
+        mounted.current &&
+        generation === queryGeneration.current &&
+        execution === actionGeneration.current
+      )
+        acceptResult(value);
     } catch (value) {
-      if (mounted.current && generation === queryGeneration.current) setError(message(value));
+      if (
+        mounted.current &&
+        generation === queryGeneration.current &&
+        execution === actionGeneration.current
+      )
+        setError(message(value));
     } finally {
       tasks.current.delete(key);
       if (mounted.current) setExecuting([...tasks.current]);
@@ -739,10 +719,7 @@ export function Launcher() {
     ? state?.commands.find((command) => command.mode === mode.key)
     : undefined;
   const modeTitle = mode ? (modeCommand?.title ?? mode.title) : undefined;
-  const resultHint =
-    modeCommand?.pluginId === "spark233.applications"
-      ? applicationStatus(result?.hint)
-      : result?.hint;
+  const resultHint = result?.hint;
   const modeOptions = mode ? state?.modeOptions?.[mode.key] : undefined;
   const pluginEntries = new Map<string, string>();
   for (const command of state?.commands ?? [])
@@ -760,12 +737,12 @@ export function Launcher() {
     const isMode = !mode && !!command?.mode;
     const card = (
       <CommandItem
-        tabIndex={0}
+        tabIndex={selected === key ? 0 : -1}
         data-result-key={key}
         onFocus={() => setSelected(key)}
         className={
           grid
-            ? "min-h-18 min-w-0 flex-col justify-center gap-1 rounded-lg px-2 py-1.5 text-center [&>svg:last-child]:hidden"
+            ? "min-h-18 min-w-0 flex-col justify-center gap-1 rounded-lg p-0 text-center [&>svg:last-child]:hidden"
             : undefined
         }
         title={grid ? item.title : undefined}
@@ -773,8 +750,6 @@ export function Launcher() {
         value={key}
         disabled={
           !state?.pluginsReady ||
-          panelBusy ||
-          (isContextPanel && (!panelView || panelView.status === "capturing")) ||
           item.unavailable ||
           command?.enabled === false ||
           executing.includes(key)
@@ -804,7 +779,7 @@ export function Launcher() {
           <span
             className={
               grid
-                ? "block h-8 overflow-hidden break-words whitespace-normal text-center text-xs leading-4 text-balance"
+                ? "block max-h-8 overflow-hidden break-words whitespace-normal text-center text-xs leading-4 text-balance"
                 : "flex items-center gap-2 truncate"
             }
           >
@@ -834,30 +809,6 @@ export function Launcher() {
             <span className="truncate text-xs text-muted-foreground">{item.description}</span>
           )}
         </div>
-        {!grid && !item.unavailable && (!!item.actions?.length || item.preference) && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("launcher.resultActions", {
-              title: item.title,
-              defaultValue: i18n.resolvedLanguage?.startsWith("en")
-                ? "Actions for {{title}}"
-                : "{{title}}的操作",
-            })}
-            title="Alt+Enter / Shift+F10"
-            aria-keyshortcuts="Alt+Enter Shift+F10"
-            onClick={(event) => {
-              event.stopPropagation();
-              setActionItem(item);
-              setPreferenceError(undefined);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-            }}
-          >
-            <MoreHorizontalIcon />
-          </Button>
-        )}
         {grid ? null : executing.includes(key) ? (
           <Spinner />
         ) : item.unavailable ? null : isMode ? (
@@ -869,58 +820,22 @@ export function Launcher() {
         )}
       </CommandItem>
     );
-    if (!grid || (!item.preference && !item.actions?.length)) return card;
+    if (!item.preference && !item.actions?.length) return card;
     return (
       <ContextMenu key={key}>
         <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
         <ContextMenuContent onKeyDown={(event) => event.stopPropagation()}>
           <ContextMenuGroup>
-            {item.preference && (
-              <>
-                <ContextMenuItem
-                  disabled={preferenceBusy || !state?.pluginsReady}
-                  onSelect={() =>
-                    void mutateItemPreference(item, item.preference!.pinned ? "unpin" : "pin")
-                  }
-                >
-                  <PinIcon />
-                  {t(
-                    item.preference.pinned
-                      ? "launcher.preferences.unpin"
-                      : "launcher.preferences.pin",
-                  )}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  disabled={preferenceBusy || !state?.pluginsReady}
-                  onSelect={() => editItemAliases(item)}
-                >
-                  {t("launcher.preferences.editAliases")}
-                </ContextMenuItem>
-                {item.preference.kind === "command" && (
-                  <ContextMenuItem
-                    disabled={preferenceBusy || !state?.pluginsReady}
-                    onSelect={() =>
-                      void mutateItemPreference(item, item.preference!.hidden ? "show" : "hide")
-                    }
-                  >
-                    {t(
-                      item.preference.hidden
-                        ? "launcher.preferences.show"
-                        : "launcher.preferences.hide",
-                    )}
-                  </ContextMenuItem>
-                )}
-              </>
-            )}
-            {item.actions?.map((action) => (
-              <ContextMenuItem
-                key={action.id}
-                disabled={!state?.pluginsReady || item.unavailable || preferenceBusy}
-                onSelect={() => void selectAction(item, action)}
-              >
-                {action.title}
-              </ContextMenuItem>
-            ))}
+            <LauncherItemActions
+              item={item}
+              presentation="menu"
+              ready={!!state?.pluginsReady}
+              busy={preferenceBusy}
+              executing={executing}
+              mutatePreference={mutateItemPreference}
+              editAliases={editItemAliases}
+              selectAction={selectAction}
+            />
           </ContextMenuGroup>
         </ContextMenuContent>
       </ContextMenu>
@@ -980,16 +895,9 @@ export function Launcher() {
       />,
     );
   if (workspace?.kind === "clipboard")
-    return workspaceFrame(
-      <ClipboardPanel
-        compact={compactWorkspace}
-        onClose={close}
-        onResult={acceptResult}
-        availableTextTargets={availableTextTargets}
-        imageOcrAvailable={availableCommands.has("spark233.ocr:ocr")}
-        unavailableTargetReason={unavailableTargetReason}
-      />,
-    );
+    return workspaceFrame(<ClipboardPanel compact={compactWorkspace} onClose={close} />);
+  if (workspace?.kind === "screenshot-history")
+    return workspaceFrame(<ScreenshotHistoryWorkspace onClose={close} />);
   if (separateWorkspace)
     return workspaceFrame(
       <div className="flex items-center justify-center p-6">
@@ -1000,115 +908,58 @@ export function Launcher() {
     <main className="flex h-screen flex-col gap-3 overflow-hidden bg-background p-4 text-foreground">
       <header className="electron-title-drag flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h1 className="text-base font-semibold">
-            {isContextPanel ? t("contextPanel.title") : "spark233"}
-          </h1>
+          <h1 className="text-base font-semibold">spark233</h1>
           {mode && <Badge variant="secondary">{modeTitle}</Badge>}
-          {!isContextPanel && state?.contextLabel && (
-            <Badge variant="outline">{state.contextLabel}</Badge>
-          )}
+          {state?.contextLabel && <Badge variant="outline">{state.contextLabel}</Badge>}
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          {isContextPanel ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={panelBusy || !panelView?.returnAvailable}
-                onClick={() => {
-                  void panelAction("return");
-                }}
-              >
-                {t("contextPanel.return")}
-              </Button>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                disabled={panelBusy}
-                aria-label={t("contextPanel.close")}
-                onClick={() => {
-                  void panelAction("close");
-                }}
-              >
-                <XIcon />
-              </Button>
-            </>
-          ) : (
-            <>
-              {state?.contextLabel && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    const generation = ++stateGeneration.current;
-                    void invoke<LauncherState>("launcher_context_clear")
-                      .then((next) => {
-                        if (!mounted.current || generation !== stateGeneration.current) return;
-                        stateSnapshot.current = next;
-                        setState(next);
-                      })
-                      .catch((value) => {
-                        if (mounted.current && generation === stateGeneration.current)
-                          setError(message(value));
-                      });
-                  }}
-                >
-                  {t("launcher.clearContext", { defaultValue: "清除内容" })}
-                </Button>
-              )}
+          <>
+            {state?.contextLabel && (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  void openSettings();
+                  const generation = ++stateGeneration.current;
+                  void clearLauncherContext()
+                    .then((next) => {
+                      if (!mounted.current || generation !== stateGeneration.current) return;
+                      stateSnapshot.current = next;
+                      setState(next);
+                    })
+                    .catch((value) => {
+                      if (mounted.current && generation === stateGeneration.current)
+                        setError(message(value));
+                    });
                 }}
               >
-                <SettingsIcon data-icon="inline-start" />
-                {t("launcher.settings", { defaultValue: "设置" })}
+                {t("launcher.clearContext", { defaultValue: "清除内容" })}
               </Button>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={t("launcher.hide", { defaultValue: "隐藏启动器" })}
-                onClick={() => {
-                  void hideLauncher().catch((value: unknown) => setError(message(value)));
-                }}
-              >
-                <XIcon />
-              </Button>
-            </>
-          )}
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                void openSettings();
+              }}
+            >
+              <SettingsIcon data-icon="inline-start" />
+              {t("launcher.settings", { defaultValue: "设置" })}
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t("launcher.hide", { defaultValue: "隐藏启动器" })}
+              onClick={() => {
+                void hideLauncher().catch((value: unknown) => setError(message(value)));
+              }}
+            >
+              <XIcon />
+            </Button>
+          </>
         </div>
       </header>
 
-      {isContextPanel && (
-        <section
-          className="shrink-0 space-y-1 rounded-lg border p-3 text-sm"
-          aria-label={t("contextPanel.contextStatus")}
-        >
-          <p role="status" aria-live="polite" className="flex items-center gap-2">
-            {(!panelView || panelView.status === "capturing") && !panelReadFailed && <Spinner />}
-            {panelReadFailed
-              ? t("contextPanel.expired")
-              : t(
-                  panelView
-                    ? `contextPanel.capture.${panelView.contextKind === "window" ? "window" : panelView.status}`
-                    : "contextPanel.capture.capturing",
-                )}
-          </p>
-          {panelView?.sourceApp && (
-            <p className="break-all text-xs text-muted-foreground">
-              {t("contextPanel.source", { app: panelView.sourceApp })}
-            </p>
-          )}
-          {panelView?.reason && (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {t(`contextPanel.reason.${panelView.reason}`)}
-            </p>
-          )}
-        </section>
-      )}
-      {!isContextPanel && state?.firstRun && (
+      {state?.firstRun && (
         <Card size="sm" className="shrink-0">
           <CardHeader>
             <CardTitle>
@@ -1176,6 +1027,32 @@ export function Launcher() {
         </Alert>
       )}
 
+      {ocrExecuting && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            void invoke("launcher_execute", {
+              pluginId: "spark233.ocr",
+              commandId: "cancel",
+            })
+              .then((result) => {
+                if (
+                  result &&
+                  typeof result === "object" &&
+                  !Array.isArray(result) &&
+                  result.ok === false
+                )
+                  throw new Error(
+                    typeof result.reason === "string" ? result.reason : "OCR cancellation failed",
+                  );
+              })
+              .catch((value) => setError(message(value)));
+          }}
+        >
+          {t("launcher.cancelOcr")}
+        </Button>
+      )}
       <Command
         label={t("launcher.searchLabel", { defaultValue: "搜索应用、插件与操作" })}
         shouldFilter={false}
@@ -1239,13 +1116,27 @@ export function Launcher() {
                 {searchText("title")}
               </Button>
             )}
+            {mode.key === "spark233.translation:dictionary" &&
+              availableCommands.has("spark233.translation:translate") && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    void activatePlugin("spark233.translation", "translate").catch((value) =>
+                      setError(message(value)),
+                    );
+                  }}
+                >
+                  {t("launcher.aiTranslate")}
+                </Button>
+              )}
           </div>
         )}
         <CommandInput
           ref={input}
           value={query}
-          disabled={isContextPanel && (panelBusy || !panelView || panelView.status === "capturing")}
           onValueChange={(value) => {
+            workspaceGeneration.current++;
             setQuery(value);
             setError(undefined);
             setQueryError(undefined);
@@ -1267,37 +1158,36 @@ export function Launcher() {
           }
           onCompositionStart={() => {
             composition.current = true;
-            if (!isContextPanel)
-              void invoke("launcher_composition", { active: true }).catch(() => {});
+            void setLauncherComposition(true).catch(() => {});
             setComposing(true);
           }}
           onCompositionEnd={(event) => {
             composition.current = false;
-            if (!isContextPanel)
-              void invoke("launcher_composition", { active: false }).catch(() => {});
+            void setLauncherComposition(false).catch(() => {});
             compositionEnded.current = performance.now();
             setQuery(event.currentTarget.value);
             setComposing(false);
           }}
         />
         <CommandList
-          className="flex max-h-none min-h-0 flex-1 flex-col overflow-hidden"
-          aria-busy={loading}
+          className="flex max-h-none min-h-0 flex-1 flex-col overflow-hidden [&>[cmdk-list-sizer]]:flex [&>[cmdk-list-sizer]]:min-h-0 [&>[cmdk-list-sizer]]:flex-1 [&>[cmdk-list-sizer]]:flex-col"
+          aria-busy={loading || result?.pending}
         >
           {!!gridItems.length && (
             <CommandGroup
               heading={t("launcher.applicationRegion")}
               data-query-group="applications"
-              className="shrink-0 border-b pb-2 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] [&_[cmdk-group-items]]:gap-1.5"
+              className="max-h-[45vh] min-h-0 shrink-0 overflow-y-auto border-b pb-2 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] [&_[cmdk-group-items]]:gap-1.5"
             >
               {gridItems.map((item) => renderItem(item, true))}
             </CommandGroup>
           )}
           <div
-            className="min-h-0 flex-1 overflow-y-auto"
+            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+            role="region"
             aria-label={t("launcher.informationRegion")}
           >
-            {loading && (
+            {(loading || result?.pending) && (
               <div
                 className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
                 role="status"
@@ -1326,13 +1216,9 @@ export function Launcher() {
               .map((group) => ({
                 ...group,
                 title: group.pluginId === "spark233.applications" ? undefined : group.title,
-                hint:
-                  group.pluginId === "spark233.applications" && group.status !== "error"
-                    ? applicationStatus(group.hint)
-                    : group.hint,
                 items: group.items.filter((item) => !isGridEntry(item)),
               }))
-              .filter((group) => group.items.length || group.status !== "ready" || group.hint)
+              .filter((group) => group.items.length || group.status === "error" || group.hint)
               .map((group) => (
                 <CommandGroup
                   key={group.id}
@@ -1340,15 +1226,6 @@ export function Launcher() {
                   data-query-group={group.id}
                   aria-busy={group.status === "pending" && !group.items.length}
                 >
-                  {group.status === "pending" && (
-                    <div
-                      className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
-                      role="status"
-                    >
-                      <Spinner />
-                      {t("launcher.searching", { defaultValue: "正在查询…" })}
-                    </div>
-                  )}
                   {group.hint && (
                     <p
                       role="status"
@@ -1394,13 +1271,7 @@ export function Launcher() {
         <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden">
           <DialogHeader className="shrink-0 pr-8">
             <DialogTitle className="break-words">{actionItem?.title}</DialogTitle>
-            <DialogDescription>
-              {t("launcher.chooseAction", {
-                defaultValue: i18n.resolvedLanguage?.startsWith("en")
-                  ? "Choose an action for this result."
-                  : "选择此结果的操作。",
-              })}
-            </DialogDescription>
+            <DialogDescription>{t("launcher.chooseAction")}</DialogDescription>
           </DialogHeader>
           {preferenceError && (
             <Alert variant="destructive">
@@ -1408,70 +1279,18 @@ export function Launcher() {
             </Alert>
           )}
           <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">
-            {actionItem?.preference && (
-              <>
-                <Button
-                  variant="outline"
-                  className="justify-start"
-                  disabled={preferenceBusy || !state?.pluginsReady}
-                  onClick={() =>
-                    void mutateItemPreference(
-                      actionItem,
-                      actionItem.preference!.pinned ? "unpin" : "pin",
-                    )
-                  }
-                >
-                  <PinIcon aria-hidden="true" />
-                  {t(
-                    actionItem.preference.pinned
-                      ? "launcher.preferences.unpin"
-                      : "launcher.preferences.pin",
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="justify-start"
-                  disabled={preferenceBusy || !state?.pluginsReady}
-                  onClick={() => editItemAliases(actionItem)}
-                >
-                  {t("launcher.preferences.editAliases")}
-                </Button>
-                {actionItem.preference.kind === "command" && actionItem.kind !== "application" && (
-                  <Button
-                    variant="outline"
-                    className="justify-start"
-                    disabled={preferenceBusy || !state?.pluginsReady}
-                    onClick={() =>
-                      void mutateItemPreference(
-                        actionItem,
-                        actionItem.preference!.hidden ? "show" : "hide",
-                      )
-                    }
-                  >
-                    {t(
-                      actionItem.preference.hidden
-                        ? "launcher.preferences.show"
-                        : "launcher.preferences.hide",
-                    )}
-                  </Button>
-                )}
-              </>
+            {actionItem && (
+              <LauncherItemActions
+                item={actionItem}
+                presentation="dialog"
+                ready={!!state?.pluginsReady}
+                busy={preferenceBusy}
+                executing={executing}
+                mutatePreference={mutateItemPreference}
+                editAliases={editItemAliases}
+                selectAction={selectAction}
+              />
             )}
-            {actionItem?.actions?.map((action) => (
-              <Button
-                key={action.id}
-                variant="outline"
-                className="justify-start"
-                disabled={
-                  !state?.pluginsReady ||
-                  preferenceBusy ||
-                  executing.includes(JSON.stringify([actionItem.pluginId, action.id]))
-                }
-                onClick={() => void selectAction(actionItem, action)}
-              >
-                {action.title}
-              </Button>
-            ))}
           </div>
         </DialogContent>
       </Dialog>

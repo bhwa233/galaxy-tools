@@ -87,12 +87,18 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
   // Exercise the real renderer and maintenance gate, including action errors.
   async function verifyLauncherMaintenance() {
     const launcher = await context.showLauncher();
-    const settledCommands = `document.querySelector('[data-slot="command-list"]')?.getAttribute('aria-busy') === 'false' && !!document.querySelector('[data-slot="command-item"]')`;
-    const untilRenderer = async (predicate: string, failure: string) => {
-      for (let attempt = 0; attempt < 100; attempt++) {
+    const settledCommands = `document.querySelector('[data-slot="command-list"]')?.getAttribute('aria-busy') === 'false' && !!document.querySelector('[role="option"][data-result-key]')`;
+    const untilRenderer = async (predicate: string, failure: string, attempts = 100) => {
+      for (let attempt = 0; attempt < attempts; attempt++) {
         if (await launcher.webContents.executeJavaScript(predicate).catch(() => false)) return;
         await wait(50);
       }
+      checks.launcherFailure = await launcher.webContents.executeJavaScript(`(async () => ({
+        text: document.body.innerText, url: location.href,
+        busy: document.querySelector('[data-slot="command-list"]')?.getAttribute('aria-busy'),
+        items: document.querySelectorAll('[role="option"][data-result-key]').length,
+        state: await window.spark233Desktop.invoke('launcher_state')
+      }))()`);
       throw new Error(failure);
     };
     await untilRenderer(settledCommands, "Launcher commands did not settle before maintenance");
@@ -135,14 +141,33 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       );
       if (!modeCommand)
         throw new Error("Official notes search mode is required for the action regression");
+      // The default launcher now shows primary plugin entries. Search for this
+      // secondary mode through the real input before testing its action error.
+      await launcher.webContents.executeJavaScript(`(() => {
+        const input = document.querySelector('[role="combobox"]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(modeCommand.title)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      await untilRenderer(
+        `${settledCommands} && Array.from(document.querySelectorAll('[role="option"][data-result-key]')).some(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}))`,
+        "Notes search mode did not appear for its explicit query",
+        300, // Native providers have a bounded 10-second RPC budget.
+      );
       resume = await context.pauseForBackup();
       const clicked = await launcher.webContents.executeJavaScript(`(() => {
-          const item = Array.from(document.querySelectorAll('[data-slot="command-item"]')).find(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}));
+          const item = Array.from(document.querySelectorAll('[role="option"][data-result-key]')).find(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}));
           if (!item) return false;
           item.click();
           return true;
         })()`);
-      if (!clicked) throw new Error("Notes mode action was not available in the real launcher");
+      if (!clicked) {
+        checks.launcherMissingAction = await launcher.webContents.executeJavaScript(`({
+          text: document.body.innerText,
+          query: document.querySelector('[role="combobox"]')?.value,
+          items: Array.from(document.querySelectorAll('[role="option"][data-result-key]')).map(node => node.textContent)
+        })`);
+        throw new Error("Notes mode action was not available in the real launcher");
+      }
       await untilRenderer(
         errorVisible,
         "Maintenance action rejection was not shown by the renderer",
@@ -186,14 +211,22 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       await hydrated(editor);
       // Two settings panels can hold the same old snapshot. Each must submit
       // only its edited field, so the second window cannot revert the first.
-      const editorBefore = await editor.webContents.executeJavaScript(
+      const denied = await editor.webContents.executeJavaScript(
+        "window.spark233Desktop.invoke('config_patch', {patch:{fontSize:18}})",
+      );
+      if (denied.ok || denied.error.code !== "permissionDenied")
+        throw new Error("A note renderer could modify host configuration");
+      checks.noteAdministrationDenied = true;
+      await pluginCommand("settings_open", { page: "general" });
+      const settings = windows.get("settings")!;
+      const settingsBefore = await settings.webContents.executeJavaScript(
         "window.spark233Desktop.invoke('config_get')",
       );
       const launcherBefore = context.config();
       const fontSize = launcherBefore.fontSize === 18 ? 19 : 18;
-      const surfaceFontSize = editorBefore.value.surfaceFontSize === 20 ? 21 : 20;
+      const surfaceFontSize = settingsBefore.value.surfaceFontSize === 20 ? 21 : 20;
       await pluginCommand("config_patch", { patch: { fontSize } });
-      const patched = await editor.webContents.executeJavaScript(
+      const patched = await settings.webContents.executeJavaScript(
         `window.spark233Desktop.invoke('config_patch', {patch:{surfaceFontSize:${surfaceFontSize}}})`,
       );
       if (
@@ -202,11 +235,11 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
         patched.value.surfaceFontSize !== surfaceFontSize
       )
         throw new Error("A stale settings window reverted another window's config patch");
-      const forbidden = await editor.webContents.executeJavaScript(
+      const forbidden = await settings.webContents.executeJavaScript(
         `window.spark233Desktop.invoke('config_patch', {patch:{dataDir:${JSON.stringify(context.dataDir())}}})`,
       );
-      const obsolete = await editor.webContents.executeJavaScript(
-        `window.spark233Desktop.invoke('config_save', {config:${JSON.stringify(editorBefore.value)}})`,
+      const obsolete = await settings.webContents.executeJavaScript(
+        `window.spark233Desktop.invoke('config_save', {config:${JSON.stringify(settingsBefore.value)}})`,
       );
       if (
         forbidden.ok ||
@@ -251,7 +284,15 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       process.argv.includes("--smoke-launcher-maintenance") ||
       process.argv.includes("--smoke-notes-final-save")
     ) {
-      if (process.argv.includes("--smoke-launcher-maintenance")) await verifyLauncherMaintenance();
+      if (process.argv.includes("--smoke-launcher-maintenance")) {
+        if (!(await notes.list()).length)
+          await notes.save({
+            title: "Smoke maintenance fixture",
+            content: "Controlled search result",
+            category: "",
+          });
+        await verifyLauncherMaintenance();
+      }
       if (process.argv.includes("--smoke-notes-final-save")) await verifyFinalPluginSave();
       fs.mkdirSync(path.dirname(context.output), { recursive: true });
       fs.writeFileSync(

@@ -1,7 +1,9 @@
 import { invoke, listen } from "../../platform/desktop";
 import type { TranslationChunk, TranslationConfiguration } from "./types";
 
-export function translationAction(parameters: Record<string, unknown>): Promise<unknown> {
+export function translationAction(
+  parameters: import("../../../shared/desktop-contract").Commands["translation_action"]["args"],
+): Promise<unknown> {
   return invoke("translation_action", parameters);
 }
 export function getTranslationConfiguration(): Promise<TranslationConfiguration> {
@@ -17,5 +19,5 @@ export function configureTranslation(input: {
 export function watchTranslationChunks(
   callback: (chunk: TranslationChunk) => void,
 ): Promise<() => void> {
-  return listen<TranslationChunk>("translation-chunk", (event) => callback(event.payload));
+  return listen("translation-chunk", (event) => callback(event.payload));
 }

@@ -1,10 +1,3 @@
-import { useUnsavedChanges } from "../settings/useUnsavedChanges";
-import { useEffect, useRef, useState, type DragEvent } from "react";
-import { useTranslation } from "react-i18next";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { droppedApplicationEntries } from "../../platform/desktop";
 import {
   Dialog,
   DialogContent,
@@ -13,10 +6,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ManagementSurface";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useTranslation } from "react-i18next";
+import { droppedApplicationEntries } from "../../platform/desktop";
+import { useUnsavedChanges } from "../settings/useUnsavedChanges";
 import {
   getCustomApplications,
   pickApplicationDirectory,

@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen } from "../platform/desktop";
-import { readText, writeText } from "../platform/desktop";
 import { getConfig } from "../features/settings/api";
-import type { AppConfig } from "../features/settings/types";
 import { requestSurfaceAction } from "../features/windows/surfaceActions";
 import { getTileContextMenuItems } from "../features/windows/tileContextMenu";
+import { invoke, listen, readText, writeText } from "../platform/desktop";
 import { POPUP_VIEWPORT_MARGIN, useViewportPopupPosition } from "./popupPosition";
 
 interface MenuState {
@@ -38,7 +36,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
         tileCtrlCloseRef.current = c.tileCtrlClose ?? true;
       })
       .catch(() => {});
-    const unlisten = listen<AppConfig>("config-changed", (event) => {
+    const unlisten = listen("config-changed", (event) => {
       tileCtrlCloseRef.current = event.payload.tileCtrlClose ?? true;
     });
     return () => {
@@ -193,7 +191,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
                 disabled: false,
               })),
               {
-                label: "隐藏到托盘",
+                label: t("contextMenu.hideTray"),
                 shortcut: "",
                 action: () => {
                   dismissMenu();
@@ -234,7 +232,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
                 : [
                     { separator: true as const },
                     {
-                      label: "折叠成胶囊",
+                      label: t("contextMenu.foldCapsule"),
                       shortcut: "Ctrl+W",
                       action: () => {
                         dismissMenu();
@@ -243,7 +241,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
                       disabled: false,
                     },
                     {
-                      label: "隐藏到托盘",
+                      label: t("contextMenu.hideTray"),
                       shortcut: "",
                       action: () => {
                         dismissMenu();

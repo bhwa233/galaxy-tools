@@ -1,6 +1,8 @@
 #pragma once
 #include <windows.h>
 #include <shellapi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <filesystem>
@@ -10,6 +12,9 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <system_error>
+
+#pragma comment(lib, "windowscodecs.lib")
 
 // Reuse the same Windows.Data.Json serializer already used by Ling/ScreenCapture.
 // The upstream CLI has no session/result transport. This adapter only writes a result
@@ -125,6 +130,68 @@ struct ControlGuard {
 
 inline bool ocrAllowed() {
     return !enabled() || (argument(L"--spark233-ocr-enabled") != L"false" && !std::filesystem::exists(directory() / L"ocr.disabled"));
+}
+
+// Copy, save, pin and OCR all share the same selection. One session publishes one
+// image; whichever completion runs first owns the record and later ones reuse it.
+inline std::atomic_bool imagePublished{ false };
+
+inline std::filesystem::path selectionPath() {
+    return directory() / L"selection.png";
+}
+
+inline void writePng(const std::filesystem::path& filename, const int width, const int height, const void* bgra) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()))))
+        throw std::runtime_error("Cannot create the PNG encoder");
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(stream.GetAddressOf())) ||
+        FAILED(stream->InitializeFromFilename(filename.c_str(), GENERIC_WRITE)))
+        throw std::runtime_error("Cannot open the session image");
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    const UINT rowBytes = static_cast<UINT>(width) * 4;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.GetAddressOf())) ||
+        FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) ||
+        FAILED(encoder->CreateNewFrame(frame.GetAddressOf(), nullptr)) ||
+        FAILED(frame->Initialize(nullptr)) ||
+        FAILED(frame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height))) ||
+        FAILED(frame->SetPixelFormat(&format)) ||
+        !IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA) ||
+        FAILED(frame->WritePixels(static_cast<UINT>(height), rowBytes,
+                                  rowBytes * static_cast<UINT>(height),
+                                  const_cast<BYTE*>(static_cast<const BYTE*>(bgra)))) ||
+        FAILED(frame->Commit()) ||
+        FAILED(encoder->Commit()))
+        throw std::runtime_error("Cannot write the session image");
+}
+
+// The host reads exactly one PNG per session, so a failed publish must release the
+// claim: the next completion of the same selection may still record it.
+inline bool captureImage(const int width, const int height, const void* bgra, const wchar_t* action) {
+    if (!enabled() || cancellationRequested || width <= 0 || height <= 0 || !bgra) return false;
+    bool expected = false;
+    if (!imagePublished.compare_exchange_strong(expected, true)) return true;
+    try {
+        const auto image = selectionPath();
+        if (!std::filesystem::exists(image)) writePng(image, width, height, bgra);
+        auto out = envelope(L"capture");
+        out.SetNamedValue(L"action", JsonValue::CreateStringValue(action));
+        out.SetNamedValue(L"image", JsonValue::CreateStringValue(L"selection.png"));
+        out.SetNamedValue(L"width", JsonValue::CreateNumberValue(width));
+        out.SetNamedValue(L"height", JsonValue::CreateNumberValue(height));
+        publish(L"capture.json", out);
+        return true;
+    } catch (...) {
+        // Never let history bookkeeping abort a screenshot the user already took.
+        imagePublished = false;
+        std::error_code ignored;
+        std::filesystem::remove(selectionPath(), ignored);
+        trace("capture-publish-failed");
+        return false;
+    }
 }
 
 inline void capture(const int width, const int height) {

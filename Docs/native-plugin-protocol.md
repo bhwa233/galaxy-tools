@@ -18,14 +18,14 @@
 
 宿主请求类型：
 
-| type          | 额外字段                         | 行为                                                             |
-| ------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `init`        | `entryId`, `dataDir`, `cacheDir` | 初始化该实例，准备独立业务数据和缓存；不执行业务命令             |
-| `activate`    | `activation`                     | 执行已授权命令，参数/上下文属于业务 JSON                         |
-| `query`       | `activation`                     | 查询本地结果；新的默认 query 会取消旧 query                      |
-| `cancel`      | 无                               | 取消**同一 requestId**的任务，无需响应；停止工作且不要发布旧结果 |
-| `prepareStop` | `reason`                         | 保存并等待进行中的写入；可以明确拒绝停止                         |
-| `stop`        | 无                               | 仅在保存确认成功后发送；清理并正常退出                           |
+| type          | 额外字段                         | 行为                                                                                         |
+| ------------- | -------------------------------- | -------------------------------------------------------------------------------------------- |
+| `init`        | `entryId`, `dataDir`, `cacheDir` | 初始化该实例，准备独立业务数据和缓存；不执行业务命令                                         |
+| `activate`    | `activation`                     | 执行已授权命令，参数/上下文属于业务 JSON                                                     |
+| `query`       | `activation`                     | 查询本地结果；启动器按调用方取消该调用方的旧查询，runtime 通过传入的 signal 取消对应 request |
+| `cancel`      | 无                               | 取消**同一 requestId**的任务，无需响应；停止工作且不要发布旧结果                             |
+| `prepareStop` | `reason`                         | 保存并等待进行中的写入；可以明确拒绝停止                                                     |
+| `stop`        | 无                               | 仅在保存确认成功后发送；清理并正常退出                                                       |
 
 普通响应为 `{...identity, type:"response", ok:true, value?: JsonValue}`；失败为 `{...identity, type:"response", ok:false, error:"有界错误描述"}`，错误最多 4096 字符。消息中的 `ok` 表示 RPC 成败，`prepareStop.value.ok` 另表示是否允许停机。
 
@@ -54,3 +54,7 @@
 后续正式工厂链报告为 `local-build/spark233/native-plugin-runtime/host-runs/deef804e-4341-455d-9a7c-b30db054b94e/report.json`，10 条记录通过。使用隔离编译的 Electron 源码和真实 `DesktopPluginHost`，将同一原生 fixture 打为本地 `.tgz`，经过 `plugins_import`、缺少信任拒绝、确认信任、安装时专用 init 检查、manager 激活/查询、保存拒绝、停用和保留数据卸载，未使用官方 adapter 替代外部 native-only 工厂。选择器仅由探针提供固定隔离 tarball，没有人工操作文件对话框。
 
 同次复用现有 Hello Web fixture，附加已声明原生入口，通过真实隐藏沙箱页面的 `native.process/invoke` 到达相同原生进程；安装时仍 lazy，显式调用后才握手。未声明入口或携带任意 `path`/`args` 的 payload 被拒绝，Web 与 native 共同停用及保留数据卸载通过。两个 native PID 为 27808、24668，结束后均已退出。此证据包含真实包安装与工厂分派，不包含目录包运行、原生选择器人工操作或视觉验收。
+
+通用 native-only 入口目前没有文件/图像句柄解析 RPC，因此带有 `files` 或 `image` 输入的通用入口在启动校验时被拒绝。官方原生 adapter 使用专用资源协议。Web `command.register` 是清单校验确认，路由仍以静态清单为准；SDK 会短暂等待冷启动时尚未注册的查询处理函数。
+
+保存拒绝后的正常退出继续保留进程。用户在宿主原生确认框中明确选择“强制退出”时，宿主可单独终止资源域记录的插件进程并等待其退出；该操作不算保存成功，也不用于备份、迁移或普通停用。

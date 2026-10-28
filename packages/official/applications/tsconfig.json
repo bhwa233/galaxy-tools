@@ -1,0 +1,17 @@
+{
+  "extends": "../../../apps/desktop/electron/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "allowJs": true,
+    "checkJs": true,
+    "noImplicitAny": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "types": ["node"],
+    "typeRoots": ["../../../apps/desktop/node_modules/@types"],
+    "strict": false
+  },
+  "include": ["*.mjs", "*.js"],
+  "exclude": ["native", "renderer"]
+}

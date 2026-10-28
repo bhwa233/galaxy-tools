@@ -42,5 +42,6 @@
   "folderHelp": "Open the folder itself as a single launch entry.",
   "unsupportedKind": "This application plugin does not support {{kind}} entries. Update it or choose a supported type.",
   "dropUnavailable": "No usable local path was received. Use the file or folder chooser instead.",
-  "tooMany": "You can add up to 200 entries."
+  "tooMany": "You can add up to 200 entries.",
+  "discard": "Discard changes"
 }

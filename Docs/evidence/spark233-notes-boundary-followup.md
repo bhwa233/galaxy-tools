@@ -18,4 +18,4 @@
 
 启动故障后来已取得真实 red 和 lazy-init 修复后 13 项 green，相关原回归通过，见[存储隔离记录](spark233-notes-storage-isolation.md)。随后继续了真实 utility 数据引擎抽取：notes 0.1.1 的 TypeScript backend、自包含构建、版本化 data 合同、异步 client、回收站请求通道、runtime prepare 以及 main/Capsules/Tray 的异步改造已经部分落地。
 
-用户要求明天继续，现停在 main 接线中途。收尾 typecheck 退出 1，42 个错误在 main；新 engine 尚无完整真实 utility/main 验证，不应直接打包。24 文件检查点、精确已完成/未完成范围、报告与接续顺序见[2026-10-25 交接](../spark233-handoff-2026-10-25.md)。不要把中间 lazy green 当成当前异步源码已通过，也不要覆盖后续改动回到该冻结副本。
+用户要求明天继续，现停在 main 接线中途。收尾 typecheck 退出 1，42 个错误在 main；新 engine 尚无完整真实 utility/main 验证，不应直接打包。24 文件检查点、精确已完成/未完成范围、报告与接续顺序见[2026-10-25 交接](../archive/2026-10/spark233-handoff-2026-10-25.md)。不要把中间 lazy green 当成当前异步源码已通过，也不要覆盖后续改动回到该冻结副本。

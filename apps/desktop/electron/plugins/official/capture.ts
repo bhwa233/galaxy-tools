@@ -12,6 +12,7 @@ import type {
 import { atomicWrite, canonical, confined, inside } from "../../persistence.js";
 import { createTrustedNativeProcess, type PluginNativeController } from "../backend.js";
 import { PluginResourceScope, type StopDecision } from "../resources.js";
+import { CaptureHistory, type CaptureAction } from "./capture-history.js";
 
 export interface CaptureImage {
   owner: PluginOwner;
@@ -38,9 +39,14 @@ export interface CaptureRuntimeOptions {
   getOcrStatus: () => OcrAvailability;
   getLocale?: () => string;
   recognize?: (image: CaptureImage) => Promise<JsonValue | undefined>;
-  onResult?: (image: CaptureImage) => void | Promise<void>;
-  /** Graceful cancellation deadline, not a deadline for user annotation work. */
+  /** Every completed screenshot, whether or not it was forwarded to OCR. */
+  onResult?: (image: CaptureImage, action: CaptureAction) => void | Promise<void>;
+  /** Milliseconds of annotation work are the user's; this bounds process shutdown. */
   timeoutMs?: number;
+  /** Overridable for tests; defaults to a bounded history in the plugin data dir. */
+  history?: CaptureHistory;
+  /** Entries kept in history; the oldest image is dropped first. */
+  historyLimit?: number;
 }
 export interface OcrRuntimeOptions {
   scope: PluginResourceScope;
@@ -93,7 +99,8 @@ const envelope = z.object({
 });
 const captureResult = envelope.extend({
   kind: z.literal("capture"),
-  action: z.literal("ocr"),
+  // Copy, save and OCR all publish the same selection; only OCR opens a text pane.
+  action: z.enum(["copy", "save", "ocr"]),
   image: z.literal("selection.png"),
 });
 const ocrResult = envelope.extend({
@@ -135,6 +142,7 @@ class CaptureController implements CaptureRuntime {
   protected current?: NativeSession;
   protected disposed = false;
   protected readonly root: string;
+  private historyStore?: CaptureHistory | null;
   constructor(
     protected readonly options: CaptureRuntimeOptions | OcrRuntimeOptions,
     protected readonly kind: "capture" | "ocr",
@@ -169,6 +177,18 @@ class CaptureController implements CaptureRuntime {
   }
   get activeSession(): string | undefined {
     return this.current?.id;
+  }
+  /** Only the screenshot plugin keeps history; OCR input is a borrowed image. */
+  protected get history(): CaptureHistory | undefined {
+    if (this.historyStore === undefined) {
+      const options = this.options as CaptureRuntimeOptions;
+      this.historyStore =
+        this.kind === "capture"
+          ? (options.history ??
+            new CaptureHistory(options.dataDir, { maxEntries: options.historyLimit ?? 50 }))
+          : null;
+    }
+    return this.historyStore ?? undefined;
   }
   protected assertActive(): void {
     if (this.disposed || this.options.scope.state !== "active")
@@ -365,7 +385,8 @@ class CaptureController implements CaptureRuntime {
         `--spark233-locale=${options.getLocale?.().toLowerCase().startsWith("en") ? "en-US" : "zh-CN"}`,
         ...(activation.commandId === "ocr" ? ["--enter=ocr"] : []),
       ]);
-      // Basic copy/save/close may intentionally produce no OCR transfer.
+      // A cancelled selection publishes nothing; every completed one publishes exactly
+      // once, whatever the user did with it.
       if (!fs.existsSync(confined(session.directory, "capture.json")))
         return { status: "closed", sessionId: session.id };
       const selected = this.readResult(session, "capture.json", captureResult);
@@ -387,7 +408,25 @@ class CaptureController implements CaptureRuntime {
           size: png.size,
         },
       };
-      await options.onResult?.(image);
+      // History is a record of the screenshot, not a precondition for it: a failed
+      // copy must never turn a saved screenshot into an error.
+      try {
+        this.history?.add(imagePath, {
+          width: png.width,
+          height: png.height,
+          action: selected.action,
+        });
+      } catch (error) {
+        console.error("capture-history", error);
+      }
+      await options.onResult?.(image, selected.action);
+      if (selected.action !== "ocr")
+        return {
+          status: selected.action,
+          image: image.resource as unknown as JsonValue,
+          width: png.width,
+          height: png.height,
+        };
       if (!options.getOcrStatus().available || !options.recognize)
         return {
           status: "ocr-unavailable",
@@ -458,6 +497,11 @@ class OcrController extends CaptureController implements OcrRuntime {
     ocrOptions.scope.own("process", {
       prepareStop: (reason) => this.prepareStop(reason),
       dispose: () => this.closeWorker(),
+      forceTerminate: async () => {
+        if (!this.worker) return;
+        const result = await this.worker.scope.forceTerminateProcesses();
+        if (!result.ok) throw new Error(result.errors.join("; "));
+      },
     });
     // This instance has no previous live workspace. Retire only generated OCR
     // output files, keeping picker inputs in the separate data/images domain.

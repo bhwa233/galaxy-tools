@@ -1,4 +1,4 @@
-import { NotePad } from "./NotePad";
+import { NotePad } from "../features/notes/NotePad";
 
 interface TileShowcaseProps {
   noteId?: string;

@@ -73,6 +73,7 @@ export interface LauncherQueryResult {
   groups?: LauncherResultGroup[];
   items: LauncherItem[];
   hint?: string;
+  instructions?: string;
 }
 export interface LauncherResultGroup {
   id: string;
@@ -81,4 +82,5 @@ export interface LauncherResultGroup {
   status: "pending" | "ready" | "error";
   items: LauncherItem[];
   hint?: string;
+  instructions?: string;
 }

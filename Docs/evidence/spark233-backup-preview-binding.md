@@ -4,7 +4,7 @@
 
 日期：2026-10-25。分支：`codex/spark233-refactor`。范围：P6.14 的恢复预览合同和重新选择状态。源码修复后已补一条真实 renderer/host 的自动回归，见末节；没有 Windows 点选或真实用户数据操作。
 
-2026-10-27续作：旧Main完整备份UI恢复及重启另有独立代表证据，见`local-build/spark233/restore-main/original-main-summary.json`。它不覆盖当前新增的文档级预览令牌撤销及恢复后宿主管理状态刷新；这两处按[剩余实施基线](../spark233-remaining-implementation-2026-10-27.md)先补文档、集中实现、最后统一验证。
+2026-10-27续作：旧Main完整备份UI恢复及重启另有独立代表证据，见`local-build/spark233/restore-main/original-main-summary.json`。它不覆盖当前新增的文档级预览令牌撤销及恢复后宿主管理状态刷新；这两处按[剩余实施基线](../archive/2026-10/spark233-remaining-implementation-2026-10-27.md)先补文档、集中实现、最后统一验证。
 
 ## 已修复的两个缺口
 

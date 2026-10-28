@@ -119,3 +119,80 @@ it("follows OCR off/on/off within one capture session and rechecks availability 
   expect(getOcrStatus).toHaveBeenCalled();
   await expect(scope.stop("disable")).resolves.toEqual({ ok: true, errors: [] });
 });
+
+it("records a plain copy in history and never forwards it to OCR", async () => {
+  // Copy, save and pin complete without OCR; only the OCR action may open a text
+  // pane. History must still hold the image the user copied.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-capture-history-copy-"));
+  roots.push(root);
+  const pluginRoot = path.join(root, "plugin"),
+    executable = path.join(pluginRoot, "capture.exe");
+  fs.mkdirSync(pluginRoot);
+  fs.writeFileSync(executable, "Owned process-boundary fixture; never executed");
+  const owner = { pluginId: "fixture.capture", version: "1.0.0", instanceId: randomUUID() };
+  const scope = new PluginResourceScope(owner);
+  const started = Promise.withResolvers<TrustedNativeOptions>();
+  const exited = Promise.withResolvers<NativeProcessExit>();
+  const pid = 42502,
+    requestId = randomUUID();
+  const controller: PluginNativeController = {
+    owner,
+    requestId,
+    pid,
+    prepareStop: async () => ({ ok: true }),
+    waitForExit: () => exited.promise,
+    dispose: async () => {},
+  };
+  vi.mocked(createTrustedNativeProcess).mockImplementationOnce(async (options) => {
+    options.scope.own("process", {
+      prepareStop: controller.prepareStop,
+      dispose: controller.dispose,
+    });
+    started.resolve(options);
+    return controller;
+  });
+  const recognize = vi.fn(async () => ({ recognized: true }));
+  const onResult = vi.fn();
+  const runtime = await createCaptureRuntime({
+    scope,
+    pluginRoot,
+    descriptor: { path: executable, args: [] },
+    dataDir: path.join(root, "data"),
+    cacheDir: path.join(root, "cache"),
+    approveTrust: () => true,
+    // OCR is enabled: the copy action must still stay out of it.
+    getOcrStatus: () => ({ available: true }),
+    recognize,
+    onResult,
+  });
+  const pending = runtime.activate({ commandId: "capture" });
+  await started.promise;
+  const directory = path.join(root, "cache", "sessions", runtime.activeSession!);
+  fs.writeFileSync(
+    path.join(directory, "selection.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6o8AAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  fs.writeFileSync(
+    path.join(directory, "capture.json"),
+    JSON.stringify({
+      protocol: 1,
+      sessionId: runtime.activeSession,
+      pid,
+      kind: "capture",
+      action: "copy",
+      image: "selection.png",
+      width: 1,
+      height: 1,
+    }),
+  );
+  exited.resolve({ owner, requestId, code: 0, signal: null });
+  await expect(pending).resolves.toMatchObject({ status: "copy" });
+  expect(recognize).not.toHaveBeenCalled();
+  expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ width: 1, height: 1 }), "copy");
+  const images = fs.readdirSync(path.join(root, "data", "history", "images"));
+  expect(images).toHaveLength(1);
+  await expect(scope.stop("disable")).resolves.toEqual({ ok: true, errors: [] });
+});

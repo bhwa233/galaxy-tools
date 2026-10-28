@@ -69,9 +69,7 @@ export function getPluginReleaseNotes(pluginId: string): Promise<PluginReleaseNo
 export function watchPluginPackageTasks(
   callback: (snapshot: PackageTaskSnapshot) => void,
 ): Promise<() => void> {
-  return listen<PackageTaskSnapshot>("plugin-package-task-changed", ({ payload }) =>
-    callback(payload),
-  );
+  return listen("plugin-package-task-changed", ({ payload }) => callback(payload));
 }
 
 export function getPluginSettings(

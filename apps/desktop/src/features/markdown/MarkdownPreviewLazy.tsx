@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, memo } from "react";
 import type { ComponentProps } from "react";
 
 // react-markdown + unified 插件链 + KaTeX（含 CSS）是 bundle 中最大的一块，
@@ -7,10 +7,12 @@ const MarkdownPreviewInner = lazy(() =>
   import("./MarkdownPreview").then((module) => ({ default: module.MarkdownPreview })),
 );
 
-export function MarkdownPreviewLazy(props: ComponentProps<typeof MarkdownPreviewInner>) {
+export const MarkdownPreviewLazy = memo(function MarkdownPreviewLazy(
+  props: ComponentProps<typeof MarkdownPreviewInner>,
+) {
   return (
     <Suspense fallback={null}>
       <MarkdownPreviewInner {...props} />
     </Suspense>
   );
-}
+});

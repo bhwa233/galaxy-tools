@@ -95,3 +95,65 @@ An existing installed record can establish a baseline only after its package
 identity and stored manifest hash are verified. Data without either that record
 or committed version metadata is not silently adopted. Empty fresh data is
 initialized at the new package's declared version.
+
+### Global shortcuts and system tray actions
+
+Every declared public command can be assigned a global shortcut in the host's
+**Settings → Keyboard shortcuts** page. The plugin's Functions page links to
+that page with the plugin selected. These bindings are owned by the host, survive
+plugin updates, and are released when the command becomes unavailable. Prefer
+these user-controlled bindings over registering fixed accelerators yourself.
+
+Declare optional system tray actions in `spark233.tray`:
+
+```json
+{
+  "tray": [
+    { "id": "open", "commandId": "open", "order": 0 },
+    {
+      "id": "pause",
+      "commandId": "toggle-recording",
+      "title": "Pause recording",
+      "type": "checkbox",
+      "group": "recording",
+      "order": 10,
+      "translations": { "zh-CN": { "title": "暂停记录" } }
+    }
+  ]
+}
+```
+
+Each item must have a unique local ID and reference this plugin's declared
+public command; internal commands and commands owned by another plugin are
+rejected. There are at most 32 items per plugin. `title` defaults to the localized
+command title, `type` defaults to `normal`, and `order` defaults to zero. Group
+changes insert separators inside the plugin's submenu. The host owns the root
+menu, including settings and save-before-quit. Users can hide and reorder items
+and plugin groups in **Settings → System tray**. These preferences survive
+disable/re-enable; an unavailable plugin contributes no executable menu items.
+
+Checkboxes initially display unchecked. Publish the actual state at startup and
+whenever the underlying setting changes. A browser plugin declares and obtains
+the `tray` capability, then calls:
+
+```js
+await client.capability("tray", "update", {
+  id: "pause",
+  checked: true,
+  enabled: true,
+});
+```
+
+Trusted Node backends use their existing context event transport:
+`context.emit("tray-state", { id: "pause", checked: true })`. Native runtimes
+can send the equivalent `tray-state` event through their existing event protocol.
+State updates can target only the current instance's declared items. `checked`
+is valid only on a checkbox; `enabled` is valid on either item type. Partial
+updates preserve the other state fields. Updates never grant new commands or
+override user visibility preferences. State is discarded when the instance is
+released; stale instances cannot update a replacement's menu. The host does not
+optimistically change checkbox state when activation fails or is still pending.
+
+The seven official plugin packages include tray declarations. Existing installs
+can explicitly update them from the newer bundled packages in plugin management;
+the host does not silently replace installed plugin data or modify user profiles.

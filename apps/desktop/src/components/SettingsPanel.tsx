@@ -1,22 +1,21 @@
-import { invoke } from "../platform/desktop";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
-import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
-import { PluginManagementDialog } from "../features/plugins/PluginManagementDialog";
 import { ApplicationsDialog } from "../features/applications/ApplicationsDialog";
 import { DiagnosticsDialog } from "../features/diagnostics/DiagnosticsDialog";
+import { PluginManagementDialog } from "../features/plugins/PluginManagementDialog";
 import {
-  getContextPanelStatus,
-  openContextPanel,
-  retryContextPanel,
-  watchContextPanelStatus,
-} from "../features/context-panel/api";
-import type { ContextPanelStatus } from "../features/context-panel/types";
-import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "./ui/field";
-import { Textarea } from "./ui/textarea";
+  checkGlobalShortcut,
+  chooseBackgroundImage,
+  openSettingsWindow,
+} from "../features/settings/api";
+import {
+  formatHeldKeys,
+  hotkeyToConfigString,
+  isValidGlobalShortcut,
+  shortcutPlatform,
+} from "../features/settings/shortcutRecorder";
+import { applyTheme, watchSystemTheme } from "../features/settings/theme";
+import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
 import type {
   AppConfig,
   AppConfigPatch,
@@ -24,22 +23,15 @@ import type {
   ImageDisplayMode,
   McpPermission,
   ThemeOption,
-  SuperPanelButton,
-  SuperPanelTrigger,
   TileColorMode,
   ViewMode,
 } from "../features/settings/types";
-import {
-  formatHeldKeys,
-  hotkeyToConfigString,
-  isValidGlobalShortcut,
-  shortcutPlatform,
-} from "../features/settings/shortcutRecorder";
 import { useShortcutRecorder } from "../features/settings/useShortcutRecorder";
-import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
-import { applyTheme, watchSystemTheme } from "../features/settings/theme";
+import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
+import { invoke } from "../platform/desktop";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
+import { Button } from "./ui/button";
 
 const HARMONY_FONT_LICENSE_URL = new URL("../assets/fonts/LICENSE_Fonts", import.meta.url).href;
 
@@ -74,83 +66,12 @@ export function SettingsPanel({
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [applicationsOpen, setApplicationsOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [superPanelStatus, setSuperPanelStatus] = useState<ContextPanelStatus>();
-  const [superPanelBusy, setSuperPanelBusy] = useState(false);
-  const [superPanelError, setSuperPanelError] = useState(false);
-  const superPanelLive = useRef(false);
-  const superPanelEvents = useRef(0);
-  const superPanelOperating = useRef(false);
-  const savedExcludedApps = (config.superPanelExcludedApps ?? []).join("\n");
-  const [excludedAppsDraft, setExcludedAppsDraft] = useState(savedExcludedApps);
-  useEffect(() => {
-    setExcludedAppsDraft(savedExcludedApps);
-  }, [savedExcludedApps]);
-  useEffect(() => {
-    superPanelLive.current = true;
-    let disposed = false;
-    let stop: (() => void) | undefined;
-    void watchContextPanelStatus((status) => {
-      if (disposed) return;
-      superPanelEvents.current++;
-      setSuperPanelStatus(status);
-      setSuperPanelError(false);
-    })
-      .then(async (unlisten) => {
-        if (disposed) {
-          unlisten();
-          return;
-        }
-        stop = unlisten;
-        const revision = superPanelEvents.current;
-        const status = await getContextPanelStatus();
-        if (!disposed && revision === superPanelEvents.current) setSuperPanelStatus(status);
-      })
-      .catch(() => {
-        if (!disposed) setSuperPanelError(true);
-      });
-    return () => {
-      disposed = true;
-      superPanelLive.current = false;
-      stop?.();
-    };
-  }, []);
-  const superPanelAction = async (action: "retry" | "preview") => {
-    if (superPanelOperating.current) return;
-    superPanelOperating.current = true;
-    const revision = superPanelEvents.current;
-    setSuperPanelBusy(true);
-    setSuperPanelError(false);
-    try {
-      if (action === "preview") await openContextPanel();
-      else {
-        const status = await retryContextPanel();
-        if (superPanelLive.current && revision === superPanelEvents.current)
-          setSuperPanelStatus(status);
-      }
-    } catch {
-      if (superPanelLive.current) setSuperPanelError(true);
-    } finally {
-      superPanelOperating.current = false;
-      if (superPanelLive.current) setSuperPanelBusy(false);
-    }
-  };
-  const excludedApps = [
-    ...new Set(
-      excludedAppsDraft
-        .split(/\r?\n/)
-        .map((value) => value.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-  ];
-  const invalidExcludedApps =
-    excludedApps.length > 64 ||
-    excludedApps.some((value) => value.length > 260 || !/^[^<>:"/\\|?*\p{Cc}]+\.exe$/u.test(value));
   const setConfigValue = <Key extends keyof AppConfigPatch>(key: Key, value: AppConfig[Key]) => {
     onChange({ [key]: value });
   };
   const copyMcpConfig = async () => {
     try {
-      const launch = await invoke<{ command: string; args: string[] }>("app_mcp_command");
+      const launch = await invoke("app_mcp_command");
       const snippet = JSON.stringify({ mcpServers: { spark233: launch } }, null, 2);
       await invoke("clipboard_write", { text: snippet });
       setMcpCopied(true);
@@ -294,161 +215,6 @@ export function SettingsPanel({
               </section>
             )}
 
-            <section
-              className="space-y-3 rounded-lg border border-paper-deep/30 p-3"
-              aria-labelledby="super-panel-settings-title"
-            >
-              <h3 id="super-panel-settings-title" className="text-sm font-medium">
-                {t("contextPanel.settings.title")}
-              </h3>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id="super-panel-enabled"
-                  checked={config.superPanelEnabled ?? false}
-                  onCheckedChange={(checked) =>
-                    setConfigValue("superPanelEnabled", checked === true)
-                  }
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="super-panel-enabled">
-                    {t("contextPanel.settings.enable")}
-                  </FieldLabel>
-                  <FieldDescription>{t("contextPanel.settings.observeOnly")}</FieldDescription>
-                </FieldContent>
-              </Field>
-              <p role="status" className="text-xs text-muted-foreground">
-                {superPanelStatus
-                  ? t(
-                      superPanelStatus.supported
-                        ? `contextPanel.service.${superPanelStatus.phase}`
-                        : "contextPanel.service.unsupported",
-                    )
-                  : t("contextPanel.service.loading")}
-              </p>
-              <FieldGroup className="gap-3">
-                <Field>
-                  <FieldLabel>{t("contextPanel.settings.button")}</FieldLabel>
-                  <div role="group" aria-label={t("contextPanel.settings.button")}>
-                    <SlidingButtonGroup<SuperPanelButton>
-                      options={[
-                        { value: "middle", label: t("contextPanel.button.middle") },
-                        { value: "x1", label: t("contextPanel.button.x1") },
-                        { value: "x2", label: t("contextPanel.button.x2") },
-                      ]}
-                      value={config.superPanelButton ?? "middle"}
-                      onChange={(value) => setConfigValue("superPanelButton", value)}
-                      buttonClassName="min-h-7 px-1 py-1"
-                    />
-                  </div>
-                </Field>
-                <Field>
-                  <FieldLabel>{t("contextPanel.settings.trigger")}</FieldLabel>
-                  <div role="group" aria-label={t("contextPanel.settings.trigger")}>
-                    <SlidingButtonGroup<SuperPanelTrigger>
-                      options={[
-                        { value: "click", label: t("contextPanel.trigger.click") },
-                        { value: "hold", label: t("contextPanel.trigger.hold") },
-                      ]}
-                      value={config.superPanelTrigger ?? "hold"}
-                      onChange={(value) => setConfigValue("superPanelTrigger", value)}
-                    />
-                  </div>
-                </Field>
-                {(config.superPanelTrigger ?? "hold") === "hold" && (
-                  <RangeRow
-                    label={t("contextPanel.settings.holdDuration")}
-                    value={config.superPanelHoldMs ?? 500}
-                    min={200}
-                    max={1500}
-                    step={50}
-                    format={(value) => t("contextPanel.settings.milliseconds", { value })}
-                    onChange={(value) => setConfigValue("superPanelHoldMs", value)}
-                  />
-                )}
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="super-panel-copy"
-                    checked={config.superPanelCopyFallback ?? false}
-                    onCheckedChange={(checked) =>
-                      setConfigValue("superPanelCopyFallback", checked === true)
-                    }
-                  />
-                  <FieldContent>
-                    <FieldLabel htmlFor="super-panel-copy">
-                      {t("contextPanel.settings.copyFallback")}
-                    </FieldLabel>
-                    <FieldDescription>{t("contextPanel.settings.copyHint")}</FieldDescription>
-                  </FieldContent>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="super-panel-excluded">
-                    {t("contextPanel.settings.excludedApps")}
-                  </FieldLabel>
-                  <Textarea
-                    id="super-panel-excluded"
-                    value={excludedAppsDraft}
-                    onChange={(event) => setExcludedAppsDraft(event.target.value)}
-                    maxLength={16704}
-                    rows={3}
-                    className="max-h-40 resize-y"
-                    placeholder="example.exe"
-                    aria-describedby="super-panel-excluded-hint"
-                    aria-invalid={invalidExcludedApps}
-                  />
-                  <FieldDescription id="super-panel-excluded-hint">
-                    {t("contextPanel.settings.excludedHint")}
-                  </FieldDescription>
-                  {invalidExcludedApps && (
-                    <p role="alert" className="text-xs text-destructive">
-                      {t("contextPanel.settings.excludedInvalid")}
-                    </p>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      invalidExcludedApps ||
-                      JSON.stringify(excludedApps) ===
-                        JSON.stringify(config.superPanelExcludedApps ?? [])
-                    }
-                    onClick={() => setConfigValue("superPanelExcludedApps", excludedApps)}
-                  >
-                    {t("contextPanel.settings.saveExclusions")}
-                  </Button>
-                </Field>
-              </FieldGroup>
-              {superPanelError && (
-                <p role="alert" className="text-xs text-destructive">
-                  {t("contextPanel.settings.operationFailed")}
-                </p>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={superPanelBusy || superPanelStatus?.phase === "starting"}
-                  onClick={() => {
-                    void superPanelAction("retry");
-                  }}
-                >
-                  {t("contextPanel.settings.retry")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={superPanelBusy}
-                  onClick={() => {
-                    void superPanelAction("preview");
-                  }}
-                >
-                  {t("contextPanel.settings.preview")}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {t("contextPanel.settings.previewHint")}
-              </p>
-            </section>
-
             <section className="space-y-2">
               <label className="block text-[11px] font-body text-ink-faint">
                 {t("settings.theme.label", { defaultValue: "主题" })}
@@ -493,11 +259,14 @@ export function SettingsPanel({
                 <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
                   {t("settings.launcherShortcut", { defaultValue: "启动器快捷键" })}
                 </label>
-                <ShortcutRecorder
-                  label={t("settings.launcherShortcut")}
-                  value={config.globalShortcut}
-                  onChange={(v) => setConfigValue("globalShortcut", v)}
-                />
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void openSettingsWindow({ page: "shortcuts" });
+                  }}
+                >
+                  {t("commandSettings.manageShortcuts")}
+                </Button>
               </div>
             </section>
 
@@ -640,11 +409,14 @@ export function SettingsPanel({
                 <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
                   {t("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" })}
                 </label>
-                <ShortcutRecorder
-                  label={t("settings.visibilityShortcut")}
-                  value={config.toggleVisibilityShortcut}
-                  onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
-                />
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void openSettingsWindow({ page: "shortcuts" });
+                  }}
+                >
+                  {t("commandSettings.manageShortcuts")}
+                </Button>
               </div>
             </section>
 
@@ -774,7 +546,7 @@ export function SettingsPanel({
                     void chooseBackgroundImage().then(async (path) => {
                       if (!path) return;
                       const originalName = path.split(/[/\\]/).pop() ?? "";
-                      const saved = await invoke<string>("copy_background_image", {
+                      const saved = await invoke("copy_background_image", {
                         sourcePath: path,
                       });
                       localStorage.setItem("backgroundImageName", originalName);
@@ -955,11 +727,12 @@ interface ShortcutRecorderProps {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  validate?: (value: string) => string | undefined;
 }
 
 type ShortcutMsg = { key: string; params?: Record<string, string> } | { raw: string };
 
-export function ShortcutRecorder({ label, value, onChange }: ShortcutRecorderProps) {
+export function ShortcutRecorder({ label, value, onChange, validate }: ShortcutRecorderProps) {
   const { t } = useTranslation();
   const [checkState, setCheckState] = useState<"idle" | "checking" | "ok" | "warning" | "error">(
     "idle",
@@ -1004,6 +777,13 @@ export function ShortcutRecorder({ label, value, onChange }: ShortcutRecorderPro
     }
 
     const requestId = shortcutCheckRequestId.current + 1;
+    const conflict = validate?.(shortcut);
+    if (conflict) {
+      invalidateShortcutChecks();
+      setCheckState("warning");
+      setCheckMsg({ raw: conflict });
+      return;
+    }
     shortcutCheckRequestId.current = requestId;
     setCheckState("checking");
     setCheckMsg({ key: "settings.shortcut.checking" });

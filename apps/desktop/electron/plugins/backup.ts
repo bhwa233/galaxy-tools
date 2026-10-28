@@ -1,3 +1,4 @@
+import { renameWithRetry } from "../filesystem.js";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { isPluginPackagePath } from "@spark233/sdk";
 import { AppError, atomicWrite, canonical, confined, inside, readJson } from "../persistence.js";
 import {
   PluginManager,
+  pluginTrustGrantSchema,
   type PluginInstallation,
   type PluginMaintenanceAccess,
   type PluginManagerSnapshot,
@@ -462,11 +464,58 @@ export class PluginBackupService {
       .join("/");
     return this.safeFile(path.join(directory, "files", "plugins"), relative);
   }
+  private async verifyTrustedCode(root: string, manifest: Manifest): Promise<void> {
+    const state = this.options.manager.validateBackupSnapshot(manifest.manager, (record) =>
+      this.sourceCodeDirectory(root, record),
+    );
+    for (const record of state.plugins) {
+      if (!record.grant.native) continue;
+      const candidate = this.sourceCodeDirectory(root, record);
+      const prefix = path.relative(path.join(root, "files"), candidate).split(path.sep).join("/");
+      const expected = new Map(
+        manifest.entries
+          .filter((entry) => entry.path === prefix || entry.path.startsWith(prefix + "/"))
+          .map((entry) => [entry.path.slice(prefix.length).replace(/^\//, ""), entry]),
+      );
+      const verify = async (relative: string): Promise<void> => {
+        const file = relative
+          ? this.safeFile(record.directory, relative)
+          : this.safeRoot(record.directory);
+        const info = await fsp.lstat(file);
+        const entry = expected.get(relative);
+        if (
+          !entry ||
+          info.isSymbolicLink() ||
+          (entry.kind === "directory"
+            ? !info.isDirectory()
+            : !info.isFile() ||
+              info.size !== entry.bytes ||
+              (await this.hash(file)) !== entry.sha256)
+        )
+          throw new AppError(
+            "backupTrustRequired",
+            "备份执行代码与本机已信任版本不一致，请先安装确认：" + record.pluginId,
+          );
+        expected.delete(relative);
+        if (info.isDirectory())
+          for (const name of await fsp.readdir(file))
+            await verify(relative ? relative + "/" + name : name);
+      };
+      await verify("");
+      if (expected.size)
+        throw new AppError("backupTrustRequired", "备份包含未确认的执行代码：" + record.pluginId);
+    }
+  }
   private summary(directory: string, manifest: Manifest): BackupInspection {
     const state = z
       .object({
         plugins: z.array(
-          z.object({ pluginId: z.string(), version: z.string(), enabled: z.boolean() }),
+          z.object({
+            pluginId: z.string(),
+            version: z.string(),
+            enabled: z.boolean(),
+            grant: pluginTrustGrantSchema,
+          }),
         ),
       })
       .parse(manifest.manager);
@@ -664,13 +713,13 @@ export class PluginBackupService {
               "backupRecoveryRequired",
               "恢复失败数据目录已存在，请保留并人工处理",
             );
-          await fsp.rename(target.target, target.failed);
+          await renameWithRetry(target.target, target.failed);
         }
-        await fsp.rename(target.previous, target.target);
+        await renameWithRetry(target.previous, target.target);
       } else if (!target.existed && fs.existsSync(target.target)) {
         if (fs.existsSync(target.failed))
           throw new AppError("backupRecoveryRequired", "恢复失败数据目录冲突");
-        await fsp.rename(target.target, target.failed);
+        await renameWithRetry(target.target, target.failed);
       }
       if (fs.existsSync(target.stage)) await fsp.rm(target.stage, { recursive: true, force: true });
     }
@@ -679,6 +728,7 @@ export class PluginBackupService {
     journal.phase = "rolled-back";
     this.persistJournal(journal);
     await this.archivePrevious(journal, warnings);
+    await fsp.rm(confined(this.options.recoveryRoot, "active.json"), { force: true });
   }
   private remapKnownJson(value: unknown, manifest: Manifest): unknown {
     if (typeof value === "string" && path.isAbsolute(value)) {
@@ -710,13 +760,25 @@ export class PluginBackupService {
         throw new AppError("backupSelectionChanged", "备份在预览后发生变化，请重新选择并验证备份");
       await this.options.protectRoots?.([root]);
       const inspection = await this.inspectManifest(root, manifest);
+      this.options.manager.assertRestoreTrust(manifest.manager);
+      await this.verifyTrustedCode(root, manifest);
       const id = randomUUID();
       const warnings: string[] = [];
       const resumeHost = await this.options.pauseHost();
       let journal: RestoreJournal | undefined;
+      let recoveryRequired = false;
       const rollback = async (access: PluginMaintenanceAccess) => {
-        if (journal && journal.phase !== "rolled-back")
-          await this.rollback(journal, access, warnings);
+        if (journal && journal.phase !== "rolled-back") {
+          try {
+            await this.rollback(journal, access, warnings);
+          } catch (error) {
+            recoveryRequired = true;
+            throw new AppError(
+              "backupRecoveryRequired",
+              "备份回滚未完成，已暂停插件和写入，请重启恢复：" + String(error),
+            );
+          }
+        }
       };
       try {
         // A queued data-directory change may finish while source hashes are
@@ -748,6 +810,12 @@ export class PluginBackupService {
               existed: fs.existsSync(mount.target),
             };
           });
+          for (const target of targets) {
+            const parent = path.dirname(target.target);
+            const capacity = await fsp.statfs(parent, { bigint: true });
+            if (capacity.bavail * capacity.bsize < BigInt(inspection.bytes))
+              throw new AppError("backupInsufficientSpace", "目标磁盘空间不足，未开始替换数据目录");
+          }
           journal = {
             schemaVersion: 2,
             id,
@@ -826,6 +894,24 @@ export class PluginBackupService {
                 ),
               ),
             );
+            for (const record of next.plugins) {
+              const previous = journal.previous.plugins.find(
+                (item) => item.pluginId === record.pluginId,
+              );
+              const expanded = record.grant.capabilities.some(
+                (capability) => !previous?.grant.capabilities.includes(capability),
+              );
+              const newCodeTrust =
+                record.grant.native &&
+                (!previous?.grant.native ||
+                  previous.integrity !== record.integrity ||
+                  previous.manifestDigest !== record.manifestDigest);
+              if (expanded || newCodeTrust)
+                throw new AppError(
+                  "backupTrustRequired",
+                  "请先通过插件安装确认此版本及其权限，再恢复备份：" + record.pluginId,
+                );
+            }
             atomicWrite(
               stagedPath(this.options.manager.getBackupLayout().stateFile),
               JSON.stringify(
@@ -844,8 +930,8 @@ export class PluginBackupService {
             this.persistJournal(journal);
             for (const target of targets) {
               this.safeRoot(target.target, true);
-              if (target.existed) await fsp.rename(target.target, target.previous);
-              await fsp.rename(target.stage, target.target);
+              if (target.existed) await renameWithRetry(target.target, target.previous);
+              await renameWithRetry(target.stage, target.target);
             }
             journal.phase = "applied";
             this.persistJournal(journal);
@@ -869,7 +955,7 @@ export class PluginBackupService {
         await fsp.rm(confined(this.options.recoveryRoot, "active.json"), { force: true });
         return result;
       } finally {
-        await resumeHost();
+        if (!recoveryRequired) await resumeHost();
       }
     });
   }

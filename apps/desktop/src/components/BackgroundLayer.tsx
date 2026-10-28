@@ -1,6 +1,6 @@
-import { convertFileSrc } from "../platform/desktop";
 import { useMemo } from "react";
 import type { AppConfig } from "../features/settings/types";
+import { convertFileSrc } from "../platform/desktop";
 
 interface BackgroundLayerProps {
   config: AppConfig | null;

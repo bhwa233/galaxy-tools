@@ -159,3 +159,119 @@ describe("translation direction and target cache", () => {
     expect(fetchStream).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("translation history", () => {
+  let directory: string;
+  let translator: ReturnType<typeof createTranslator>;
+  const context = () => ({ signal: new AbortController().signal, emit: vi.fn() });
+  const stored = () =>
+    JSON.parse(fs.readFileSync(path.join(directory, "history.json"), "utf8")) as {
+      entries: { text: string }[];
+    };
+  beforeEach(async () => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-translation-history-"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ choices: [{ message: { content: "记录译文" } }] }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    await translator.configure({
+      endpoint: "https://translation.invalid/v1",
+      model: "fixture-model",
+      key: "",
+    });
+  });
+  afterEach(async () => {
+    await translator?.stop();
+    vi.unstubAllGlobals();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  // The workspace shows history from disk after a restart, so a duplicate must
+  // replace the previous entry instead of growing the file on every retry.
+  it("records a completed translation once and refreshes the duplicate", async () => {
+    await translator.translate({ text: "你好" }, context());
+    await translator.prepareStop();
+    expect(stored().entries).toHaveLength(1);
+    expect((await translator.listHistory()).entries[0]).toMatchObject({
+      text: "你好",
+      translatedText: "记录译文",
+      target: "en",
+      cached: false,
+      source: "workspace",
+    });
+    await translator.translate({ text: "你好" }, context());
+    await translator.prepareStop();
+    const entries = (await translator.listHistory()).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].cached).toBe(true);
+  });
+
+  it("stops recording while history is disabled and resumes when enabled", async () => {
+    await translator.setPreferences({ historyEnabled: false });
+    await translator.translate({ text: "关闭期间" }, context());
+    await translator.prepareStop();
+    expect((await translator.listHistory()).entries).toHaveLength(0);
+    await translator.setPreferences({ historyEnabled: true });
+    await translator.translate({ text: "重新开启" }, context());
+    await translator.prepareStop();
+    expect((await translator.listHistory()).entries.map((entry) => entry.text)).toEqual([
+      "重新开启",
+    ]);
+  });
+
+  it("deletes and clears entries through the returned snapshot", async () => {
+    await translator.translate({ text: "第一条" }, context());
+    await translator.translate({ text: "第二条" }, context());
+    await translator.prepareStop();
+    const current = await translator.listHistory();
+    expect(current.entries).toHaveLength(2);
+    const removed = await translator.deleteHistory(current.entries[0].id);
+    expect(removed.entries.map((entry) => entry.text)).toEqual(["第一条"]);
+    expect((await translator.clearHistory()).entries).toEqual([]);
+    await translator.prepareStop();
+    expect(stored().entries).toEqual([]);
+  });
+
+  // The limit is enforced on load as well, because a previous build or a manual
+  // edit can leave more entries on disk than the workspace will ever show.
+  it("keeps only the newest stored entries when the file exceeds the limit", async () => {
+    const entries = Array.from({ length: 210 }, (_, index) => ({
+      id: `entry-${index}`,
+      at: "2026-01-01T00:00:00.000Z",
+      target: "en",
+      text: `text-${index}`,
+      translatedText: `result-${index}`,
+      model: "",
+      cached: false,
+      source: "workspace",
+    }));
+    await translator.stop();
+    fs.writeFileSync(path.join(directory, "history.json"), JSON.stringify({ version: 1, entries }));
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    const list = await translator.listHistory();
+    expect(list.entries).toHaveLength(200);
+    expect(list.entries[0].text).toBe("text-0");
+    expect(list.entries.at(-1)?.text).toBe("text-199");
+  });
+
+  it("ignores a damaged history file and still translates", async () => {
+    await translator.stop();
+    fs.writeFileSync(path.join(directory, "history.json"), "{not json");
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    await translator.configure({
+      endpoint: "https://translation.invalid/v1",
+      model: "fixture-model",
+      key: "",
+    });
+    await expect(translator.translate({ text: "损坏后" }, context())).resolves.toMatchObject({
+      translatedText: "记录译文",
+    });
+    expect((await translator.listHistory()).entries).toHaveLength(1);
+  });
+});

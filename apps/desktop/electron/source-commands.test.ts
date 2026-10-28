@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginActivation, PluginContext } from "@spark233/sdk";
 import type { LauncherQueryResult } from "../src/features/launcher/types.js";
 import { LauncherController } from "./launcher.js";
@@ -16,9 +16,17 @@ afterEach(async () => {
 
 // Reuse the real Manager and Controller with owned package files. Only the final
 // runtime is synthetic: these tests exercise routing/authority, not Electron UI.
-async function fixture(options: { holdFactory?: boolean; holdActivation?: boolean } = {}) {
+async function fixture(
+  options: {
+    holdFactory?: boolean;
+    holdActivation?: boolean;
+    pluginId?: string;
+    commands?: Array<Record<string, unknown>>;
+    modes?: Array<Record<string, unknown>>;
+  } = {},
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-source-commands-"));
-  const pluginId = "fixture.source",
+  const pluginId = options.pluginId ?? "fixture.source",
     version = "1.0.0";
   const versionsRoot = path.join(root, "versions"),
     directory = path.join(versionsRoot, pluginId, version);
@@ -35,7 +43,7 @@ async function fixture(options: { holdFactory?: boolean; holdActivation?: boolea
       platforms: [process.platform],
       architectures: [process.arch],
       entry: "index.html",
-      commands: [
+      commands: options.commands ?? [
         { id: "common", title: "Common" },
         { id: "legacy", title: "Legacy", inputs: ["text"] },
         {
@@ -65,7 +73,7 @@ async function fixture(options: { holdFactory?: boolean; holdActivation?: boolea
           sourceApplications: ["winword.exe"],
         },
       ],
-      modes: [{ id: "word-mode", title: "Word mode" }],
+      modes: options.modes ?? [{ id: "word-mode", title: "Word mode" }],
     },
   };
   const packageFile = path.join(directory, "package.json"),
@@ -116,7 +124,7 @@ async function fixture(options: { holdFactory?: boolean; holdActivation?: boolea
       factoryStarted.resolve();
       if (options.holdFactory) await factoryGate.promise;
       return {
-        async activate(activation) {
+        async activate(activation): Promise<import("@spark233/sdk").JsonValue> {
           activations.push(structuredClone(activation));
           activationStarted.resolve();
           if (options.holdActivation) {
@@ -125,7 +133,7 @@ async function fixture(options: { holdFactory?: boolean; holdActivation?: boolea
           }
           return { ok: true };
         },
-        async query(activation) {
+        async query(activation): Promise<import("@spark233/sdk").JsonValue> {
           queries.push(structuredClone(activation));
           return {
             items: [
@@ -168,6 +176,8 @@ async function fixture(options: { holdFactory?: boolean; holdActivation?: boolea
     activations,
     queries,
     updates,
+    packageFile,
+    directory,
     factoryStarted: factoryStarted.promise,
     activationStarted: activationStarted.promise,
     releaseFactory: factoryGate.resolve,
@@ -188,6 +198,101 @@ async function fixture(options: { holdFactory?: boolean; holdActivation?: boolea
 const caller = "owned-caller",
   pluginId = "fixture.source";
 describe("source application command authority", () => {
+  it("revalidates a cached launcher candidate before dispatch and detects manifest changes", async () => {
+    const f = await fixture();
+    const page = await f.controller.query({ query: "", sessionId: "cached" }, caller);
+    const item = page.items.find((value) => value.commandId === "common")!;
+    const entry = path.join(f.directory, "index.html");
+    fs.unlinkSync(entry);
+    await expect(
+      f.controller.execute({ id: item.id, pluginId, commandId: "common" }, caller),
+    ).rejects.toThrow();
+    expect(f.activations).toEqual([]);
+    fs.writeFileSync(entry, "<p>Restored fixture</p>");
+    fs.appendFileSync(f.packageFile, " ");
+    expect(f.controller.state(caller).commands.some((value) => value.pluginId === pluginId)).toBe(
+      false,
+    );
+  });
+  it("limits the default official entries without removing searchable modes, pins or public commands", async () => {
+    const notes = await fixture({
+      pluginId: "spark233.notes",
+      commands: [
+        { id: "open", title: "Manage notes" },
+        { id: "new", title: "New note" },
+        { id: "search", title: "Search notes", mode: "notes", search: "mode" },
+      ],
+      modes: [{ id: "notes", title: "Notes" }],
+    });
+    notes.setContext(undefined);
+    let page = await notes.controller.query({ query: "", sessionId: "home" }, caller);
+    expect(page.items.map((item) => item.commandId)).toEqual(["open", "new"]);
+    page = await notes.controller.query({ query: "Search notes", sessionId: "search" }, caller);
+    const search = page.items.find((item) => item.commandId === "search");
+    expect(search).toBeDefined();
+    notes.controller.updatePreference({ selectionId: search!.id, operation: "pin" }, caller);
+    page = await notes.controller.query({ query: "", sessionId: "pinned" }, caller);
+    expect(page.items.some((item) => item.commandId === "search")).toBe(true);
+    expect(() =>
+      notes.controller.enterMode({ mode: "spark233.notes:notes" }, caller),
+    ).not.toThrow();
+
+    const clipboard = await fixture({
+      pluginId: "spark233.clipboard",
+      commands: [
+        { id: "history", title: "Clipboard history" },
+        { id: "quick", title: "Quick clipboard" },
+        { id: "pause", title: "Pause recording" },
+      ],
+      modes: [],
+    });
+    clipboard.setContext(undefined);
+    page = await clipboard.controller.query({ query: "", sessionId: "clipboard" }, caller);
+    expect(page.items.map((item) => item.commandId)).toEqual(["history"]);
+    page = await clipboard.controller.query(
+      { query: "Pause recording", sessionId: "managed" },
+      caller,
+    );
+    expect(page.items.some((item) => item.commandId === "pause")).toBe(false);
+    expect(clipboard.manager.commands().some(({ command }) => command.id === "pause")).toBe(true);
+    await expect(
+      clipboard.manager.activate("spark233.clipboard", { commandId: "pause" }),
+    ).resolves.toEqual({ ok: true });
+  });
+  it("requests at most five dictionary suggestions in modes and ordinary search, including empty input", async () => {
+    // Opening the mode used to send 60 even before typing; the dictionary
+    // rejects anything above 30 before handling its empty-query hint.
+    const dictionary = await fixture({
+      pluginId: "spark233.translation",
+      commands: [
+        { id: "search", title: "Local dictionary", mode: "dictionary", search: "word" },
+        { id: "word", title: "Dictionary detail" },
+        { id: "excel", title: "Other dictionary action" },
+      ],
+      modes: [{ id: "dictionary", title: "Local dictionary" }],
+    });
+    dictionary.setContext(undefined);
+    for (const query of ["", "hello"]) {
+      await dictionary.controller.query(
+        { query, mode: "spark233.translation:dictionary", sessionId: "dictionary-" + query },
+        caller,
+      );
+      const parameters = dictionary.queries.at(-1)?.parameters as { query: string; limit: number };
+      expect(parameters.query).toBe(query);
+      expect(parameters.limit).toBeGreaterThanOrEqual(1);
+      expect(parameters.limit).toBeLessThanOrEqual(5);
+    }
+    const previousQueries = dictionary.queries.length;
+    await dictionary.controller.query({ query: "hello", sessionId: "ordinary-dictionary" }, caller);
+    await vi.waitFor(() => {
+      expect(dictionary.queries.length).toBeGreaterThan(previousQueries);
+      const parameters = dictionary.queries.at(-1)?.parameters as { query: string; limit: number };
+      expect(parameters.query).toBe("hello");
+      expect(parameters.limit).toBeGreaterThanOrEqual(1);
+      expect(parameters.limit).toBeLessThanOrEqual(5);
+    });
+  });
+
   it("gates discovery, aliases, pins, modes and provider actions using the current host source", async () => {
     const f = await fixture();
     await expect(f.manager.activate(pluginId, { commandId: "word" })).rejects.toThrow();
