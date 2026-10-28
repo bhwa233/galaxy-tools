@@ -28,6 +28,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Dictionary preparation failed' }
     & pnpm.cmd sdk:build
     if ($LASTEXITCODE -ne 0) { throw 'SDK build failed' }
-    & pnpm.cmd plugins:build
-    if ($LASTEXITCODE -ne 0) { throw 'Official resource verification failed' }
+    # Official plugin renderers require the host UI contract produced by Vite.
+    & pnpm.cmd --filter @spark233/desktop build:assets
+    if ($LASTEXITCODE -ne 0) { throw 'Desktop asset and official resource preparation failed' }
 } finally { Pop-Location }
