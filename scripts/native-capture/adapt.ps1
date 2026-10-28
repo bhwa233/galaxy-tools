@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param([string]$OutputRoot = (Join-Path $PSScriptRoot '../../local-build/spark233/native-capture'))
 $ErrorActionPreference = 'Stop'
-$tarExecutable = Join-Path $env:SystemRoot 'System32/tar.exe'
-if (-not (Test-Path -LiteralPath $tarExecutable -PathType Leaf)) { throw "Windows tar is missing: $tarExecutable" }
+$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+Get-Command node -ErrorAction Stop | Out-Null
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $sources = Join-Path $OutputRoot 'sources'
 $adapted = Join-Path $OutputRoot 'adapted'
@@ -17,8 +17,13 @@ foreach ($source in $lock.sources) {
     New-Item -ItemType Directory -Force $target | Out-Null
     & git -C $original archive --format=tar -o (Join-Path $adapted "$($source.name).tar") HEAD
     if ($LASTEXITCODE) { throw 'git archive failed' }
-    & $tarExecutable -xf (Join-Path $adapted "$($source.name).tar") -C $target
-    if ($LASTEXITCODE) { throw 'tar extraction failed' }
+    # Reuse the installed tar package: Windows tar.exe decodes non-ASCII Git
+    # archive names using the host locale, breaking pinned Chinese resource paths.
+    Push-Location $repo
+    try {
+        & node -e "require('tar').x({file:process.argv[1],cwd:process.argv[2],strict:true}).catch(error=>{console.error(error);process.exitCode=1})" (Join-Path $adapted "$($source.name).tar") $target
+        if ($LASTEXITCODE) { throw 'tar extraction failed' }
+    } finally { Pop-Location }
 }
 
 function Edit-Exact([string]$File, [string]$Before, [string]$After) {
