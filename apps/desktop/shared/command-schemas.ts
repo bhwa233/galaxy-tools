@@ -341,6 +341,33 @@ export const commandSchemas = {
     action: z.enum(["list", "copy", "save", "ocr", "remove", "clear"]),
     id: id.optional(),
   }),
+  search_action: z.discriminatedUnion("action", [
+    z.strictObject({
+      action: z.literal("query"),
+      query: z.string().max(8192),
+      mode: z.enum(["files", "content"]),
+      category: z
+        .enum([
+          "all",
+          "folder",
+          "excel",
+          "word",
+          "ppt",
+          "pdf",
+          "image",
+          "video",
+          "audio",
+          "archive",
+        ])
+        .optional(),
+      sort: z.enum(["name", "size", "mtime"]).optional(),
+      sortDesc: z.boolean().optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+    }),
+    z.strictObject({ action: z.literal("next-page"), cursor: id }),
+    z.strictObject({ action: z.enum(["open", "reveal", "copy-path"]), selection: id }),
+    z.strictObject({ action: z.literal("install-service") }),
+  ]),
   search_scope_get: empty,
   search_scope_pick: empty,
   search_scope_save: searchSettings,

@@ -20,7 +20,7 @@ describe("notes api error localization", () => {
         message: "unsupported globalShortcut shortcut config: Ctrl+",
         details: { field: "globalShortcut" },
       }),
-    ).toBe("启动器快捷键（自动填入选中文字） 配置无效");
+    ).toBe("启动器快捷键 配置无效");
   });
 
   test("parses serialized backend error strings when a structured payload is unavailable", () => {

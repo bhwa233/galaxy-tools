@@ -46,6 +46,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
+  // Preserve TEMP's spelling: restore must work when Windows supplies an 8.3 alias.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-host-restore-"));
   directories.push(root);
   const hostRoot = path.join(root, "host");

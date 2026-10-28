@@ -29,7 +29,9 @@ const png = Buffer.from(
 // OCR implementation. All session, resource and retention logic stays real.
 async function fixture() {
   vi.useFakeTimers();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-ocr-runtime-"));
+  const root = fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), "spark233-ocr-runtime-")),
+  );
   const pluginRoot = path.join(root, "plugin"),
     dataDir = path.join(root, "data"),
     cacheDir = path.join(root, "cache");

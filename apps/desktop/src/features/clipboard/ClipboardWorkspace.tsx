@@ -372,13 +372,6 @@ export function ClipboardWorkspace({
                       .join(" · ")}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  {detail.formats.map((format) => (
-                    <Badge key={format} variant="outline">
-                      {format}
-                    </Badge>
-                  ))}
-                </div>
                 {detail.previewError && (
                   <p role="status">{t("缩略图不可用，原始图片仍可复制或导出")}</p>
                 )}

@@ -378,7 +378,14 @@ export function createOfficialRuntimeFactory(
     };
     if (id === "spark233.search") {
       if (!entries.native.search) throw new Error("Search executable entry is required");
-      return createSearchRuntime({
+      // The workspace window loads this package's renderer. A package built
+      // before the workspace existed keeps working in the launcher only.
+      try {
+        ctx.bindOfficialRenderer(id, installation.directory, scope);
+      } catch (error) {
+        console.error("search-renderer", error);
+      }
+      const runtime = createSearchRuntime({
         ...common,
         descriptor: entries.native.search,
         getLocale: () => ctx.hostConfig.value.locale,
@@ -418,6 +425,18 @@ export function createOfficialRuntimeFactory(
           return answer.response === 1;
         },
       });
+      return {
+        query: runtime.query,
+        activate: async (activation) => {
+          // Entering the workspace does not run a query; the window asks for its
+          // own results so the launcher session stays untouched.
+          if (activation.commandId === "workspace") {
+            await ctx.showOfficialWorkspace("search", {});
+            return;
+          }
+          return runtime.activate(activation);
+        },
+      };
     }
     if (id === "spark233.clipboard") {
       if (!entries.native.clipboard) throw new Error("Clipboard executable entry is required");

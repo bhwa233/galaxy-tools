@@ -239,6 +239,14 @@ export class PluginBackupService {
       ...Object.values(options.externalDataRoots()),
     ])
       this.safeRoot(root, true);
+    // Keep all subsequent lexical mount comparisons in the same spelling as
+    // the manager. Windows TEMP and persisted roots can use 8.3 aliases.
+    this.options = {
+      ...options,
+      hostRoot: this.safeRoot(options.hostRoot, true),
+      pluginRoot: this.safeRoot(options.pluginRoot, true),
+      recoveryRoot: this.safeRoot(options.recoveryRoot, true),
+    };
     this.disjoint(
       options.recoveryRoot,
       this.mounts().map((mount) => mount.root),
@@ -453,7 +461,7 @@ export class PluginBackupService {
     const layout = this.options.manager.getBackupLayout();
     const relative = path
       .relative(
-        this.options.pluginRoot,
+        canonical(this.options.pluginRoot),
         path.join(
           layout.packages.versionsRoot,
           encodeURIComponent(record.pluginId),
@@ -580,7 +588,10 @@ export class PluginBackupService {
       this.sourceCodeDirectory(root, record),
     );
     const stateRelative = path
-      .relative(this.options.pluginRoot, this.options.manager.getBackupLayout().stateFile)
+      .relative(
+        canonical(this.options.pluginRoot),
+        this.options.manager.getBackupLayout().stateFile,
+      )
       .split(path.sep)
       .join("/");
     const stored = z

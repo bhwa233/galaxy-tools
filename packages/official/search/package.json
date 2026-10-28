@@ -4,6 +4,7 @@
   "description": "Pulse powered NTFS filename and Instant text search for spark233",
   "license": "Apache-2.0",
   "files": [
+    "renderer/**",
     "native/**",
     "licenses/**",
     "README.md"
@@ -28,8 +29,13 @@
     "capabilities": [
       "native.process",
       "files.read",
-      "search.index"
+      "search.index",
+      "windows"
     ],
+    "entry": "renderer/index.html",
+    "ui": {
+      "theme": "^1.0.0"
+    },
     "native": {
       "search": {
         "path": "native/spark233.Search.exe"
@@ -37,6 +43,20 @@
     },
     "dataVersion": 1,
     "commands": [
+      {
+        "id": "workspace",
+        "title": "搜索工作区",
+        "keywords": [
+          "搜索窗口",
+          "文件搜索窗口",
+          "search workspace"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Search workspace"
+          }
+        }
+      },
       {
         "id": "service",
         "title": "索引服务管理",

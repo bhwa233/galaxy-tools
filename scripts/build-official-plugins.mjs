@@ -64,6 +64,7 @@ const rendererPlugins = new Set([
   "spark233.translation",
   "spark233.ocr",
   "spark233.screenshot",
+  "spark233.search",
 ]);
 const uiMetadata = JSON.parse(
   await fs.readFile(path.join(project, "packages/ui/package.json"), "utf8"),
@@ -88,6 +89,38 @@ async function exists(filename) {
   } catch {
     return false;
   }
+}
+// Native recipes already discover the portable CMake/MSVC installations. Use
+// the same toolchain directory for PowerShell when it is absent from PATH.
+let powershellExecutable;
+async function powershell() {
+  if (powershellExecutable) return powershellExecutable;
+  const localTools = path.join(
+    process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"),
+    "spark233",
+    "toolchains",
+  );
+  const candidates = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((directory) => path.join(directory.replace(/^"|"$/g, ""), "pwsh.exe"));
+  candidates.push(
+    path.join(process.env.ProgramFiles ?? "C:\\Program Files", "PowerShell", "7", "pwsh.exe"),
+  );
+  try {
+    const versions = (await fs.readdir(localTools, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && /^powershell-7\.\d+\.\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, "en", { numeric: true }));
+    candidates.push(...versions.map((version) => path.join(localTools, version, "pwsh.exe")));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  for (const candidate of candidates)
+    if (await exists(candidate)) return (powershellExecutable = candidate);
+  throw new Error(
+    "PowerShell 7 is required. Install it on PATH or in LOCALAPPDATA/spark233/toolchains/powershell-7.x.x, then retry pnpm dev.",
+  );
 }
 // Electron's TypeScript path helpers are not built yet. Use native filesystem
 // resolution here, limited to generated directories before recursive cleanup.
@@ -206,7 +239,7 @@ async function prepareResources(source, metadata) {
         );
       run(process.execPath, [path.join(source, "build.mjs"), "--native-build-dir", capture]);
     } else if (id === "spark233.clipboard") {
-      run("pwsh", [
+      run(await powershell(), [
         "-NoProfile",
         "-File",
         "scripts/native-clipboard/build.ps1",
@@ -215,14 +248,14 @@ async function prepareResources(source, metadata) {
       ]);
       run(process.execPath, [path.join(source, "build.mjs"), "--native-build-dir", clipboard]);
     } else if (id === "spark233.applications") {
-      run("pwsh", ["-NoProfile", "-File", "scripts/native-applications/build.ps1"]);
+      run(await powershell(), ["-NoProfile", "-File", "scripts/native-applications/build.ps1"]);
       run(process.execPath, [
         path.join(source, "build.mjs"),
         "--native-build-dir",
         path.join(project, "local-build/spark233/native-applications/build/bin"),
       ]);
     } else if (id === "spark233.search")
-      run("pwsh", ["-NoProfile", "-File", "scripts/native-search/build.ps1"]);
+      run(await powershell(), ["-NoProfile", "-File", "scripts/native-search/build.ps1"]);
     else throw new Error(`No native build recipe for ${id}`);
   }
   for (const { path: entry } of native)

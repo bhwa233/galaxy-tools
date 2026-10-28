@@ -54,6 +54,7 @@ import {
 } from "@/components/ui/context-menu";
 import { OcrWorkspace } from "../ocr/OcrWorkspace";
 import { ScreenshotHistoryWorkspace } from "../screenshot/ScreenshotHistoryWorkspace";
+import { SearchWorkspace } from "../search/SearchWorkspace";
 import { TranslationWorkspace } from "../translation/TranslationWorkspace";
 import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
 import { LauncherItemActions } from "./LauncherItemActions";
@@ -120,7 +121,9 @@ export function Launcher() {
   const compactWorkspace = routeParams.get("compact") === "1";
   const separateWorkspace = routeParams.has("workspace");
   const [workspace, setWorkspace] = useState<{ kind: string; result?: unknown } | undefined>(() =>
-    ["clipboard", "translation", "screenshot-history"].includes(routeParams.get("workspace") ?? "")
+    ["clipboard", "translation", "screenshot-history", "search"].includes(
+      routeParams.get("workspace") ?? "",
+    )
       ? { kind: routeParams.get("workspace")!, result: undefined }
       : undefined,
   );
@@ -896,6 +899,20 @@ export function Launcher() {
     );
   if (workspace?.kind === "clipboard")
     return workspaceFrame(<ClipboardPanel compact={compactWorkspace} onClose={close} />);
+  if (workspace?.kind === "search") {
+    const requested =
+      workspace.result && typeof workspace.result === "object" && "query" in workspace.result
+        ? workspace.result.query
+        : undefined;
+    const initialQuery = typeof requested === "string" ? requested : undefined;
+    return workspaceFrame(
+      <SearchWorkspace
+        key={initialQuery ?? "search"}
+        initialQuery={initialQuery}
+        onClose={close}
+      />,
+    );
+  }
   if (workspace?.kind === "screenshot-history")
     return workspaceFrame(<ScreenshotHistoryWorkspace onClose={close} />);
   if (separateWorkspace)

@@ -33,7 +33,9 @@ const application: LauncherPreferenceTarget = {
 };
 const presentation = { title: "入口", description: "合成样本" };
 
-describe("launcher preference persistence", () => {
+// These cases rewrite the preference file repeatedly; on a busy disk a single
+// case can exceed the 5s default without any behavioural change.
+describe("launcher preference persistence", { timeout: 30_000 }, () => {
   it("upgrades the legacy file without interleaved usage/onboarding writes erasing preferences", () => {
     const file = fixture();
     fs.writeFileSync(

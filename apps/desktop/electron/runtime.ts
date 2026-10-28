@@ -839,7 +839,7 @@ export interface Layout extends CapsuleEntry {
   bounds: Electron.Rectangle;
   visible: boolean;
   topmost: boolean;
-  workspace?: "clipboard" | "translation" | "ocr" | "screenshot-history";
+  workspace?: "clipboard" | "translation" | "ocr" | "screenshot-history" | "search";
   compact?: boolean;
   pluginId?: string;
 }

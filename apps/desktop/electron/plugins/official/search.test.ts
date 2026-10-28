@@ -31,7 +31,9 @@ type NativeRequest = {
 };
 
 function fixture(deferred = false) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-search-runtime-"));
+  const root = fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), "spark233-search-runtime-")),
+  );
   const pluginRoot = path.join(root, "plugin"),
     publicRoot = path.join(root, "public"),
     privateRoot = path.join(root, "private"),
@@ -161,7 +163,7 @@ describe("file search sessions and selection authority", () => {
     expect(f.openPath).toHaveBeenCalledExactlyOnceWith(f.visible);
     expect(f.revealPath).toHaveBeenCalledExactlyOnceWith(f.visible);
 
-    await expect(f.query("")).resolves.toEqual({ items: [] });
+    await expect(f.query("")).resolves.toMatchObject({ items: [] });
     await expect(
       f.runtime.activate({ commandId: "open", parameters: hit.parameters }),
     ).rejects.toThrow("Search selection expired");

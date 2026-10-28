@@ -29,7 +29,9 @@ describe("clipboard backend persistence and resource ownership", () => {
     "base64",
   );
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-clipboard-backend-"));
+    directory = fs.realpathSync.native(
+      fs.mkdtempSync(path.join(os.tmpdir(), "spark233-clipboard-backend-")),
+    );
     lifetime = {
       owner: { pluginId: "spark233.clipboard", version: "1.0.0", instanceId: randomUUID() },
       dataDir: path.join(directory, "data"),

@@ -26,7 +26,9 @@ it("follows OCR off/on/off within one capture session and rechecks availability 
   // Reuse the real CaptureController/session files; only its OS process boundary
   // is controlled. No native UI or duplicate native ocrAllowed implementation.
   vi.useFakeTimers();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-capture-availability-"));
+  const root = fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), "spark233-capture-availability-")),
+  );
   roots.push(root);
   const pluginRoot = path.join(root, "plugin"),
     executable = path.join(pluginRoot, "capture.exe");
@@ -123,7 +125,9 @@ it("follows OCR off/on/off within one capture session and rechecks availability 
 it("records a plain copy in history and never forwards it to OCR", async () => {
   // Copy, save and pin complete without OCR; only the OCR action may open a text
   // pane. History must still hold the image the user copied.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-capture-history-copy-"));
+  const root = fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), "spark233-capture-history-copy-")),
+  );
   roots.push(root);
   const pluginRoot = path.join(root, "plugin"),
     executable = path.join(pluginRoot, "capture.exe");

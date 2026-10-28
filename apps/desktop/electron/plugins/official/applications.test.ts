@@ -21,7 +21,10 @@ vi.mock("electron", () => ({
 describe("independent applications document boundaries", () => {
   let directory: string;
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-document-boundary-"));
+    // The host admits canonical targets; Windows CI TEMP may use an 8.3 alias.
+    directory = fs.realpathSync.native(
+      fs.mkdtempSync(path.join(os.tmpdir(), "spark233-document-boundary-")),
+    );
     vi.clearAllMocks();
   });
   afterEach(() => {

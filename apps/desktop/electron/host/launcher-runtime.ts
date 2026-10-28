@@ -258,7 +258,7 @@ export function createLauncherRuntime(
   }
 
   async function showOfficialWorkspace(
-    kind: "translation" | "ocr" | "screenshot-history",
+    kind: "translation" | "ocr" | "screenshot-history" | "search",
     result: unknown,
   ): Promise<void> {
     if (!launcherPresentationGuard()()) return;

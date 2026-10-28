@@ -84,6 +84,36 @@ export type ClipboardResponse =
   | ClipboardSettings
   | ClipboardDraft
   | { token: string; entries: ClipboardEntry[]; count: number; bytes: number; hasMore?: boolean };
+/** One workspace row; `searchHit` carries the raw index fields the table shows. */
+export interface SearchWorkspaceRow {
+  id: string;
+  title: string;
+  description?: string;
+  kind?: string;
+  commandId?: string;
+  parameters?: { selection?: string; callerId?: string; cursor?: string };
+  searchHit?: {
+    name: string;
+    path: string;
+    directory: boolean;
+    size?: string;
+    modified?: string;
+    extension: string;
+  };
+}
+export interface SearchWorkspacePage {
+  total: number;
+  /** Index totals are an upper bound until the admitted set has been walked. */
+  approximate: boolean;
+  hasMore: boolean;
+  cursor?: string;
+  revision?: string;
+}
+export interface SearchActionResponse {
+  items?: SearchWorkspaceRow[];
+  searchPage?: SearchWorkspacePage;
+  searchStatus?: { state: string; message?: string };
+}
 /** Every command has an explicit result; business plugins return JSON values. */
 interface CommandResults {
   app_exec_path: string;
@@ -183,6 +213,7 @@ interface CommandResults {
   save_external_file: void;
   /** History rows, or the outcome of a per-row action. */
   screenshot_action: JsonValue;
+  search_action: SearchActionResponse;
   search_scope_get: SearchScopeSettings;
   search_scope_pick: string | undefined;
   search_scope_save: SearchScopeSettings;

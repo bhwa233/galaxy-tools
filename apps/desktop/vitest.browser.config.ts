@@ -36,6 +36,7 @@ export default defineConfig(async (env) => {
     "src/features/notes/*.browser.test.tsx",
     "src/features/clipboard/*.browser.test.tsx",
     "src/features/translation/*.browser.test.tsx",
+    "src/features/search/*.browser.test.tsx",
   ];
   config.test!.exclude = [...configDefaults.exclude, "**/local-build/**", "**/dist/**"];
   config.test!.setupFiles = ["./src/locales/test-setup.ts", "./src/test/browser/setup.ts"];

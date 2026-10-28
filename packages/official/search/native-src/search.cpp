@@ -50,6 +50,11 @@ struct Request {
     size_t offset = 0, limit = 60;
     uint64_t maximum_file_bytes = 64ull * 1024 * 1024;
     bool include_hidden = true;
+    // Relevance ranking and explicit column ordering are mutually exclusive in
+    // the engine: an explicit sort is only honoured once rank is cleared.
+    bool rank = true;
+    std::wstring sort;
+    bool sort_desc = false;
     fs::path folder;
     bool Cancelled() const { return fs::exists(folder / L"cancel.request"); }
 };
@@ -58,13 +63,20 @@ struct Result {
     DWORD error = 0;
     uint64_t revision = 0;
     bool more = false;
+    // Approximate totals come from the index; exact totals are only published
+    // after the whole admitted set has been walked.
+    uint64_t total = 0;
+    bool total_approximate = true;
     std::vector<std::wstring> hits;
 };
 void Write(const Request& request, const Result& result) {
     std::wstring text = L"{\"protocol\":1,\"sessionId\":" + Quote(request.session) + L",\"owner\":" + request.owner +
         L",\"status\":" + Quote(result.status) + L",\"error\":" + std::to_wstring(result.error) +
         L",\"message\":" + Quote(result.message) + L",\"revision\":" + Quote(std::to_wstring(result.revision)) +
-        L",\"hasMore\":" + (result.more ? L"true" : L"false") + L",\"hits\":[";
+        L",\"hasMore\":" + (result.more ? L"true" : L"false") +
+        L",\"total\":" + Quote(std::to_wstring(result.total)) +
+        L",\"totalApproximate\":" + (result.total_approximate ? L"true" : L"false") +
+        L",\"hits\":[";
     for (size_t i = 0; i < result.hits.size(); ++i) { if (i) text += L","; text += result.hits[i]; }
     text += L"]";
     if (!verifiedServiceVersion.empty()) text += L",\"verifiedServiceVersion\":" + Quote(verifiedServiceVersion);
@@ -79,16 +91,28 @@ void Write(const Request& request, const Result& result) {
 }
 std::wstring Hit(const std::wstring& path, const std::wstring& name, bool directory,
                  const std::wstring& snippet = {}, uint32_t line = 0,
-                 const idx::ContentHit* content = nullptr) {
+                 const idx::ContentHit* content = nullptr,
+                 uint64_t size = 0, uint64_t modified = 0) {
+    // Both modes publish size and modification time: the filename index already
+    // carries them on every hit, so the workspace table never needs its own stat.
+    const uint64_t bytes = content ? content->size : size;
+    const uint64_t stamp = content ? content->modified : modified;
     return L"{\"path\":" + Quote(path) + L",\"name\":" + Quote(name) + L",\"directory\":" +
         (directory ? L"true" : L"false") + L",\"snippet\":" + Quote(snippet) + L",\"line\":" + std::to_wstring(line) +
+        L",\"size\":" + Quote(std::to_wstring(bytes)) +
+        L",\"modified\":" + Quote(std::to_wstring(stamp)) +
         (content ? L",\"fileId\":" + Quote(std::to_wstring(content->file_id)) +
-            L",\"size\":" + Quote(std::to_wstring(content->size)) +
-            L",\"modified\":" + Quote(std::to_wstring(content->modified)) +
             L",\"fileVersion\":" + Quote(content->file_version) : L"") + L"}";
 }
 Result Failure(std::wstring status, DWORD error, std::wstring message) {
     Result result; result.status = std::move(status); result.error = error; result.message = std::move(message); return result;
+}
+/** Host sorts are a closed set; anything else falls back to index order. */
+idx::ResultSort SortOrder(const std::wstring& value) {
+    if (value == L"name") return idx::ResultSort::Name;
+    if (value == L"size") return idx::ResultSort::Size;
+    if (value == L"mtime") return idx::ResultSort::Mtime;
+    return idx::ResultSort::Index;
 }
 Result CheckServiceVersion(fs::path* service_executable = nullptr, const std::wstring& expected = {});
 Result ServiceSnapshot(idx::IndexClient& index, const std::vector<idx::VolumeInfo>& volumes,
@@ -151,9 +175,15 @@ Result Query(const Request& request) {
         // after the host's private/user exclusions. Dropping hits from one raw
         // page would otherwise skip admitted files and publish false cursors.
         query.limit = idx::kSearchUiPageSize;
+        // An explicit column order replaces relevance ranking; the engine ignores
+        // sort while rank stays set.
+        query.rank = request.rank;
+        query.sort = SortOrder(request.sort);
+        query.sort_desc = request.sort_desc;
         size_t admitted = 0;
         uint32_t request_id = 0;
-        bool complete = false;
+        bool complete = false, exhausted = false;
+        uint64_t engine_total = 0;
         while (!complete && !request.Cancelled() && GetTickCount64() < deadline) {
             index.SearchAsync(query, ++request_id);
             idx::SearchResult found;
@@ -164,19 +194,24 @@ Result Query(const Request& request) {
             if (request_id > 1 && result.revision != found.revision)
                 return Failure(L"error", ERROR_RETRY, L"The filename index changed while applying exclusions. Retry the query.");
             result.revision = found.revision;
+            engine_total = found.total;
             for (const auto& hit : found.hits) {
                 if (idx::ContentPathExcluded(config, hit.path)) continue;
                 if (admitted++ < request.offset) continue;
                 if (result.hits.size() == request.limit) { result.more = true; complete = true; break; }
-                result.hits.push_back(Hit(hit.path, hit.name, hit.is_dir));
+                result.hits.push_back(Hit(hit.path, hit.name, hit.is_dir, {}, 0, nullptr, hit.size, hit.mtime));
             }
             query.offset += found.hits.size();
-            if (found.hits.empty() || query.offset >= found.total) complete = true;
+            if (found.hits.empty() || query.offset >= found.total) { complete = true; exhausted = true; }
             if (query.offset > UINT32_MAX) return Failure(L"error", ERROR_ARITHMETIC_OVERFLOW, L"Filename query exceeded the supported index range");
         }
         index.CancelSession(1);
         if (request.Cancelled()) return Failure(L"cancelled", ERROR_CANCELLED, L"Query cancelled");
         if (!complete) return Failure(L"error", ERROR_TIMEOUT, L"Filename query did not complete");
+        // A full walk yields the exact admitted count; a page-limited stop can
+        // only report the index total, which excludes nothing.
+        result.total = exhausted ? admitted : engine_total;
+        result.total_approximate = !exhausted;
         return result;
     }
     if (config.roots.empty()) return Failure(L"error", ERROR_PATH_NOT_FOUND, L"No enabled supported search volumes");
@@ -224,6 +259,9 @@ Result Query(const Request& request) {
     content.Cancel(1); content.Stop();
     if (request.Cancelled()) return Failure(L"cancelled", ERROR_CANCELLED, L"Query cancelled");
     if (!done || result.error) return Failure(L"error", done ? result.error : ERROR_TIMEOUT, L"Content query did not complete");
+    // Instant searches stream matches, so a completed walk is the only exact count.
+    result.total = count;
+    result.total_approximate = !done;
     return result;
 }
 
@@ -816,6 +854,10 @@ int wmain(int argc, wchar_t** argv) {
             }
             request.offset = static_cast<size_t>(json::ExtractInt(text, L"offset", 0));
             request.limit = static_cast<size_t>(json::ExtractInt(text, L"limit", 60));
+            request.sort = json::ExtractString(text, L"sort");
+            request.sort_desc = json::ExtractBool(text, L"sortDesc", false);
+            request.rank = json::ExtractBool(text, L"rank", true);
+            if (request.sort.size() > 8) throw std::runtime_error("Invalid sort order");
             if (json::ExtractInt(text, L"protocol") != 1 || request.session.empty() || request.session.size() > 128 ||
                 request.owner.empty() || request.needle.size() > 8192 || request.limit < 1 || request.limit > 200 || request.offset > 100000 ||
                 (!request.directory.empty() && !fs::path(request.directory).is_absolute()) ||

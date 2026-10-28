@@ -96,6 +96,7 @@ export const commandPolicies = {
   reminders_set: { serialized: true, modal: false, notes: true },
   save_external_file: { serialized: true, modal: false, notes: true },
   screenshot_action: { serialized: false, modal: false, notes: false },
+  search_action: { serialized: false, modal: false, notes: false },
   search_scope_get: { serialized: false, modal: false, notes: false },
   search_scope_pick: { serialized: false, modal: true, notes: false },
   search_scope_save: { serialized: false, modal: false, notes: false },

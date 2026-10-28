@@ -13,7 +13,9 @@ import type { CustomApplicationEntry } from "../src/features/applications/types.
 describe("custom application entry admission", () => {
   let directory: string;
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-entry-admission-"));
+    directory = fs.realpathSync.native(
+      fs.mkdtempSync(path.join(os.tmpdir(), "spark233-entry-admission-")),
+    );
   });
   afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -139,6 +141,10 @@ describe("custom application entry admission", () => {
     fs.writeFileSync(unknown, "unknown type; never opened");
     fs.writeFileSync(pdf, "ordinary document fixture; never opened");
     expect(classifyApplicationEntry(pdf)).toEqual({ path: pdf, kind: "document" });
+    // A picker may return TEMP's 8.3 spelling; downstream async realpath checks
+    // must see the same canonical identity admitted by the synchronous host.
+    const tempAlias = path.join(os.tmpdir(), path.basename(directory), "ordinary.PDF");
+    expect(classifyApplicationEntry(tempAlias)).toEqual({ path: pdf, kind: "document" });
     for (const file of [script, installer, unlistedScript, unknown]) {
       expect(() => classifyApplicationEntry(file)).toThrow(
         expect.objectContaining({ code: "invalidApplication" }),
