@@ -1,4 +1,5 @@
-param([string]$ElectronExe)
+#Requires -Version 7.0
+param([string]$ElectronExe, [switch]$LauncherMaintenanceOnly)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $desktop = Join-Path $repo 'apps/desktop'
@@ -17,11 +18,14 @@ try {
   # The native helper starts paused until it receives this isolated persisted policy.
   Push-Location -LiteralPath $repo
   try {
-    node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import { ClipboardHistory } from "./apps/desktop/dist-electron/electron/plugins/official/clipboard-history.js"; const history = new ClipboardHistory(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/data/spark233.clipboard")); history.saveSettings({paused:true}); history.close(); fs.writeFileSync(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/state.json"), JSON.stringify({schemaVersion:1,plugins:{},dataVersions:{"spark233.clipboard":{dataVersion:1,pluginVersion:"0.1.0",packageName:"@spark233/plugin-clipboard"}}}));'
+    @'
+import fs from "node:fs"; import path from "node:path"; import { defaultConfig } from "./apps/desktop/dist-electron/electron/host-config.js"; const hostDir = path.join(process.env.SPARK233_CONFIG_DIR, "host"); fs.mkdirSync(hostDir, {recursive:true}); fs.writeFileSync(path.join(hostDir,"config.json"), JSON.stringify({...defaultConfig(process.env.SPARK233_DATA_DIR),globalShortcut:"",toggleVisibilityShortcut:""})); import { ClipboardHistory } from "./apps/desktop/dist-electron/electron/plugins/official/clipboard-history.js"; const history = new ClipboardHistory(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/data/spark233.clipboard")); history.saveSettings({paused:true}); history.close(); fs.writeFileSync(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/state.json"), JSON.stringify({schemaVersion:1,plugins:{},dataVersions:{"spark233.clipboard":{dataVersion:1,pluginVersion:"0.1.0",packageName:"@spark233/plugin-clipboard"}}}));
+'@ | & node --input-type=module
     if ($LASTEXITCODE -ne 0) { throw 'Could not pause the isolated clipboard recorder before smoke startup' }
   } finally { Pop-Location }
   $report = Join-Path $run 'report.json'
   $applicationArgs = @(('"' + $desktop + '"'), ('"--smoke-output=' + $report + '"'))
+  if ($LauncherMaintenanceOnly) { $applicationArgs += "--smoke-launcher-maintenance" }
   $startedAt = [DateTimeOffset]::UtcNow
   $process = Start-Process -FilePath $ElectronExe -ArgumentList $applicationArgs -WorkingDirectory $repo -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $run 'stdout.log') -RedirectStandardError (Join-Path $run 'stderr.log')
   $processEvidenceFile = Join-Path $run 'process.json'

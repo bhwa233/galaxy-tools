@@ -1,11 +1,17 @@
-import { useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke, listen } from "../../platform/desktop";
-import type { CapsuleItem, CapsuleSnapshot } from "./types";
-import "./capsules.css";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../markdown/MarkdownPreviewLazy";
-function run(command: string, args?: unknown) {
-  void invoke(command, args).catch(console.error);
+import "./capsules.css";
+import type { CapsuleItem, CapsuleSnapshot } from "./types";
+function run<C extends import("../../../shared/command-policies").CommandName>(
+  command: C,
+  ...input: undefined extends import("../../../shared/desktop-contract").Commands[C]["args"]
+    ? [args?: import("../../../shared/desktop-contract").Commands[C]["args"]]
+    : [args: import("../../../shared/desktop-contract").Commands[C]["args"]]
+) {
+  void invoke(command, ...input).catch(console.error);
 }
 /** Vector marks share a fixed box so glyph fallback cannot change their visual center. */
 function CapsuleMark({ expanded }: { expanded: boolean }) {
@@ -39,14 +45,15 @@ function CapsuleMark({ expanded }: { expanded: boolean }) {
   );
 }
 export function CapsuleHost() {
+  const { t } = useTranslation();
   const [state, setState] = useState<CapsuleSnapshot>();
   const gesture = useRef<{ pointerId: number; x: number; y: number; dragging: boolean } | null>(
     null,
   );
   const suppressClick = useRef(false);
   useEffect(() => {
-    const off = listen<CapsuleSnapshot>("capsule-state", (e) => setState(e.payload));
-    void invoke<CapsuleSnapshot>("capsule_state").then(setState).catch(console.error);
+    const off = listen("capsule-state", (e) => setState(e.payload));
+    void invoke("capsule_state").then(setState).catch(console.error);
     return () => {
       void off.then((fn) => fn());
     };
@@ -88,12 +95,12 @@ export function CapsuleHost() {
   if (!state) return null;
   if (state.kind === "preview" && state.note)
     return (
-      <section className="capsule-preview" aria-label="便签预览">
+      <section className="capsule-preview" aria-label={t("capsules.preview")}>
         <header>
           <CapsuleMark expanded={false} />
-          <strong>{state.note.title || "无标题便签"}</strong>
+          <strong>{state.note.title || t("common.untitledNote")}</strong>
           <button type="button" onClick={() => run("capsule_open", { id: state.note!.id })}>
-            展开 ↗
+            {t("capsules.expand")} ↗
           </button>
         </header>
         <div className="capsule-preview-body" key={state.note.id}>
@@ -104,10 +111,10 @@ export function CapsuleHost() {
               imageDisplay={state.imageDisplay}
             />
           ) : (
-            <pre>{state.note.content || "空白便签"}</pre>
+            <pre>{state.note.content || t("capsules.empty")}</pre>
           )}
         </div>
-        <footer>悬停速览 · 点击展开后编辑</footer>
+        <footer>{t("capsules.previewHint")}</footer>
       </section>
     );
   return (
@@ -142,11 +149,14 @@ export function CapsuleHost() {
             className={`capsule-pill ${item.master ? "capsule-master" : item.expanded ? "capsule-expanded" : ""}`}
             aria-label={
               item.master
-                ? `spark233，${item.count} 张便签，${item.collapsed ? "展开" : "收起"}队列`
+                ? t("capsules.master", {
+                    count: item.count,
+                    action: t(item.collapsed ? "capsules.expand" : "capsules.collapse"),
+                  })
                 : item.title
             }
             aria-expanded={item.master ? !item.collapsed : undefined}
-            title={item.master ? "点击展开或收起队列，拖动调整位置" : item.title}
+            title={item.master ? t("capsules.masterHint") : item.title}
             onPointerDown={press}
             onPointerMove={(event) => move(event, item)}
             onPointerUp={finish}
@@ -221,8 +231,8 @@ export function CapsuleHost() {
               type="button"
               className="capsule-close"
               data-capsule-close={item.id}
-              aria-label={`隐藏便签：${item.title}`}
-              title="隐藏到托盘，保留内容"
+              aria-label={t("capsules.hideNote", { title: item.title })}
+              title={t("capsules.hideHint")}
               onClick={(e) => {
                 e.stopPropagation();
                 run("capsule_hide", { id: item.id });

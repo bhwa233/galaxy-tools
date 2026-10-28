@@ -10,14 +10,15 @@
   "scripts": {
     "dev": "pnpm electron:install && node scripts/dev-electron.mjs",
     "dev:web": "vite --host 127.0.0.1",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
-    "build": "pnpm typecheck && vite build && pnpm -w plugins:build && tsc -p electron/tsconfig.json && node scripts/copy-electron-assets.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p electron/tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+    "build": "pnpm typecheck && pnpm build:assets",
     "start": "pnpm electron:install && electron .",
     "test": "vitest run",
     "test:ui": "vitest run --config vitest.browser.config.ts",
     "pack:win": "pnpm build && electron-builder --win --x64 --dir",
     "dist:win": "pnpm build && electron-builder --win nsis --x64",
-    "electron:install": "node -e \"require('node:child_process').execFileSync(process.execPath,[require.resolve('electron/install.js')],{stdio:'inherit'})\""
+    "electron:install": "node -e \"require('node:child_process').execFileSync(process.execPath,[require.resolve('electron/install.js')],{stdio:'inherit'})\"",
+    "build:assets": "vite build && pnpm -w plugins:build && tsc -p electron/tsconfig.json && node scripts/copy-electron-assets.mjs"
   },
   "dependencies": {
     "@spark233/sdk": "workspace:*",

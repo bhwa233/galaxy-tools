@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-screenshot",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "spark233 native screenshot and optional OCR transfer",
   "license": "MIT",
   "files": [
@@ -13,7 +13,8 @@
   "type": "module",
   "scripts": {
     "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.screenshot",
-    "build:native": "node build.mjs"
+    "build:native": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "spark233": {
     "schemaVersion": 1,
@@ -40,6 +41,20 @@
       }
     },
     "commands": [
+      {
+        "id": "history",
+        "title": "截图历史",
+        "keywords": [
+          "截图历史",
+          "截图记录",
+          "screenshot history"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Screenshot history"
+          }
+        }
+      },
       {
         "id": "capture",
         "title": "截图",
@@ -93,6 +108,13 @@
       "en-US": {
         "displayName": "Screenshot"
       }
-    }
+    },
+    "tray": [
+      {
+        "id": "capture",
+        "commandId": "capture",
+        "order": 0
+      }
+    ]
   }
 }

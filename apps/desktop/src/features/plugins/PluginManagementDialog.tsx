@@ -83,6 +83,7 @@ const capabilityLabels: Record<PluginSummary["capabilities"][number], string> = 
   storage: "插件私有存储",
   windows: "插件窗口",
   shortcuts: "全局快捷键",
+  tray: "更新本插件托盘菜单状态",
   notifications: "系统通知",
   network: "网络访问",
   "files.read": "读取授权文件",

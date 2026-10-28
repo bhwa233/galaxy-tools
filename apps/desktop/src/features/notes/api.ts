@@ -1,5 +1,5 @@
 import { t, type TFunction } from "i18next";
-import { invoke } from "../../platform/desktop";
+import { invokeCommand as invoke } from "../../platform/desktop";
 import type { Note, NoteMetadata, NoteEditorMode, SaveNoteRequest } from "./types";
 
 interface SerializedAppError {

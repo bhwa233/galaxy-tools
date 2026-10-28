@@ -70,6 +70,7 @@ interface McpTool {
   description: string;
   inputSchema: Record<string, unknown>;
   permission: McpPermission;
+  requiredPermission?: (args: Record<string, unknown>) => McpPermission;
   run: (args: Record<string, unknown>, ops: McpOps) => unknown;
 }
 
@@ -143,7 +144,7 @@ const TOOLS: McpTool[] = [
   },
   {
     name: "spark233_write_note",
-    description: "写入便签正文：append 追加到末尾，replace 整篇替换。",
+    description: "写入便签正文：append 追加到末尾；replace 整篇替换，需要完全控制权限。",
     inputSchema: {
       type: "object",
       properties: {
@@ -154,6 +155,7 @@ const TOOLS: McpTool[] = [
       required: ["id", "content", "mode"],
     },
     permission: "append",
+    requiredPermission: (args) => (args.mode === "replace" ? "full" : "append"),
     run: (args, ops) => {
       const mode =
         args.mode === "replace" ? "replace" : args.mode === "append" ? "append" : undefined;
@@ -267,17 +269,17 @@ export async function handleLine(line: string, context: McpContext): Promise<str
         args = message.params?.arguments;
       const tool = TOOLS.find((candidate) => candidate.name === name);
       if (!tool) return errorResponse(id, -32602, `未知工具: ${String(name)}`);
-      if (!allows(context.permission, tool.permission))
+      const toolArgs: Record<string, unknown> =
+        args && typeof args === "object" && !Array.isArray(args)
+          ? (args as Record<string, unknown>)
+          : {};
+      if (!allows(context.permission, tool.requiredPermission?.(toolArgs) ?? tool.permission))
         return errorResponse(
           id,
           -32602,
           `工具 ${tool.name} 需要更高 MCP 权限（当前: ${context.permission}），请在spark233设置中调整`,
         );
       try {
-        const toolArgs: Record<string, unknown> =
-          args && typeof args === "object" && !Array.isArray(args)
-            ? (args as Record<string, unknown>)
-            : {};
         return toolResult(id, await tool.run(toolArgs, context.ops));
       } catch (error) {
         if (error instanceof McpToolError) return toolError(id, error.message);

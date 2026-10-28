@@ -18,6 +18,9 @@ namespace idx = pulse::index;
 namespace json = pulse::json;
 namespace fs = std::filesystem;
 namespace {
+fs::path managementCancellation;
+ULONGLONG managementDeadline = 0;
+std::wstring verifiedServiceVersion;
 std::wstring Wide(const std::string& value) {
     const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0);
     if (!n && !value.empty()) throw std::runtime_error("Invalid UTF-8");
@@ -42,11 +45,16 @@ std::wstring Read(const fs::path& file) {
     return text;
 }
 struct Request {
-    std::wstring session, owner, action, mode, needle, directory, profile, fixture_pipe;
+    std::wstring session, owner, action, mode, needle, directory, profile, fixture_pipe, verified_service_version;
     std::vector<std::wstring> fixture_roots, private_roots, extensions;
     size_t offset = 0, limit = 60;
     uint64_t maximum_file_bytes = 64ull * 1024 * 1024;
     bool include_hidden = true;
+    // Relevance ranking and explicit column ordering are mutually exclusive in
+    // the engine: an explicit sort is only honoured once rank is cleared.
+    bool rank = true;
+    std::wstring sort;
+    bool sort_desc = false;
     fs::path folder;
     bool Cancelled() const { return fs::exists(folder / L"cancel.request"); }
 };
@@ -55,15 +63,23 @@ struct Result {
     DWORD error = 0;
     uint64_t revision = 0;
     bool more = false;
+    // Approximate totals come from the index; exact totals are only published
+    // after the whole admitted set has been walked.
+    uint64_t total = 0;
+    bool total_approximate = true;
     std::vector<std::wstring> hits;
 };
 void Write(const Request& request, const Result& result) {
     std::wstring text = L"{\"protocol\":1,\"sessionId\":" + Quote(request.session) + L",\"owner\":" + request.owner +
         L",\"status\":" + Quote(result.status) + L",\"error\":" + std::to_wstring(result.error) +
         L",\"message\":" + Quote(result.message) + L",\"revision\":" + Quote(std::to_wstring(result.revision)) +
-        L",\"hasMore\":" + (result.more ? L"true" : L"false") + L",\"hits\":[";
+        L",\"hasMore\":" + (result.more ? L"true" : L"false") +
+        L",\"total\":" + Quote(std::to_wstring(result.total)) +
+        L",\"totalApproximate\":" + (result.total_approximate ? L"true" : L"false") +
+        L",\"hits\":[";
     for (size_t i = 0; i < result.hits.size(); ++i) { if (i) text += L","; text += result.hits[i]; }
     text += L"]";
+    if (!verifiedServiceVersion.empty()) text += L",\"verifiedServiceVersion\":" + Quote(verifiedServiceVersion);
     if (!result.service.empty()) text += L",\"service\":" + result.service;
     text += L"}";
     auto bytes = Utf8(text);
@@ -75,18 +91,30 @@ void Write(const Request& request, const Result& result) {
 }
 std::wstring Hit(const std::wstring& path, const std::wstring& name, bool directory,
                  const std::wstring& snippet = {}, uint32_t line = 0,
-                 const idx::ContentHit* content = nullptr) {
+                 const idx::ContentHit* content = nullptr,
+                 uint64_t size = 0, uint64_t modified = 0) {
+    // Both modes publish size and modification time: the filename index already
+    // carries them on every hit, so the workspace table never needs its own stat.
+    const uint64_t bytes = content ? content->size : size;
+    const uint64_t stamp = content ? content->modified : modified;
     return L"{\"path\":" + Quote(path) + L",\"name\":" + Quote(name) + L",\"directory\":" +
         (directory ? L"true" : L"false") + L",\"snippet\":" + Quote(snippet) + L",\"line\":" + std::to_wstring(line) +
+        L",\"size\":" + Quote(std::to_wstring(bytes)) +
+        L",\"modified\":" + Quote(std::to_wstring(stamp)) +
         (content ? L",\"fileId\":" + Quote(std::to_wstring(content->file_id)) +
-            L",\"size\":" + Quote(std::to_wstring(content->size)) +
-            L",\"modified\":" + Quote(std::to_wstring(content->modified)) +
             L",\"fileVersion\":" + Quote(content->file_version) : L"") + L"}";
 }
 Result Failure(std::wstring status, DWORD error, std::wstring message) {
     Result result; result.status = std::move(status); result.error = error; result.message = std::move(message); return result;
 }
-Result CheckServiceVersion(fs::path* service_executable = nullptr);
+/** Host sorts are a closed set; anything else falls back to index order. */
+idx::ResultSort SortOrder(const std::wstring& value) {
+    if (value == L"name") return idx::ResultSort::Name;
+    if (value == L"size") return idx::ResultSort::Size;
+    if (value == L"mtime") return idx::ResultSort::Mtime;
+    return idx::ResultSort::Index;
+}
+Result CheckServiceVersion(fs::path* service_executable = nullptr, const std::wstring& expected = {});
 Result ServiceSnapshot(idx::IndexClient& index, const std::vector<idx::VolumeInfo>& volumes,
                        const std::vector<std::wstring>& effective_exclusions) {
     Result result;
@@ -120,7 +148,7 @@ Result Query(const Request& request) {
     if (request.fixture_pipe.empty() && !index.ServiceInstalled())
         return Failure(L"service-not-installed", ERROR_SERVICE_DOES_NOT_EXIST, L"Install the spark233 NTFS search service with administrator confirmation.");
     if (request.fixture_pipe.empty()) {
-        const auto version = CheckServiceVersion();
+        const auto version = CheckServiceVersion(nullptr, request.verified_service_version);
         if (version.status != L"ok") return version;
     }
     index.Start(nullptr, 0, 0, request.fixture_pipe.empty() ? idx::kPipeName : request.fixture_pipe);
@@ -131,7 +159,7 @@ Result Query(const Request& request) {
     while ((!index.Connected() || (request.fixture_roots.empty() && !index.GetScope(volumes, exclusions))) &&
            !request.Cancelled() && GetTickCount64() < connection_deadline) Sleep(10);
     if (request.Cancelled()) return Failure(L"cancelled", ERROR_CANCELLED, L"Query cancelled");
-    if (!index.Connected()) return Failure(L"service-unavailable", ERROR_TIMEOUT, L"The installed search service is unavailable. Retry after it starts.");
+    if (!index.Connected() || (request.fixture_roots.empty() && !index.GetScope(volumes, exclusions))) return Failure(L"service-unavailable", ERROR_TIMEOUT, L"The installed search service is unavailable. Retry after it starts.");
     if (request.action == L"service-status") return ServiceSnapshot(index, volumes, exclusions);
     idx::ContentIndexConfig config;
     if (!request.fixture_roots.empty()) {
@@ -147,9 +175,15 @@ Result Query(const Request& request) {
         // after the host's private/user exclusions. Dropping hits from one raw
         // page would otherwise skip admitted files and publish false cursors.
         query.limit = idx::kSearchUiPageSize;
+        // An explicit column order replaces relevance ranking; the engine ignores
+        // sort while rank stays set.
+        query.rank = request.rank;
+        query.sort = SortOrder(request.sort);
+        query.sort_desc = request.sort_desc;
         size_t admitted = 0;
         uint32_t request_id = 0;
-        bool complete = false;
+        bool complete = false, exhausted = false;
+        uint64_t engine_total = 0;
         while (!complete && !request.Cancelled() && GetTickCount64() < deadline) {
             index.SearchAsync(query, ++request_id);
             idx::SearchResult found;
@@ -160,19 +194,24 @@ Result Query(const Request& request) {
             if (request_id > 1 && result.revision != found.revision)
                 return Failure(L"error", ERROR_RETRY, L"The filename index changed while applying exclusions. Retry the query.");
             result.revision = found.revision;
+            engine_total = found.total;
             for (const auto& hit : found.hits) {
                 if (idx::ContentPathExcluded(config, hit.path)) continue;
                 if (admitted++ < request.offset) continue;
                 if (result.hits.size() == request.limit) { result.more = true; complete = true; break; }
-                result.hits.push_back(Hit(hit.path, hit.name, hit.is_dir));
+                result.hits.push_back(Hit(hit.path, hit.name, hit.is_dir, {}, 0, nullptr, hit.size, hit.mtime));
             }
             query.offset += found.hits.size();
-            if (found.hits.empty() || query.offset >= found.total) complete = true;
+            if (found.hits.empty() || query.offset >= found.total) { complete = true; exhausted = true; }
             if (query.offset > UINT32_MAX) return Failure(L"error", ERROR_ARITHMETIC_OVERFLOW, L"Filename query exceeded the supported index range");
         }
         index.CancelSession(1);
         if (request.Cancelled()) return Failure(L"cancelled", ERROR_CANCELLED, L"Query cancelled");
         if (!complete) return Failure(L"error", ERROR_TIMEOUT, L"Filename query did not complete");
+        // A full walk yields the exact admitted count; a page-limited stop can
+        // only report the index total, which excludes nothing.
+        result.total = exhausted ? admitted : engine_total;
+        result.total_approximate = !exhausted;
         return result;
     }
     if (config.roots.empty()) return Failure(L"error", ERROR_PATH_NOT_FOUND, L"No enabled supported search volumes");
@@ -220,6 +259,9 @@ Result Query(const Request& request) {
     content.Cancel(1); content.Stop();
     if (request.Cancelled()) return Failure(L"cancelled", ERROR_CANCELLED, L"Query cancelled");
     if (!done || result.error) return Failure(L"error", done ? result.error : ERROR_TIMEOUT, L"Content query did not complete");
+    // Instant searches stream matches, so a completed walk is the only exact count.
+    result.total = count;
+    result.total_approximate = !done;
     return result;
 }
 
@@ -324,7 +366,26 @@ bool SameContents(const fs::path& first, const fs::path& second) {
         if (!a || !b) return false;
     }
 }
-Result CheckServiceVersion(fs::path* service_executable) {
+// A version directory is immutable and protected by the machine ACL. Bind
+// the per-plugin-instance cache to both roots and every file's OS identity,
+// size and change/write times. New installations, replaced files and writes
+// invalidate it; an uncached identity always performs the full byte comparison.
+std::wstring ServiceFileIdentity(const fs::path& file) {
+    if (!NoReparse(file) || !fs::is_regular_file(file)) return {};
+    HANDLE handle = CreateFileW(file.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return {};
+    BY_HANDLE_FILE_INFORMATION info{}; FILE_BASIC_INFO basic{};
+    const bool valid = GetFileInformationByHandle(handle, &info) &&
+        GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic));
+    CloseHandle(handle);
+    if (!valid || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) return {};
+    return std::to_wstring(info.dwVolumeSerialNumber) + L":" + std::to_wstring(info.nFileIndexHigh) + L":" +
+        std::to_wstring(info.nFileIndexLow) + L":" + std::to_wstring(info.nFileSizeHigh) + L":" +
+        std::to_wstring(info.nFileSizeLow) + L":" + std::to_wstring(basic.ChangeTime.QuadPart) + L":" +
+        std::to_wstring(basic.LastWriteTime.QuadPart);
+}
+Result CheckServiceVersion(fs::path* service_executable, const std::wstring& expected) {
     fs::path root;
     DWORD error = ProtectedRoot(root);
     if (error) return Failure(L"service-unavailable", error, L"Protected search location is unavailable.");
@@ -350,10 +411,25 @@ Result CheckServiceVersion(fs::path* service_executable) {
     if (!arguments || count != 2) { if (arguments) LocalFree(arguments); return Failure(L"service-unavailable", ERROR_INVALID_DATA, L"Search service command could not be read."); }
     const auto installed = fs::path(arguments[0]).parent_path(); LocalFree(arguments);
     const auto packaged = Self().parent_path();
-    for (const auto* name : {L"spark233.Index.exe", L"spark233.Document.exe", L"pdfium.dll"})
-        if (!SameContents(installed / name, packaged / name))
-            return Failure(L"service-update-required", ERROR_REVISION_MISMATCH,
-                L"This plugin includes an updated search service. Confirm its installation to switch the protected machine service.");
+    const auto identity = [&]() {
+        std::wstring key = installed.wstring() + L"|" + packaged.wstring();
+        for (const auto* name : {L"spark233.Index.exe", L"spark233.Document.exe", L"pdfium.dll"}) {
+            const auto machine = ServiceFileIdentity(installed / name), bundled = ServiceFileIdentity(packaged / name);
+            if (machine.empty() || bundled.empty()) return std::wstring{};
+            key += L"|" + machine + L"|" + bundled;
+        }
+        return key;
+    };
+    const auto key = identity();
+    if (key.empty() || key.size() > 8192) return Failure(L"service-unavailable", ERROR_INVALID_DATA, L"Search service version identity is unavailable.");
+    if (expected != key) {
+        for (const auto* name : {L"spark233.Index.exe", L"spark233.Document.exe", L"pdfium.dll"})
+            if (!SameContents(installed / name, packaged / name))
+                return Failure(L"service-update-required", ERROR_REVISION_MISMATCH,
+                    L"This plugin includes an updated search service. Confirm its installation to switch the protected machine service.");
+        if (identity() != key) return Failure(L"service-unavailable", ERROR_RETRY, L"Search service files changed during verification.");
+    }
+    verifiedServiceVersion = key;
     if (service_executable) *service_executable = installed / L"spark233.Index.exe";
     return Result{};
 }
@@ -386,17 +462,59 @@ DWORD StopServiceNormally(SC_HANDLE service) {
     return status.dwCurrentState == SERVICE_STOPPED ? ERROR_SUCCESS : ERROR_SERVICE_REQUEST_TIMEOUT;
 }
 DWORD Run(const fs::path& executable, const std::wstring& arguments) {
-    // Executable and arguments are fixed by this helper, never a shell command.
+    // Fixed management subprocesses have a finite budget and cannot outlive
+    // their elevated helper. This job is never used for plugin save refusal.
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) return GetLastError();
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        const auto error = GetLastError(); CloseHandle(job); return error;
+    }
     std::wstring command = L"\"" + executable.wstring() + L"\" " + arguments;
     STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_USESHOWWINDOW; startup.wShowWindow = SW_HIDE;
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                        executable.parent_path().c_str(), &startup, &process)) return GetLastError();
-    CloseHandle(process.hThread);
-    WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD code = ERROR_GEN_FAILURE; GetExitCodeProcess(process.hProcess, &code); CloseHandle(process.hProcess); return code;
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+                        executable.parent_path().c_str(), &startup, &process)) {
+        const auto error = GetLastError(); CloseHandle(job); return error;
+    }
+    DWORD code = ERROR_GEN_FAILURE;
+    if (!AssignProcessToJobObject(job, process.hProcess)) {
+        code = GetLastError(); TerminateProcess(process.hProcess, code);
+    } else {
+        ResumeThread(process.hThread);
+        const auto deadline = managementDeadline ? managementDeadline : GetTickCount64() + 120000;
+        for (;;) {
+            const auto waited = WaitForSingleObject(process.hProcess, 100);
+            if (waited == WAIT_OBJECT_0) { GetExitCodeProcess(process.hProcess, &code); break; }
+            if (waited == WAIT_FAILED) { code = GetLastError(); break; }
+            std::error_code error;
+            if (!managementCancellation.empty() && fs::exists(managementCancellation / L"cancel.request", error)) {
+                code = ERROR_CANCELLED; break;
+            }
+            if (GetTickCount64() >= deadline) { code = ERROR_TIMEOUT; break; }
+        }
+    }
+    CloseHandle(job); // cancels the fixed child before releasing management locks
+    WaitForSingleObject(process.hProcess, 5000);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess); return code;
+}
+DWORD AwaitElevated(HANDLE process, const Request* request = nullptr) {
+    const auto deadline = GetTickCount64() + 150000;
+    bool cancelled = false;
+    for (;;) {
+        const auto waited = WaitForSingleObject(process, 100);
+        if (waited == WAIT_OBJECT_0) { DWORD code = ERROR_GEN_FAILURE; GetExitCodeProcess(process, &code); return cancelled && !code ? ERROR_CANCELLED : code; }
+        if (waited == WAIT_FAILED) return GetLastError();
+        // The host's cancel.request is observed by the elevated Run() loop.
+        // Wait for that owner to release its locks rather than killing a UAC process.
+        if (request && request->Cancelled()) cancelled = true;
+        if (GetTickCount64() >= deadline) return ERROR_TIMEOUT;
+    }
 }
 DWORD ConfigureProtected(const fs::path& filename) {
+    managementCancellation = filename.parent_path();
     // The elevated process may only run the owned SCM executable. Environment
     // overrides used by isolated fixtures must never redirect machine writes.
     SetEnvironmentVariableW(L"SPARK233_SEARCH_MACHINE_ROOT", nullptr);
@@ -457,8 +575,7 @@ Result AuthorizeConfiguration(const Request& request) {
         const DWORD error = GetLastError();
         return Failure(error == ERROR_CANCELLED ? L"authorization-denied" : L"error", error, L"Windows service management was declined or could not start.");
     }
-    WaitForSingleObject(shell.hProcess, INFINITE);
-    DWORD code = ERROR_GEN_FAILURE; GetExitCodeProcess(shell.hProcess, &code); CloseHandle(shell.hProcess);
+    const DWORD code = AwaitElevated(shell.hProcess, &request); CloseHandle(shell.hProcess);
     return code ? Failure(L"error", code, code == ERROR_PARTIAL_COPY ? L"Some service settings could not be restored. Refresh service status before retrying." : L"Service configuration did not complete. Refresh status and retry.") : Result{};
 }
 DWORD CopyPayload(const fs::path& input, const fs::path& output) {
@@ -548,10 +665,10 @@ DWORD InstallProtected() {
     const BOOL secured = SetFileSecurityW(protected_root.c_str(), DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, descriptor);
     if (!secured) { const DWORD error = GetLastError(); LocalFree(descriptor); return error; }
     // New unpredictable child avoids overwriting a currently running service.
-    GUID guid{}; if (FAILED(CoCreateGuid(&guid))) return ERROR_GEN_FAILURE;
+    GUID guid{}; if (FAILED(CoCreateGuid(&guid))) { LocalFree(descriptor); return ERROR_GEN_FAILURE; }
     wchar_t name[40]{}; StringFromGUID2(guid, name, 40);
     const auto destination = protected_root / (std::wstring(L"search-0.1.0-") + name);
-    if (!NoReparse(destination)) return ERROR_REPARSE_TAG_INVALID;
+    if (!NoReparse(destination)) { LocalFree(descriptor); return ERROR_REPARSE_TAG_INVALID; }
     if (!CreateDirectoryW(destination.c_str(), &security)) { const DWORD error = GetLastError(); LocalFree(descriptor); return error; }
     LocalFree(descriptor);
     const auto source = Self().parent_path();
@@ -638,7 +755,7 @@ DWORD UninstallProtected() {
     }
     ReleaseMutex(mutex); CloseHandle(mutex); return result;
 }
-Result AuthorizeServiceAction(bool uninstall = false) {
+Result AuthorizeServiceAction(bool uninstall = false, const Request* request = nullptr) {
     if (!uninstall && CheckServiceVersion().status == L"ok") return Result{};
     if (uninstall) {
         // A user who declined the optional service should not see an unrelated
@@ -664,15 +781,16 @@ Result AuthorizeServiceAction(bool uninstall = false) {
     SHELLEXECUTEINFOW shell{sizeof(shell)};
     shell.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
     shell.lpVerb = L"runas"; shell.lpFile = executable.c_str();
-    shell.lpParameters = uninstall ? L"--elevated-uninstall" : L"--elevated-install"; shell.nShow = SW_HIDE;
+    std::wstring parameters = uninstall ? L"--elevated-uninstall" : L"--elevated-install";
+    if (request) parameters += L" " + pulse::QuoteWindowsArgument(request->folder.wstring());
+    shell.lpParameters = parameters.c_str(); shell.nShow = SW_HIDE;
     if (!ShellExecuteExW(&shell)) {
         const DWORD error = GetLastError();
         return Failure(error == ERROR_CANCELLED ? L"authorization-denied" : L"error", error,
                        uninstall ? L"Windows service removal was declined or could not start. The service was retained." :
                                    L"Windows service installation was declined or could not start. You can retry.");
     }
-    WaitForSingleObject(shell.hProcess, INFINITE);
-    DWORD code = ERROR_GEN_FAILURE; GetExitCodeProcess(shell.hProcess, &code); CloseHandle(shell.hProcess);
+    const DWORD code = AwaitElevated(shell.hProcess, request); CloseHandle(shell.hProcess);
     return code ? Failure(L"error", code, uninstall ? L"Search service removal failed. Remaining protected files were retained." :
                                                        L"Search service installation failed. You can retry.") : Result{};
 }
@@ -687,13 +805,18 @@ int wmain(int argc, wchar_t** argv) {
     } management;
     try {
         if (argc >= 2 && std::wstring_view(argv[1]).starts_with(L"--elevated-")) {
+            managementDeadline = GetTickCount64() + 120000;
+            if (argc == 3 && std::wstring_view(argv[1]) != L"--elevated-service") {
+                managementCancellation = fs::path(argv[2]);
+                if (!managementCancellation.is_absolute()) throw std::runtime_error("Invalid cancellation path");
+            }
             management.mutex = CreateMutexW(nullptr, FALSE, L"Global\\spark233HostServiceManagement");
             if (!management.mutex) throw std::runtime_error("Service management lock unavailable");
             const DWORD waited = WaitForSingleObject(management.mutex, 30000);
             if (waited != WAIT_OBJECT_0 && waited != WAIT_ABANDONED) { CloseHandle(management.mutex); management.mutex = nullptr; throw std::runtime_error("Service management is busy"); }
         }
-        if (argc == 2 && std::wstring_view(argv[1]) == L"--elevated-install") code = static_cast<int>(InstallProtected());
-        else if (argc == 2 && std::wstring_view(argv[1]) == L"--elevated-uninstall") code = static_cast<int>(UninstallProtected());
+        if ((argc == 2 || argc == 3) && std::wstring_view(argv[1]) == L"--elevated-install") code = static_cast<int>(InstallProtected());
+        else if ((argc == 2 || argc == 3) && std::wstring_view(argv[1]) == L"--elevated-uninstall") code = static_cast<int>(UninstallProtected());
         else if (argc == 3 && std::wstring_view(argv[1]) == L"--elevated-service") code = static_cast<int>(ConfigureProtected(fs::path(argv[2])));
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--install-service") {
             // NSIS uses the same fixed UAC helper as the host confirmation path.
@@ -708,6 +831,8 @@ int wmain(int argc, wchar_t** argv) {
             const auto text = Read(filename);
             Request request;
             request.folder = filename.parent_path();
+            request.verified_service_version = json::ExtractString(text, L"verifiedServiceVersion");
+            if (request.verified_service_version.size() > 8192) throw std::runtime_error("Invalid verified version identity");
             request.session = json::ExtractString(text, L"sessionId"); request.owner = json::ExtractObject(text, L"owner");
             request.action = json::ExtractString(text, L"action"); request.mode = json::ExtractString(text, L"mode");
             request.needle = json::ExtractString(text, L"query"); request.directory = json::ExtractString(text, L"directory");
@@ -729,6 +854,10 @@ int wmain(int argc, wchar_t** argv) {
             }
             request.offset = static_cast<size_t>(json::ExtractInt(text, L"offset", 0));
             request.limit = static_cast<size_t>(json::ExtractInt(text, L"limit", 60));
+            request.sort = json::ExtractString(text, L"sort");
+            request.sort_desc = json::ExtractBool(text, L"sortDesc", false);
+            request.rank = json::ExtractBool(text, L"rank", true);
+            if (request.sort.size() > 8) throw std::runtime_error("Invalid sort order");
             if (json::ExtractInt(text, L"protocol") != 1 || request.session.empty() || request.session.size() > 128 ||
                 request.owner.empty() || request.needle.size() > 8192 || request.limit < 1 || request.limit > 200 || request.offset > 100000 ||
                 (!request.directory.empty() && !fs::path(request.directory).is_absolute()) ||
@@ -748,9 +877,9 @@ int wmain(int argc, wchar_t** argv) {
                 SetEnvironmentVariableW(L"TEMP", (fs::path(request.profile) / L"tmp").c_str());
                 SetEnvironmentVariableW(L"TMP", (fs::path(request.profile) / L"tmp").c_str());
                 Write(request, Query(request));
-            } else if (request.action == L"install") Write(request, AuthorizeServiceAction());
+            } else if (request.action == L"install") Write(request, AuthorizeServiceAction(false, &request));
             else if (request.action == L"service-configure" || request.action == L"service-rebuild") Write(request, AuthorizeConfiguration(request));
-            else if (request.action == L"uninstall") Write(request, AuthorizeServiceAction(true));
+            else if (request.action == L"uninstall") Write(request, AuthorizeServiceAction(true, &request));
             else throw std::runtime_error("Unknown action");
         } else code = ERROR_INVALID_PARAMETER;
     } catch (...) { code = ERROR_INVALID_DATA; }

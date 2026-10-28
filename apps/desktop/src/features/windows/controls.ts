@@ -20,9 +20,7 @@ export function closeCurrentWindow(): Promise<void> {
 }
 
 export function recycleCurrentNotepad(): Promise<void> {
-  return invoke("recycle_notepad_window", {
-    label: getCurrentWindow().label,
-  });
+  return invoke("recycle_notepad_window");
 }
 
 export function minimizeCurrentWindow(): Promise<void> {

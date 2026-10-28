@@ -1,26 +1,21 @@
-import { CapsuleHost } from "./features/capsules/CapsuleHost";
+import { tabToIndentListener } from "indent-textarea";
 import { useEffect } from "react";
 import "./App.css";
 import { ContextMenuProvider } from "./components/ContextMenu";
-import { SettingsWindow } from "./features/settings/SettingsWindow";
-import { Launcher } from "./features/launcher/Launcher";
-import { MainWindow } from "./components/MainWindow";
-import { NotePad } from "./components/NotePad";
 import { TileShowcase } from "./components/TileShowcase";
 import { ToastContainer } from "./components/Toast";
-import { tabToIndentListener } from "indent-textarea";
+import { CapsuleHost } from "./features/capsules/CapsuleHost";
+import { Launcher } from "./features/launcher/Launcher";
+import { MainWindow } from "./features/notes/MainWindow";
+import { NotePad } from "./features/notes/NotePad";
 import { getConfig } from "./features/settings/api";
+import { SettingsWindow } from "./features/settings/SettingsWindow";
 import { applyTheme, watchSystemTheme } from "./features/settings/theme";
-import type { AppConfig, ThemeOption } from "./features/settings/types";
+import type { ThemeOption } from "./features/settings/types";
+import { prepareHostWindow } from "./features/windows/hostPreparation";
 import { getInitialRoute } from "./features/windows/windowRoutes";
 import { syncLanguage } from "./locales";
-import {
-  invoke,
-  listen,
-  reportClosePreparation,
-  type ClosePrepareRequest,
-} from "./platform/desktop";
-import { prepareHostWindow } from "./features/windows/hostPreparation";
+import { invoke, listen, reportClosePreparation } from "./platform/desktop";
 
 function App() {
   const route = getInitialRoute();
@@ -28,7 +23,7 @@ function App() {
   useEffect(() => {
     const subscription =
       activeView === "launcher" || activeView === "settings"
-        ? listen<ClosePrepareRequest>("desktop:prepare-close", (event) => {
+        ? listen("desktop:prepare-close", (event) => {
             void prepareHostWindow()
               .then(
                 () => reportClosePreparation(event.payload.requestId, activeView, "ready"),
@@ -68,7 +63,7 @@ function App() {
 
   useEffect(() => {
     let themeCleanup = () => {};
-    const unlisten = listen<AppConfig>("config-changed", (event) => {
+    const unlisten = listen("config-changed", (event) => {
       const theme = (event.payload.theme || "system") as ThemeOption;
       applyTheme(theme);
       themeCleanup();

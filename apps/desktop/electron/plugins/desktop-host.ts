@@ -50,6 +50,7 @@ import { runPluginDataMigration } from "./migration.js";
 import { createCapabilityBroker } from "./capabilities.js";
 import { registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
 import type { DiagnosticEvent, DiagnosticKind } from "../../src/features/diagnostics/types.js";
+import { PluginTrayStateStore } from "../host/plugin-tray.js";
 
 export interface DesktopPluginHostOptions {
   root: string;
@@ -58,6 +59,7 @@ export interface DesktopPluginHostOptions {
   getLocale?: () => string;
   subscribeTheme?: (listener: () => void) => () => void;
   onChange?: () => void;
+  onTrayChange?: () => void;
   onPackageTaskChanged?: (caller: string, task: PackageTaskSnapshot) => void;
   onDiagnostic?: (event: DiagnosticEvent) => void;
   onDiagnosticOutput?: (
@@ -67,6 +69,7 @@ export interface DesktopPluginHostOptions {
     kind: DiagnosticKind,
   ) => void;
   bundledRoot?: string;
+  developmentBundledUpdates?: boolean;
   /** Host adapters are selected by the application, never by page-supplied code. */
   createOfficialRuntime?: (
     installation: PluginInstallation,
@@ -171,6 +174,7 @@ const updateSourceSchema = z.strictObject({
 /** Reuses the package installer, transaction manager and runtime owners. This
  * service only coordinates desktop confirmation, previews and update notices. */
 export class DesktopPluginHost {
+  readonly trayStates: PluginTrayStateStore;
   readonly manager: PluginManager;
   private readonly root: string;
   private readonly paths: PluginPackagePaths;
@@ -197,6 +201,7 @@ export class DesktopPluginHost {
   private readonly bundledCatalog = new Map<string, BundledEntry>();
 
   constructor(private options: DesktopPluginHostOptions) {
+    this.trayStates = new PluginTrayStateStore(() => options.onTrayChange?.());
     if (!path.isAbsolute(options.root)) throw new Error("Plugin host root must be absolute");
     fs.mkdirSync(options.root, { recursive: true });
     this.root = canonical(options.root);
@@ -227,6 +232,16 @@ export class DesktopPluginHost {
           cacheDir: confined(this.paths.cacheRoot, "migration", installation.pluginId),
         }),
       createRuntime: async (installation, metadata, scope, startupCheckOnly) => {
+        const updateTray = this.trayStates.attach(scope, metadata.spark233);
+        const onEvent = (event: { name: string; payload?: JsonValue }) => {
+          if (event.name === "tray-state") {
+            try {
+              updateTray(event.payload);
+            } catch (error) {
+              console.error("plugin-tray-state", error);
+            }
+          } else options.onPluginEvent?.(scope.owner, event.name, event.payload);
+        };
         const entries = resolvePluginEntries(installation.directory, metadata);
         const backend = entries.backend
           ? await createTrustedBackend({
@@ -241,7 +256,7 @@ export class DesktopPluginHost {
               onHostCall: options.onBackendHostCall,
               onLogBytes: (stream, bytes) =>
                 this.diagnosticOutput(scope.owner, stream, bytes, "backend"),
-              onEvent: (event) => options.onPluginEvent?.(scope.owner, event.name, event.payload),
+              onEvent,
               onCrash: (error) => {
                 void this.manager
                   .reportCrash(scope.owner, error)
@@ -262,6 +277,16 @@ export class DesktopPluginHost {
           startupCheckOnly,
         );
         if (official) return official;
+        if (
+          !entries.web &&
+          Object.keys(entries.native).length &&
+          metadata.spark233.commands.some((command) =>
+            command.inputs.some((kind) => kind === "files" || kind === "image"),
+          )
+        )
+          throw new Error(
+            "Generic native-only entries cannot yet resolve file/image resource handles",
+          );
         const native = Object.keys(entries.native).length
           ? await createNativePluginRuntime({
               scope,
@@ -273,7 +298,7 @@ export class DesktopPluginHost {
               approveTrust: () => installation.grant.native,
               onOutputBytes: (stream, bytes) =>
                 this.diagnosticOutput(scope.owner, stream, bytes, "native"),
-              onEvent: (event) => options.onPluginEvent?.(scope.owner, event.name, event.payload),
+              onEvent,
               onCrash: (error) => {
                 void this.manager
                   .reportCrash(scope.owner, error)
@@ -286,6 +311,7 @@ export class DesktopPluginHost {
               scope,
               manifest: metadata.spark233,
               manager: () => this.manager,
+              updateTray,
               resolveResource: options.resolveResource,
               ...(native
                 ? {
@@ -457,11 +483,11 @@ export class DesktopPluginHost {
   }
   async initialize(): Promise<void> {
     await this.manager.initialize();
-    await this.installBundled();
     const saved = this.readManagementState();
     this.pending = saved.pending;
     this.lastChecked = saved.lastChecked;
     this.error = saved.error;
+    await this.installBundled();
     if (fs.existsSync(this.previewsFile)) this.persistPreviews();
     this.timer = setInterval(() => {
       void this.checkUpdates();
@@ -564,9 +590,17 @@ export class DesktopPluginHost {
       if (entry.updateSource)
         this.bundledUpdates.set(entry.pluginId, { name: entry.name, source: entry.updateSource });
       // A later uninstall remains an uninstall. Package updates use confirmation.
-      if (consumed.includes(entry.pluginId)) continue;
+      const development = this.options.developmentBundledUpdates === true;
+      if (
+        development &&
+        (!officialBundledIds.has(entry.pluginId) ||
+          entry.name !== `@spark233/plugin-${entry.pluginId.slice("spark233.".length)}`)
+      )
+        throw new Error("Invalid development plugin identity");
+      if (consumed.includes(entry.pluginId) && !development) continue;
       try {
-        if (!this.manager.list().some((record) => record.pluginId === entry.pluginId)) {
+        const installed = this.manager.list().find((record) => record.pluginId === entry.pluginId);
+        if (!installed || (development && installed.version !== entry.version)) {
           const candidate = getPluginVersionDirectory(this.paths, entry.pluginId, entry.version);
           if (fs.existsSync(candidate)) {
             if (this.used(candidate))
@@ -586,8 +620,28 @@ export class DesktopPluginHost {
             capabilities: staged.metadata.spark233.capabilities,
             native: true,
           });
+          if (development && installed && /^\d+\.\d+\.\d{13,15}$/.test(installed.version)) {
+            const previous = confined(
+              this.paths.versionsRoot,
+              encodeURIComponent(installed.pluginId),
+              encodeURIComponent(installed.version),
+            );
+            if (
+              canonical(previous) === canonical(installed.directory) &&
+              !this.used(previous) &&
+              ![...this.pending.values()].some(
+                (item) => canonical(item.staged.directory) === canonical(previous),
+              )
+            ) {
+              try {
+                fs.rmSync(previous, { recursive: true, force: true });
+              } catch (error) {
+                console.error("development-plugin-cleanup", error);
+              }
+            }
+          }
         }
-        consumed.push(entry.pluginId);
+        if (!consumed.includes(entry.pluginId)) consumed.push(entry.pluginId);
         atomicWrite(consumedFile, JSON.stringify(consumed));
       } catch (error) {
         failures.push(`${entry.pluginId}: ${String(error)}`);
@@ -627,6 +681,8 @@ export class DesktopPluginHost {
       }
     }
     this.bundleError = failures.length ? failures.join("\n") : undefined;
+    if (this.options.developmentBundledUpdates && failures.length)
+      throw new Error(`Development plugin installation failed:\n${this.bundleError}`);
   }
   private updateSource(record: PluginInstallation): PluginUpdateSource | undefined {
     if (record.source.kind === "registry" && record.source.registry)
@@ -634,11 +690,18 @@ export class DesktopPluginHost {
     const bundled = this.bundledUpdates.get(record.pluginId);
     return bundled?.name === record.packageName ? bundled.source : undefined;
   }
+  trayPlugins() {
+    return this.list().plugins.map((plugin) => ({
+      ...plugin,
+      enabled: plugin.enabled && !plugin.lastError,
+    }));
+  }
   private list(caller?: string): PluginManagementState {
     const plugins: PluginSummary[] = this.manager.list().map((record) => {
       let displayName = record.pluginId;
       let capabilities = record.grant.capabilities;
       let commands: PluginSummary["commands"] = [];
+      let tray: PluginSummary["tray"];
       let dependencies: Record<string, string> = {};
       let optionalDependencies: Record<string, string> = {};
       let lastError = record.lastError;
@@ -649,6 +712,7 @@ export class DesktopPluginHost {
           this.options.getLocale?.() ?? "zh-CN",
         );
         displayName = localized.displayName;
+        tray = localized.tray;
         capabilities = metadata.spark233.capabilities;
         commands = localized.commands.filter(
           (command) =>
@@ -670,6 +734,7 @@ export class DesktopPluginHost {
         ...(this.updateSource(record) ? { updateSource: this.updateSource(record) } : {}),
         capabilities,
         commands,
+        ...(tray ? { tray } : {}),
         dependencies,
         optionalDependencies,
         ...(lastError ? { lastError } : {}),

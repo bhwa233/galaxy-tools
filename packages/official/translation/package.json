@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-translation",
-  "version": "0.1.2",
+  "version": "0.1.5",
   "private": true,
   "description": "Offline ECDICT base dictionary and explicit OpenAI-compatible translation",
   "license": "MIT",
@@ -17,7 +17,8 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.translation"
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.translation",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "vitest": "5.0.5"
@@ -118,6 +119,56 @@
             "title": "Translation service status"
           }
         }
+      },
+      {
+        "id": "history-list",
+        "title": "翻译历史",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Translation history"
+          }
+        }
+      },
+      {
+        "id": "history-delete",
+        "title": "删除历史条目",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Delete history entry"
+          }
+        }
+      },
+      {
+        "id": "history-clear",
+        "title": "清空翻译历史",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Clear translation history"
+          }
+        }
+      },
+      {
+        "id": "preferences-get",
+        "title": "翻译工作区偏好",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Translation workspace preferences"
+          }
+        }
+      },
+      {
+        "id": "preferences-set",
+        "title": "保存翻译工作区偏好",
+        "internal": true,
+        "translations": {
+          "en-US": {
+            "title": "Save translation workspace preferences"
+          }
+        }
       }
     ],
     "modes": [
@@ -141,6 +192,18 @@
     "entry": "renderer/index.html",
     "ui": {
       "theme": "^1.0.0"
-    }
+    },
+    "tray": [
+      {
+        "id": "search",
+        "commandId": "search",
+        "order": 0
+      },
+      {
+        "id": "translate",
+        "commandId": "translate",
+        "order": 1
+      }
+    ]
   }
 }

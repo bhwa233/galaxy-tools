@@ -16,7 +16,7 @@ is provisional until account ownership is verified; the build does not publish.
 All seven plugins have representative functional cases in the existing Vitest
 runner. Run `pnpm test`, or filter them with
 `pnpm test packages/official apps/desktop/electron/plugins/official`. Coverage and controlled
-OS/provider boundaries are recorded in the [functional test report](../../Docs/spark233-plugin-functional-tests-2026-10-27.md).
+OS/provider boundaries are recorded in the [functional test report](../../Docs/archive/2026-10/spark233-plugin-functional-tests-2026-10-27.md).
 
 Select the repository's Node/pnpm runtime, install its lockfile dependencies and
 build the current shared UI source once:

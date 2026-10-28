@@ -5,7 +5,6 @@
   "文件": "Files",
   "自定义": "Custom",
   "常用": "Common",
-  "已复制，可在目标应用中粘贴": "Copied. Paste it into the target application.",
   "已向之前的目标应用发送粘贴按键": "Sent the paste shortcut to the previous application.",
   "目标插件尚未连接": "The target plugin is not connected.",
   "已发送所选文字": "Sent the selected text.",
@@ -24,7 +23,6 @@
   "全部保留内容": "All retained content",
   "表情符号": "Emoji and symbols",
   "搜索剪贴板": "Search clipboard",
-  "搜索正文、预览、标签、备注或来源应用": "Search content, previews, tags, notes or source applications",
   "所有分组": "All groups",
   "符号": "Symbol",
   "新表情符号": "New emoji or symbol",
@@ -152,5 +150,9 @@
   "HTML 安全预览": "Safe HTML preview",
   "RTF 源数据预览": "RTF source preview",
   "格式预览已截断，原始复制仍保留全部内容。": "The format preview is truncated. Original copying still includes all content.",
-  "还有更多待清理内容，请完成本批后重新预览。": "More content can be cleaned. Review another batch after completing this one."
+  "还有更多待清理内容，请完成本批后重新预览。": "More content can be cleaned. Review another batch after completing this one.",
+  "保存期间草稿发生变化，请重试关闭": "The draft changed while saving. Try closing again.",
+  "删除条目": "Delete entry",
+  "只看收藏": "Favorites only",
+  "内容较大，仅预览前 256 Ki 字符。原始复制保持完整。": "Large content: only the first 256 Ki characters are previewed. Copy still uses the full original."
 }

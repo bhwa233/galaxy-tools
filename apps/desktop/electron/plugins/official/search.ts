@@ -43,8 +43,14 @@ const responseSchema = z.object({
   ]),
   error: z.number().int().nonnegative().optional(),
   message: z.string().optional(),
+  verifiedServiceVersion: z.string().max(8192).optional(),
   revision: z.string().optional(),
   hasMore: z.boolean().optional(),
+  total: z
+    .string()
+    .regex(/^\d{1,20}$/)
+    .optional(),
+  totalApproximate: z.boolean().optional(),
   service: z
     .object({
       connected: z.boolean(),
@@ -96,6 +102,14 @@ const responseSchema = z.object({
     )
     .max(200),
 });
+type SortField = "name" | "size" | "mtime";
+/** Structured states the workspace renders instead of a plain result list. */
+type SearchStatusState =
+  | "ok"
+  | "service-not-installed"
+  | "service-update-required"
+  | "stale"
+  | "error";
 type Query = {
   mode: "files" | "content";
   query: string;
@@ -103,6 +117,9 @@ type Query = {
   offset: number;
   limit: number;
   revision?: string;
+  /** Explicit column order; absent means relevance ranking. */
+  sort?: SortField;
+  sortDesc?: boolean;
 };
 type Session = {
   id: string;
@@ -155,6 +172,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
   const callers = new Map<string, CallerState>();
   const sessions = new Set<Session>();
   let generation = 0;
+  let verifiedServiceVersion: string | undefined;
   let disposed = false;
   function caller(parameters: Record<string, JsonValue>): CallerState {
     const id = parameters.callerId ?? "legacy";
@@ -309,6 +327,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
     const stale = () =>
       signal?.aborted || epoch !== generation || (state && requestGeneration !== state.generation);
     const statusOnly = action === "service-status";
+    if (action !== "search" && !statusOnly) verifiedServiceVersion = undefined;
     // Serialize only replacement/start. Holding this lock until completion would
     // prevent a newer query from cancelling a slow content search.
     const session = await serialize(async () => {
@@ -343,6 +362,9 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
           owner: options.scope.owner,
           action,
           ...query,
+          // The engine ignores an explicit order while ranking; clearing rank is
+          // the only way to honour a workspace column sort.
+          rank: !query?.sort,
           profile: options.dataDir,
           // Only host-owned roots and the validated persisted user setting enter
           // the native admission filter; activation parameters cannot override it.
@@ -351,6 +373,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
           maxFileMiB: settings.maxFileMiB,
           includeHidden: settings.includeHidden,
           ...serviceParameters,
+          ...(verifiedServiceVersion ? { verifiedServiceVersion } : {}),
           ...(options.fixture
             ? { fixturePipe: options.fixture.pipeName, fixtureRoots: options.fixture.roots }
             : {}),
@@ -398,18 +421,28 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         )
       )
         throw new Error("Search helper returned a stale owner/session");
+      if (result.status === "ok" && result.verifiedServiceVersion && !stale())
+        verifiedServiceVersion = result.verifiedServiceVersion;
       return result;
     } finally {
       signal?.removeEventListener("abort", abort);
       await finishSession(session, state);
     }
   }
+  function sortOf(value: unknown, descending: unknown): Pick<Query, "sort" | "sortDesc"> {
+    if (value !== "name" && value !== "size" && value !== "mtime") return {};
+    return { sort: value, sortDesc: descending === true };
+  }
   function info(
     title: string,
     description: string,
     commandId: string = "install-service",
+    state: SearchStatusState = "error",
   ): JsonValue {
-    return { items: [{ id: randomUUID(), title, description, commandId, parameters: {} }] };
+    return {
+      items: [{ id: randomUUID(), title, description, commandId, parameters: {} }],
+      searchStatus: { state, message: description },
+    };
   }
   async function search(
     query: Query,
@@ -426,7 +459,11 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
     state.lastQuery = query;
     if (!query.query.trim()) {
       await cancel(state.current);
-      return { items: [] };
+      return {
+        items: [],
+        searchPage: { total: 0, approximate: false, hasMore: false },
+        searchStatus: { state: "ok" satisfies SearchStatusState },
+      };
     }
     const result = await native(query, "search", mine, undefined, state, signal);
     if (signal?.aborted || mine !== state.generation) return;
@@ -435,11 +472,15 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
       return info(
         "安装文件搜索服务",
         "需要管理员确认；安装后使用 Pulse 默认 NTFS 卷与排除项。点击安装或重试。",
+        "install-service",
+        "service-not-installed",
       );
     if (result.status === "service-update-required")
       return info(
         "更新文件搜索服务",
         "搜索插件包含新服务版本。确认后通过 Windows 管理员授权切换；不会在普通查询时自动升级。",
+        "install-service",
+        "service-update-required",
       );
     if (result.status !== "ok")
       return info(
@@ -452,6 +493,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         "文件索引已更新，点击重新搜索",
         "旧分页已失效。",
         query.mode === "content" ? "content" : "search",
+        "stale",
       );
     const items: JsonValue[] = [];
     options.fixture?.beforePublish?.();
@@ -483,6 +525,15 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         kind: hit.directory ? "directory" : "file",
         commandId: "open",
         parameters: { selection: id, callerId: state.id },
+        // Workspace tables need the raw row; launchers ignore unknown keys.
+        searchHit: {
+          name: hit.name,
+          path: hit.path,
+          directory: hit.directory,
+          ...(hit.size ? { size: hit.size } : {}),
+          ...(hit.modified ? { modified: hit.modified } : {}),
+          extension: hit.directory ? "" : path.extname(hit.name).replace(/^\./, "").toLowerCase(),
+        },
         actions: [
           {
             title: ui("打开所在位置", "Show location"),
@@ -506,8 +557,9 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         ],
       });
     }
+    let cursor: string | undefined;
     if (result.hasMore) {
-      const cursor = randomUUID();
+      cursor = randomUUID();
       state.cursors.set(cursor, {
         generation: mine,
         query: { ...query, offset: query.offset + query.limit, revision: result.revision },
@@ -519,7 +571,18 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         parameters: { cursor, callerId: state.id },
       });
     }
-    return { items };
+    return {
+      items,
+      // Workspace-only page envelope. Launcher sessions read items and ignore it.
+      searchPage: {
+        total: Number(result.total ?? 0),
+        approximate: result.totalApproximate ?? true,
+        hasMore: !!result.hasMore,
+        ...(cursor ? { cursor } : {}),
+        ...(result.revision ? { revision: result.revision } : {}),
+      },
+      searchStatus: { state: "ok" } satisfies Record<string, string>,
+    };
   }
   async function activate(
     activation: PluginActivation,
@@ -739,6 +802,8 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         return info(
           "搜索服务安装未完成，点击重试",
           result.message ?? `Windows error ${result.error ?? 0}`,
+          "install-service",
+          "service-not-installed",
         );
       return retry
         ? search(
@@ -746,7 +811,11 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
             caller({ callerId: state.id }),
             retrySignal,
           )
-        : { items: [] };
+        : {
+            items: [],
+            searchPage: { total: 0, approximate: false, hasMore: false },
+            searchStatus: { state: "ok" satisfies SearchStatusState },
+          };
     }
     if (!["search", "content"].includes(activation.commandId))
       throw new Error("Unknown search command");
@@ -767,6 +836,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
           typeof parameters.limit === "number"
             ? Math.min(200, Math.max(1, Math.trunc(parameters.limit)))
             : 60,
+        ...sortOf(parameters.sort, parameters.sortDesc),
       },
       state,
       signal,

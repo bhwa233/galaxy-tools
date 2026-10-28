@@ -21,7 +21,10 @@ vi.mock("electron", () => ({
 describe("independent applications document boundaries", () => {
   let directory: string;
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-document-boundary-"));
+    // The host admits canonical targets; Windows CI TEMP may use an 8.3 alias.
+    directory = fs.realpathSync.native(
+      fs.mkdtempSync(path.join(os.tmpdir(), "spark233-document-boundary-")),
+    );
     vi.clearAllMocks();
   });
   afterEach(() => {
@@ -43,7 +46,7 @@ describe("independent applications document boundaries", () => {
     };
     const settings = path.join(directory, "settings.json");
     await writeSettingsFile(settings, [entry]);
-    expect((await readSettingsFile(settings)).entries).toEqual([entry]);
+    expect((await readSettingsFile(settings))?.entries).toEqual([entry]);
     await expect(assertEntryTarget(entry)).resolves.toBeUndefined();
     const saved = fs.readFileSync(settings);
 

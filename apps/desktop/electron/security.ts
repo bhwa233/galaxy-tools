@@ -5,23 +5,26 @@ import { AppError, canonical, inside } from "./persistence.js";
 /** Paths outside application storage need a native dialog, actual dropped File, or CLI grant. */
 export class FileGrants {
   private files = new Set<string>();
-  private directories = new Set<string>();
+  private directories = new Map<string, number>();
   grant(file: string, directory = false): void {
-    (directory ? this.directories : this.files).add(canonical(file));
+    if (directory) this.directories.set(canonical(file), Date.now() + 10 * 60 * 1000);
+    else this.files.add(canonical(file));
   }
   allows(file: string): boolean {
     const target = canonical(file);
-    return this.files.has(target) || [...this.directories].some((dir) => inside(dir, target));
+    for (const [directory, expires] of this.directories)
+      if (expires <= Date.now()) this.directories.delete(directory);
+    return (
+      this.files.has(target) || [...this.directories.keys()].some((dir) => inside(dir, target))
+    );
   }
   assert(file: unknown, extensions?: RegExp): string {
-    if (
-      typeof file !== "string" ||
-      !path.isAbsolute(file) ||
-      !this.allows(file) ||
-      (extensions && !extensions.test(file))
-    )
+    if (typeof file !== "string" || !path.isAbsolute(file))
       throw new AppError("permissionDenied", "请通过文件选择器或拖放授权此文件");
-    return file;
+    const target = canonical(file);
+    if (!this.allows(target) || (extensions && !extensions.test(target)))
+      throw new AppError("permissionDenied", "请通过文件选择器或拖放授权此文件");
+    return target;
   }
 }
 export function imagePath(dataDir: string, candidate: string, background?: string): string {

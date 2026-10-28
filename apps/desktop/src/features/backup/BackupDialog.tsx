@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ManagementSurface";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,14 +16,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ManagementSurface";
 import { Spinner } from "@/components/ui/spinner";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { createBackup, inspectBackup, releaseBackupSelection, restoreBackup } from "./api";
 import type { BackupReport, BackupSelection } from "./types";
 
@@ -208,6 +208,14 @@ export function BackupDialog({ open, onOpenChange, embedded = false }: BackupDia
                           ? t("backup.enabled", { defaultValue: "启用" })
                           : t("backup.disabled", { defaultValue: "停用" })}
                       </Badge>
+                      {plugin.grant?.native && (
+                        <Badge variant="outline">{t("backup.nativeTrust")}</Badge>
+                      )}
+                      {!!plugin.grant?.capabilities.length && (
+                        <span className="text-xs text-muted-foreground">
+                          {t("backup.permissions")}: {plugin.grant.capabilities.join(", ")}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

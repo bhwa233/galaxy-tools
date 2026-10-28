@@ -40,7 +40,9 @@ export function inside(root: string, file: string): boolean {
 // Resolve existing ancestors too: lexical prefix checks alone permit symlink/junction escapes.
 export function canonical(file: string): string {
   const absolute = path.resolve(file);
-  if (fs.existsSync(absolute)) return fs.realpathSync(absolute);
+  // Match fs.promises.realpath on Windows, including expansion of 8.3 aliases.
+  // The JS sync implementation retains aliases and breaks identity after restore.
+  if (fs.existsSync(absolute)) return fs.realpathSync.native(absolute);
   const parent = path.dirname(absolute);
   return parent === absolute ? absolute : path.join(canonical(parent), path.basename(absolute));
 }

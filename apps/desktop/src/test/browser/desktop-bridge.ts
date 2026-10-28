@@ -1,3 +1,11 @@
+import type { CommandName } from "../../../shared/command-policies.js";
+import type {
+  CommandInput,
+  CommandResult,
+  Commands,
+  Events,
+  IpcResult,
+} from "../../../shared/desktop-contract.js";
 type DesktopBridge = NonNullable<Window["spark233Desktop"]>;
 type Handler = (args: unknown) => unknown | Promise<unknown>;
 export interface DesktopCall {
@@ -18,7 +26,11 @@ export function installDesktopBridge(handlers: Record<string, Handler>) {
   };
   const bridge: DesktopBridge = {
     label: "launcher",
-    async invoke(command, args) {
+    async invoke<C extends CommandName, const A extends Commands[C]["args"] = Commands[C]["args"]>(
+      command: C,
+      ...input: CommandInput<C, A>
+    ): Promise<IpcResult<CommandResult<C, A>>> {
+      const args = input[0];
       calls.push({ command, args });
       try {
         const handler = handlers[command];
@@ -26,7 +38,7 @@ export function installDesktopBridge(handlers: Record<string, Handler>) {
           unexpected.add(command);
           throw new Error(`Unexpected desktop command: ${command}`);
         }
-        return { ok: true, value: await handler(args) };
+        return { ok: true, value: (await handler(args)) as CommandResult<C, A> };
       } catch (error) {
         return {
           ok: false,
@@ -38,12 +50,13 @@ export function installDesktopBridge(handlers: Record<string, Handler>) {
     async emit(name, payload) {
       emit(name, payload);
     },
-    on(name, callback) {
+    on<E extends keyof Events>(name: E, callback: (payload: Events[E]) => void) {
+      const listener = (payload: unknown) => callback(payload as Events[E]);
       const callbacks = listeners.get(name) ?? new Set();
-      callbacks.add(callback);
+      callbacks.add(listener);
       listeners.set(name, callbacks);
       return () => {
-        callbacks.delete(callback);
+        callbacks.delete(listener);
         if (!callbacks.size) listeners.delete(name);
       };
     },

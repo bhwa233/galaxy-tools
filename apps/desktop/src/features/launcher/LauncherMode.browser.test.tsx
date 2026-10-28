@@ -99,7 +99,125 @@ it("enters a mode through its real candidate and Escape returns subsequent queri
     const ordinary = desktop.calls.filter((call) => call.command === "launcher_query").at(-1)?.args;
     expect(ordinary).toMatchObject({ query: "普通查询" });
     expect(ordinary).not.toHaveProperty("mode");
+    // Tray and global shortcuts use the durable workspace handoff, including
+    // when the launcher was already displaying a different query.
+    desktop.emit("open-workspace", {
+      kind: "launcher-mode",
+      result: { key: mode, title: entry.title },
+    });
+    await expect.element(search).toHaveValue("");
+    await expect.element(search).toHaveAttribute("placeholder", "在测试模式中查询");
+    await search.fill("模式内查询");
+    await expect.element(page.getByRole("option", { name: /^模式内命中/ })).toBeVisible();
+    expect(
+      desktop.calls.filter((call) => call.command === "launcher_query").at(-1)?.args,
+    ).toMatchObject({ mode, query: "模式内查询" });
   } finally {
+    await view.unmount();
+    desktop.restore();
+  }
+});
+
+it("opens AI translation from the dictionary mode", async () => {
+  const mode = "spark233.translation:dictionary";
+  const entry: LauncherItem = {
+    id: "dictionary-entry",
+    pluginId: "spark233.translation",
+    commandId: "search",
+    kind: "command",
+    title: "本地词典",
+  };
+  const state: LauncherState = {
+    firstRun: false,
+    pluginsReady: true,
+    commands: [
+      {
+        id: "search",
+        pluginId: entry.pluginId,
+        title: entry.title,
+        keywords: [],
+        enabled: true,
+        mode,
+      },
+      { id: "translate", pluginId: entry.pluginId, title: "AI 翻译", keywords: [], enabled: true },
+    ],
+    modeOptions: { [mode]: { directoryFilter: false } },
+  };
+  const desktop = installDesktopBridge({
+    launcher_state: () => state,
+    launcher_take_workspace: () => undefined,
+    launcher_cancel_query: () => undefined,
+    launcher_enter_mode: () => undefined,
+    plugins_activate: () => ({}),
+    launcher_query: (value) => {
+      const query = value as { sessionId: string; mode?: string };
+      return {
+        sessionId: query.sessionId,
+        requestId: "dictionary",
+        revision: 0,
+        items: query.mode ? [] : [entry],
+      };
+    },
+  });
+  const view = await render(<Launcher />);
+  try {
+    await page.getByRole("option", { name: /^本地词典/ }).click();
+    await page.getByRole("button", { name: "AI 翻译", exact: true }).click();
+    expect(
+      desktop.calls.filter((call) => call.command === "plugins_activate").at(-1)?.args,
+    ).toEqual({ pluginId: "spark233.translation", commandId: "translate" });
+  } finally {
+    await view.unmount();
+    desktop.restore();
+  }
+});
+
+it("keeps an active OCR task visible when cancellation cannot be confirmed", async () => {
+  let finishTask!: (value: unknown) => void;
+  const pending = new Promise<unknown>((resolve) => {
+    finishTask = resolve;
+  });
+  const entry: LauncherItem = {
+    id: "ocr-entry",
+    pluginId: "spark233.ocr",
+    commandId: "ocr",
+    kind: "command",
+    title: "识别图片文字",
+  };
+  const state: LauncherState = {
+    firstRun: false,
+    pluginsReady: true,
+    commands: [
+      { id: "ocr", pluginId: entry.pluginId, title: entry.title, keywords: [], enabled: true },
+    ],
+  };
+  const desktop = installDesktopBridge({
+    launcher_state: () => state,
+    launcher_take_workspace: () => undefined,
+    launcher_cancel_query: () => undefined,
+    launcher_query: (value) => ({
+      sessionId: (value as { sessionId: string }).sessionId,
+      requestId: "ocr",
+      revision: 0,
+      items: [entry],
+    }),
+    launcher_execute: (value) =>
+      (value as { commandId: string }).commandId === "cancel"
+        ? { ok: false, reason: "Cancellation is pending" }
+        : pending,
+  });
+  const view = await render(<Launcher />);
+  try {
+    await page.getByRole("option", { name: /^识别图片文字/ }).click();
+    const cancel = page.getByRole("button", { name: "取消文字识别", exact: true });
+    await expect.element(cancel).toBeVisible();
+    await cancel.click();
+    await expect.element(page.getByText("Cancellation is pending", { exact: true })).toBeVisible();
+    await expect.element(cancel).toBeVisible();
+    finishTask(undefined);
+    await expect.element(cancel).not.toBeInTheDocument();
+  } finally {
+    finishTask(undefined);
     await view.unmount();
     desktop.restore();
   }

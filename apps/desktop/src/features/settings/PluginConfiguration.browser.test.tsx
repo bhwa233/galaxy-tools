@@ -45,7 +45,7 @@ it("keeps edits local, retains a failed save, and lets the user cancel or discar
     await expect.element(input).toHaveValue("new-model");
     fail = false;
     await page.getByRole("button", { name: "保存更改", exact: true }).click();
-    await expect.element(page.getByText("配置已保存", { exact: true })).toBeVisible();
+    await expect.element(page.getByTestId("plugin-save-status")).toBeVisible();
     await prepareHostWindow();
     await input.fill("unsaved-again");
     const discarded = prepareHostWindow();

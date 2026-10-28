@@ -13,14 +13,6 @@ export interface ShortcutRecorderHandle {
   cancelRecording: () => void;
 }
 
-interface HookKeyEvent {
-  key: string;
-  ctrl: boolean;
-  alt: boolean;
-  shift: boolean;
-  meta: boolean;
-}
-
 const MODIFIER_EVENT_KEYS = new Set(["Control", "Alt", "Shift", "Meta"]);
 
 const CODE_TO_KEY: Record<string, string> = {
@@ -123,7 +115,7 @@ export function useShortcutRecorder({
     let cancelled = false;
     let unlisten: (() => void) | null = null;
 
-    listen<HookKeyEvent>("shortcut-hook-key", (event) => {
+    listen("shortcut-hook-key", (event) => {
       if (cancelled) return;
       const { key, ctrl, alt, shift, meta } = event.payload;
 

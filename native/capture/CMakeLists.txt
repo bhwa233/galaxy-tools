@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 set(CMAKE_OBJECT_PATH_MAX 180)
+# Decode upstream UTF-8 resource text; adapt.ps1 gives resource files ASCII names.
+set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /c65001")
 add_compile_options(/utf-8 /permissive- /W3)
 add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 

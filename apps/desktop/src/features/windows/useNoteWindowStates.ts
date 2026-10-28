@@ -16,10 +16,8 @@ export function useNoteWindowStates() {
       version.current = snapshot.version;
       setStates(Object.fromEntries(snapshot.notes.map((state) => [state.noteId, state])));
     };
-    const off = listen<NoteWindowSnapshot>(NOTE_WINDOW_STATES_CHANGED, (event) =>
-      apply(event.payload),
-    );
-    void invoke<NoteWindowSnapshot>("note_window_states").then(apply).catch(console.error);
+    const off = listen(NOTE_WINDOW_STATES_CHANGED, (event) => apply(event.payload));
+    void invoke("note_window_states").then(apply).catch(console.error);
     return () => {
       disposed = true;
       void off.then((fn) => fn());

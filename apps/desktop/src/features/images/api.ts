@@ -3,7 +3,8 @@ import { invoke } from "../../platform/desktop";
 export function saveImage(noteId: string, data: Uint8Array, extension: string): Promise<string> {
   // 图片字节流作为 raw payload 直传（元数据走 headers），避免把二进制
   // 展开成 JS 数字数组再 JSON 序列化造成的巨大瞬时内存开销
-  return invoke("images_save", data, {
+  return invoke("images_save", {
+    data,
     headers: { "x-note-id": noteId, "x-image-ext": extension },
   });
 }

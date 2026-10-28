@@ -1,1 +1,1 @@
-export { Alert, AlertTitle, AlertDescription, AlertAction } from "@spark233/ui/components";
+export { Alert, AlertAction, AlertDescription, AlertTitle } from "@spark233/ui/components";

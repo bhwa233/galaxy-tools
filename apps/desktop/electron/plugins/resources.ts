@@ -7,6 +7,8 @@ export interface OwnedResource {
   prepareStop?: (reason: StopReason) => StopDecision | Promise<StopDecision>;
   cancelStop?: () => void | Promise<void>;
   dispose: () => void | Promise<void>;
+  /** Only used after a native, explicit user confirmation to discard unsaved work. */
+  forceTerminate?: () => void | Promise<void>;
 }
 export interface ReleaseResult {
   ok: boolean;
@@ -203,6 +205,23 @@ export class PluginResourceScope {
     });
     this.releasing = operation;
     return operation;
+  }
+
+  async forceTerminateProcesses(): Promise<ReleaseResult> {
+    this.currentState = "releasing";
+    const processes = [...this.resources].filter(([, entry]) => entry.kind === "process");
+    const results = await Promise.allSettled(
+      processes.map(async ([id, entry]) => {
+        if (!entry.resource.forceTerminate)
+          throw new Error("Process owner has no explicit termination handler");
+        await entry.resource.forceTerminate();
+        this.resources.delete(id);
+      }),
+    );
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [String(result.reason)] : [],
+    );
+    return { ok: !errors.length, errors };
   }
 
   async stop(reason: StopReason): Promise<ReleaseResult> {

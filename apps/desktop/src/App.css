@@ -24,23 +24,6 @@
 }
 
 @theme {
-  --color-paper: #f6f3ec;
-  --color-paper-warm: #f0ebe0;
-  --color-paper-deep: #e8e1d3;
-  --color-ink: #1a1a18;
-  --color-ink-soft: #3d3d38;
-  --color-ink-faint: #8a8a80;
-  --color-ink-ghost: #b8b8ae;
-  --color-bamboo: var(--spark233-accent);
-  --color-bamboo-light: var(--spark233-accent-hover);
-  --color-bamboo-mist: var(--spark233-accent-soft);
-  --color-bamboo-glow: var(--spark233-accent-selected);
-  --color-stone: #6b6b62;
-  --color-cloud: #ffffff;
-  --color-shadow: rgba(26, 26, 24, 0.06);
-  --color-shadow-deep: rgba(26, 26, 24, 0.12);
-  --color-danger-bg: #fef2f2;
-
   --font-display:
     "HarmonyOS Sans SC", -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
@@ -52,52 +35,8 @@
 }
 
 :root {
-  color-scheme: light;
   --app-window-radius: 14px;
   --app-surface-radius: 14px;
-  --background: var(--color-cloud);
-  --foreground: var(--color-ink);
-  --card: var(--color-cloud);
-  --card-foreground: var(--color-ink);
-  --popover: var(--color-cloud);
-  --popover-foreground: var(--color-ink);
-  --primary: var(--color-bamboo);
-  --primary-foreground: #ffffff;
-  --secondary: var(--color-paper-warm);
-  --secondary-foreground: var(--color-ink-soft);
-  --muted: var(--color-paper-warm);
-  --muted-foreground: #60665f;
-  --accent: var(--color-bamboo-mist);
-  --accent-foreground: var(--color-bamboo);
-  --destructive: #b91c1c;
-  --border: var(--color-paper-deep);
-  --input: var(--color-paper-deep);
-  --ring: var(--color-bamboo);
-  --radius: 0.625rem;
-  --sidebar: var(--color-paper);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --color-paper: #222120;
-  --color-paper-warm: #2c2a27;
-  --color-paper-deep: #3c3935;
-  --color-ink: #e5e1da;
-  --color-ink-soft: #b5b1a8;
-  --color-ink-faint: #928f87;
-  --color-ink-ghost: #706d67;
-  --color-stone: #8a8880;
-  --color-cloud: #1a1917;
-  --color-shadow: rgba(0, 0, 0, 0.3);
-  --color-shadow-deep: rgba(0, 0, 0, 0.5);
-  --color-danger-bg: rgba(220, 38, 38, 0.15);
 }
 
 /* Theme transition — applied briefly during theme switch for a uniform crossfade */

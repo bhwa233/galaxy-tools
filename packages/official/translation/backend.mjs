@@ -37,6 +37,16 @@ export default function translationPlugin(lifetime) {
           );
         case "cancel":
           return translator.cancel(input.requestId);
+        case "history_list":
+          return translator.listHistory();
+        case "history_delete":
+          return translator.deleteHistory(input.id);
+        case "history_clear":
+          return translator.clearHistory();
+        case "preferences_get":
+          return translator.getPreferences();
+        case "preferences_set":
+          return translator.setPreferences(input);
         default:
           throw new Error("Unknown dictionary/translation action");
       }

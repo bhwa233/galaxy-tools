@@ -25,6 +25,7 @@ export function createCapabilityBroker(options: {
   scope: PluginResourceScope;
   manifest: PluginManifest;
   manager: () => PluginManager;
+  updateTray?: (payload: unknown) => void;
   resolveResource?: (resource: ResourceHandle) => string | undefined;
   invokeNative?: (
     entryId: string,
@@ -70,6 +71,11 @@ export function createCapabilityBroker(options: {
   const broker = async (request: PluginWebCapabilityRequest): Promise<JsonValue | undefined> => {
     accept(request);
     const { capability, operation, payload } = request;
+    if (capability === "tray" && operation === "update") {
+      if (!options.updateTray) throw new Error("Plugin tray is unavailable");
+      options.updateTray(payload);
+      return;
+    }
     if (capability === "native.process" && operation === "invoke") {
       const input = z
         .strictObject({
@@ -90,6 +96,7 @@ export function createCapabilityBroker(options: {
       // commands must enter through the host's guarded activation route.
       if (!commandMatchesSourceApplication(command, undefined))
         throw new Error("此命令需要宿主确认的来源程序，请通过对应启动器动作执行");
+      options.manager().assertCommandAvailable(options.manifest.id, input.commandId);
       if (!options.invokeNative) throw new Error("此插件的原生运行时不可用");
       return options.invokeNative(
         input.entryId,

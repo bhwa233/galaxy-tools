@@ -1,70 +1,101 @@
-// 纯 Node 中继：以 ELECTRON_RUN_AS_NODE 运行，保证 stdout 不被 Chromium 污染。
-// 职责单一——stdin 换行帧 → 命名管道，管道响应 → stdout，首行发 token 握手。
-// 用法: node mcp-relay.js <configDir>
 import net from "node:net";
 import path from "node:path";
-import { ensureMcpToken, MCP_PIPE_PATH } from "./mcp-server.js";
+import { randomBytes } from "node:crypto";
+import {
+  ensureMcpToken,
+  mcpPipePath,
+  mcpProof,
+  validMcpProof,
+  MCP_MAX_LINE_BYTES,
+} from "./mcp-server.js";
 
 const configDir = process.argv[2];
-if (!configDir || !path.isAbsolute(configDir)) {
-  process.stderr.write("mcp-relay: 需要 configDir 绝对路径参数\n");
-  process.exit(2);
-}
-
-function fail(message: string): never {
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
-}
-
-async function connectWithRetry(): Promise<net.Socket> {
+if (!configDir || !path.isAbsolute(configDir) || process.stdin.isTTY) {
+  process.stderr.write("mcp-relay: requires an absolute configuration directory and piped stdin\n");
+  process.exitCode = 2;
+} else {
+  const token = ensureMcpToken(configDir);
+  const nonce = randomBytes(32).toString("hex");
+  let socket: net.Socket | undefined;
   const deadline = Date.now() + 15_000;
-  for (;;) {
+  while (!socket) {
     try {
-      return await new Promise<net.Socket>((resolve, reject) => {
-        const socket = net.connect(MCP_PIPE_PATH);
-        socket.once("connect", () => resolve(socket));
-        socket.once("error", reject);
+      socket = await new Promise<net.Socket>((resolve, reject) => {
+        const candidate = net.connect(mcpPipePath(configDir));
+        candidate.once("connect", () => {
+          candidate.removeListener("error", reject);
+          resolve(candidate);
+        });
+        candidate.once("error", (error) => {
+          candidate.destroy();
+          reject(error);
+        });
       });
     } catch {
       if (Date.now() > deadline)
-        fail("无法连接spark233 MCP 服务：请确认spark233已启动，并在设置中开启 AI 接口（MCP）");
-      await new Promise((sleep) => setTimeout(sleep, 250));
+        throw new Error(
+          "Cannot connect to spark233 MCP. Start the app and enable MCP in settings.",
+        );
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
+  const connection = socket;
+  let inbound = "",
+    challenge: string | undefined,
+    authenticated = false;
+  const timer = setTimeout(
+    () => connection.destroy(new Error("MCP authentication timed out")),
+    5000,
+  );
+  const finish = (error?: Error) => {
+    clearTimeout(timer);
+    process.stdin.pause();
+    process.stdin.unpipe(connection);
+    if (error) {
+      process.stderr.write(error.message + "\n");
+      process.exitCode = 1;
+    }
+    // Let stdout drain naturally; process.exit can truncate the last response.
+  };
+  connection.setEncoding("utf8");
+  connection.on("data", (chunk: string) => {
+    inbound += chunk;
+    if (Buffer.byteLength(inbound) > 8 * MCP_MAX_LINE_BYTES) {
+      connection.destroy(new Error("MCP response exceeds limit"));
+      return;
+    }
+    for (;;) {
+      const newline = inbound.indexOf("\n");
+      if (newline < 0) break;
+      const line = inbound.slice(0, newline);
+      inbound = inbound.slice(newline + 1);
+      if (!authenticated) {
+        try {
+          const value = JSON.parse(line);
+          if (!challenge) {
+            if (typeof value.challenge !== "string" || !/^[a-f0-9]{64}$/.test(value.challenge))
+              throw new Error("Invalid MCP challenge");
+            challenge = value.challenge;
+            connection.write(
+              JSON.stringify({ nonce, proof: mcpProof(token, "client", challenge!, nonce) }) + "\n",
+            );
+          } else {
+            if (!validMcpProof(value.proof, mcpProof(token, "server", challenge, nonce)))
+              throw new Error("MCP server identity could not be verified");
+            authenticated = true;
+            clearTimeout(timer);
+            process.stdin.pipe(connection);
+          }
+        } catch (error) {
+          connection.destroy(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+      } else if (!process.stdout.write(line + "\n")) {
+        connection.pause();
+        process.stdout.once("drain", () => connection.resume());
+      }
+    }
+  });
+  connection.once("error", finish);
+  connection.once("close", () => finish());
 }
-
-const token = ensureMcpToken(configDir);
-const socket = await connectWithRetry();
-socket.write(`${JSON.stringify({ token })}\n`);
-
-let inbound = "";
-socket.setEncoding("utf8");
-socket.on("data", (chunk: string) => {
-  inbound += chunk;
-  let newline = inbound.indexOf("\n");
-  while (newline >= 0) {
-    process.stdout.write(inbound.slice(0, newline + 1));
-    inbound = inbound.slice(newline + 1);
-    newline = inbound.indexOf("\n");
-  }
-});
-socket.once("close", () => process.exit(0));
-socket.once("error", () => process.exit(0)); // 连接中断视为会话结束
-
-if (process.stdin.isTTY) fail("mcp-relay: stdin 不能是终端");
-process.stdin.setEncoding("utf8");
-let outgoing = "";
-process.stdin.on("data", (chunk: string) => {
-  outgoing += chunk;
-  let newline = outgoing.indexOf("\n");
-  while (newline >= 0) {
-    socket.write(outgoing.slice(0, newline + 1));
-    outgoing = outgoing.slice(newline + 1);
-    newline = outgoing.indexOf("\n");
-  }
-});
-process.stdin.once("end", () => {
-  socket.end();
-  process.exit(0);
-});
-process.stdin.resume();

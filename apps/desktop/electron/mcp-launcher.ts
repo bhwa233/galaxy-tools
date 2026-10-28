@@ -23,7 +23,7 @@ export interface McpLauncherOptions {
  */
 export async function runMcpLauncher(options: McpLauncherOptions): Promise<number> {
   const relay = unpacked(path.join(options.here, "mcp-relay.js"));
-  if (!(await probePipe())) {
+  if (!(await probePipe(options.configDir))) {
     // 未运行则拉起主应用；中继自带 15 秒重试等待其就绪。
     // 开发模式下 electron.exe 需要显式指定应用目录，安装包则自带。
     const args = app.isPackaged ? [] : [app.getAppPath()];

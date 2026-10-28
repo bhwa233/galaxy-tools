@@ -38,3 +38,24 @@ export interface TranslationChunk {
   text: string;
   done?: boolean;
 }
+export type TranslationSource = "workspace" | "ocr" | "clipboard" | "launcher";
+export interface TranslationHistoryEntry {
+  id: string;
+  at: string;
+  target: "en" | "zh-CN";
+  text: string;
+  translatedText: string;
+  model: string;
+  cached: boolean;
+  source: TranslationSource;
+}
+export interface TranslationHistory {
+  kind: "translation-history";
+  entries: TranslationHistoryEntry[];
+  enabled: boolean;
+}
+export interface TranslationPreferences {
+  kind: "translation-preferences";
+  autoLookup: boolean;
+  historyEnabled: boolean;
+}

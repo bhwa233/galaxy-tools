@@ -320,6 +320,9 @@ $sourceHashes = @{}
 foreach ($relative in @('packages/official/search/native-src/search.cpp', 'packages/official/search/native-src/CMakeLists.txt', 'scripts/native-search/build.ps1')) {
     $sourceHashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $repoRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-@{ protocol = 1; files = @($resourceFiles); inputs = $sourceHashes; upstream = @{ commit = $commit; archiveSha256 = $manifest.archiveSha256; adaptation = $manifest.adaptation } } |
-    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $payloadRoot 'resources.json') -Encoding utf8
+# Windows PowerShell 5.1 writes a BOM for -Encoding utf8, and the packager's
+# JSON.parse rejects it, so publish the manifest explicitly without one.
+$resourcesJson = @{ protocol = 1; files = @($resourceFiles); inputs = $sourceHashes; upstream = @{ commit = $commit; archiveSha256 = $manifest.archiveSha256; adaptation = $manifest.adaptation } } |
+    ConvertTo-Json -Depth 6
+[IO.File]::WriteAllText((Join-Path $payloadRoot 'resources.json'), $resourcesJson, [Text.UTF8Encoding]::new($false))
 Write-Output "Built isolated search tools in $(Join-Path $binaryRoot 'bin')"

@@ -158,7 +158,6 @@ class WebRuntime implements WebPluginController {
   private readonly storageFile: string;
   private readonly hostname: string;
   private readonly entryUrl: string;
-  private commands = new Set<string>();
   private readyListeners = new Set<() => void>();
   private brokers = new Map<AbortController, () => Promise<void>>();
   private queries = new Map<
@@ -327,7 +326,7 @@ class WebRuntime implements WebPluginController {
         const id = z.string().parse(payload().id);
         if (!this.options.manifest.commands.some((command) => command.id === id))
           throw new Error("Command is absent from plugin manifest");
-        this.commands.add(id);
+        // The manifest owns routing; this operation acknowledges validation only.
         return undefined;
       }
       case "lifecycle.result": {
@@ -714,7 +713,6 @@ class WebRuntime implements WebPluginController {
     this.currentWindow = undefined;
     this.currentSession = undefined;
     this.connected = false;
-    this.commands.clear();
     for (const listener of this.readyListeners) listener();
     this.finishPreparation({ ok: false, reason: "Plugin page closed before save acknowledgement" });
     const releasing = [...this.brokers.values()].map((release) => release());
@@ -742,5 +740,10 @@ class WebRuntime implements WebPluginController {
 export async function createWebPluginRuntime(
   options: WebPluginOptions,
 ): Promise<WebPluginController> {
+  const unsupported = options.manifest.capabilities.filter((capability) =>
+    ["windows", "search.index", "clipboard.watch"].includes(capability),
+  );
+  if (unsupported.length)
+    throw new Error("Unsupported Web capabilities: " + unsupported.join(", "));
   return new WebRuntime(options);
 }

@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-clipboard",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "spark233 local multi-format clipboard history",
   "license": "MIT",
   "files": [
@@ -129,6 +129,23 @@
     "entry": "renderer/index.html",
     "ui": {
       "theme": "^1.0.0"
-    }
+    },
+    "tray": [
+      {
+        "id": "history",
+        "commandId": "history",
+        "order": 0
+      },
+      {
+        "id": "quick",
+        "commandId": "quick",
+        "order": 1
+      },
+      {
+        "id": "pause",
+        "commandId": "pause",
+        "order": 2
+      }
+    ]
   }
 }

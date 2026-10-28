@@ -145,6 +145,10 @@ const backupStateSchema = z.strictObject({
  * no existing note-specific window owner or npm dependency installer does that.
  */
 export class PluginManager {
+  private readonly launcherMetadata = new Map<
+    string,
+    { key: string; metadata: PluginPackageMetadata }
+  >();
   private state: PersistentState;
   private instances = new Map<
     string,
@@ -312,6 +316,10 @@ export class PluginManager {
         failure = error;
         failed = true;
       }
+      // A failed filesystem rollback must remain quiescent. Starting a plugin
+      // here could recreate directories belonging to a different generation.
+      if (failed && failure instanceof AppError && failure.code === "backupRecoveryRequired")
+        throw failure;
       try {
         await resume();
       } catch (restartError) {
@@ -502,6 +510,7 @@ export class PluginManager {
     this.notifyChange();
   }
   private notifyChange(): void {
+    this.launcherMetadata.clear();
     // Availability events keep the original observer contract: a committed
     // state file must exist before observers are asked to read it.
     if (!fs.existsSync(this.options.stateFile)) return;
@@ -532,6 +541,29 @@ export class PluginManager {
     this.assertGrant(metadata, record.grant);
     return metadata;
   }
+  /** Display-only snapshot. Dispatch and execution always use metadata() directly. */
+  private launcherMetadataFor(record: PluginInstallation): PluginPackageMetadata {
+    const stat = fs.statSync(path.join(record.directory, "package.json"), { bigint: true });
+    const key = JSON.stringify([
+      record.directory,
+      record.packageName,
+      record.version,
+      record.manifestDigest,
+      stat.dev.toString(),
+      stat.ino.toString(),
+      stat.size.toString(),
+      stat.mtimeNs.toString(),
+      stat.ctimeNs.toString(),
+    ]);
+    const cached = this.launcherMetadata.get(record.pluginId);
+    if (cached?.key === key) {
+      this.assertGrant(cached.metadata, record.grant);
+      return cached.metadata;
+    }
+    const metadata = this.metadata(record);
+    this.launcherMetadata.set(record.pluginId, { key, metadata });
+    return metadata;
+  }
   private digest(directory: string): string {
     return createHash("sha256")
       .update(fs.readFileSync(confined(directory, "package.json")))
@@ -552,6 +584,36 @@ export class PluginManager {
     ) {
       throw new AppError("pluginTrustRequired", "第三方 Node 或原生执行需要显式信任");
     }
+  }
+  assertRestoreTrust(value: unknown): void {
+    const snapshot = backupStateSchema.parse(value);
+    for (const record of snapshot.plugins) {
+      const previous = this.state.plugins[record.pluginId];
+      if (
+        record.grant.capabilities.some(
+          (capability) => !previous?.grant.capabilities.includes(capability),
+        ) ||
+        (record.grant.native &&
+          (!previous?.grant.native ||
+            previous.integrity !== record.integrity ||
+            previous.manifestDigest !== record.manifestDigest))
+      )
+        throw new AppError(
+          "backupTrustRequired",
+          "请先通过插件安装确认此版本及其权限，再恢复备份：" + record.pluginId,
+        );
+    }
+  }
+  assertCommandAvailable(pluginId: string, commandId: string): void {
+    const record = this.find(pluginId);
+    if (!record?.enabled || record.lastError)
+      throw new AppError("pluginDisabled", "插件当前不可用");
+    const metadata = this.metadata(record);
+    const command = metadata.spark233.commands.find(
+      (item) => item.id === commandId && !item.internal,
+    );
+    if (!command) throw new AppError("invalidCommand", "插件未声明此公开命令");
+    this.assertDispatch(metadata, command);
   }
   dataDirectory(pluginId: string): string {
     if (!/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(pluginId) || !isPluginPackagePath(pluginId))
@@ -623,8 +685,9 @@ export class PluginManager {
       });
     });
   }
-  describe(pluginId: string): PluginPackageMetadata {
-    return structuredClone(this.metadata(this.record(pluginId)));
+  describe(pluginId: string, launcherView = false): PluginPackageMetadata {
+    const record = this.record(pluginId);
+    return structuredClone(launcherView ? this.launcherMetadataFor(record) : this.metadata(record));
   }
   commandDependenciesAvailable(
     metadata: PluginPackageMetadata,
@@ -644,7 +707,7 @@ export class PluginManager {
       );
     });
   }
-  commands(): Array<{
+  commands(launcherView = false): Array<{
     pluginId: string;
     command: PluginPackageMetadata["spark233"]["commands"][number];
   }> {
@@ -659,7 +722,7 @@ export class PluginManager {
       )
       .flatMap((record) => {
         try {
-          const metadata = this.metadata(record);
+          const metadata = launcherView ? this.launcherMetadataFor(record) : this.metadata(record);
           return metadata.spark233.commands
             .filter(
               (command) =>
@@ -978,7 +1041,7 @@ export class PluginManager {
   ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
     return this.dispatch(pluginId, activation, true, signal, beforeDispatch);
   }
-  isOwnerCurrent(owner: PluginOwner, commandId?: string): boolean {
+  isOwnerCurrent(owner: PluginOwner, commandId?: string, launcherView = false): boolean {
     const record = this.find(owner.pluginId);
     const instance = this.instances.get(owner.pluginId);
     if (
@@ -991,7 +1054,7 @@ export class PluginManager {
     )
       return false;
     try {
-      const metadata = this.metadata(record);
+      const metadata = launcherView ? this.launcherMetadataFor(record) : this.metadata(record);
       const command = commandId
         ? metadata.spark233.commands.find((entry) => entry.id === commandId)
         : undefined;
@@ -1402,6 +1465,22 @@ export class PluginManager {
         target: { pluginId: record.pluginId, version: record.version },
       });
     });
+  }
+  async forceTerminateProcesses(): Promise<void> {
+    const scopes = new Map(
+      [...this.instances.values(), ...this.starting.values()].map((entry) => [
+        entry.scope.owner.instanceId,
+        entry.scope,
+      ]),
+    );
+    const results = await Promise.allSettled(
+      [...scopes.values()].map((scope) => scope.forceTerminateProcesses()),
+    );
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [String(result.reason)] : result.value.errors,
+    );
+    if (errors.length)
+      throw new AggregateError(errors, "Some owned plugin processes could not be terminated");
   }
   shutdown(): Promise<void> {
     return this.exclusiveSerial(async () => {

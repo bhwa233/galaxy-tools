@@ -2,7 +2,7 @@ import { invoke } from "../../platform/desktop";
 import type { ReminderItem } from "./types";
 
 export function listReminders(): Promise<ReminderItem[]> {
-  return invoke<ReminderItem[]>("reminders_list");
+  return invoke("reminders_list");
 }
 
 export function setReminder(input: {
@@ -10,9 +10,9 @@ export function setReminder(input: {
   fireAt: string;
   taskText?: string;
 }): Promise<ReminderItem> {
-  return invoke<ReminderItem>("reminders_set", input);
+  return invoke("reminders_set", input);
 }
 
 export function cancelReminder(id: string): Promise<void> {
-  return invoke<void>("reminders_cancel", { id });
+  return invoke("reminders_cancel", { id });
 }

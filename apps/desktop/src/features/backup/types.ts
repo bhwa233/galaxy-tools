@@ -2,7 +2,12 @@ export interface BackupInspection {
   snapshotDirectory: string;
   createdAt: string;
   hostVersion: string;
-  plugins: Array<{ pluginId: string; version: string; enabled: boolean }>;
+  plugins: Array<{
+    pluginId: string;
+    version: string;
+    enabled: boolean;
+    grant?: { capabilities: string[]; native: boolean };
+  }>;
   files: number;
   bytes: number;
 }

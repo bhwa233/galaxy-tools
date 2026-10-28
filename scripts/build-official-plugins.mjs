@@ -49,6 +49,7 @@ const updateSource = { registry: updateRegistry.href, channel: updateChannel };
 const output = path.resolve(
   project,
   buildOptions.output ??
+    process.env.SPARK233_DEV_PLUGIN_OUTPUT ??
     (selectedPlugin
       ? path.join("local-build/spark233/plugin-artifacts", selectedPlugin)
       : "dist-plugins"),
@@ -63,6 +64,8 @@ const rendererPlugins = new Set([
   "spark233.clipboard",
   "spark233.translation",
   "spark233.ocr",
+  "spark233.screenshot",
+  "spark233.search",
 ]);
 const uiMetadata = JSON.parse(
   await fs.readFile(path.join(project, "packages/ui/package.json"), "utf8"),
@@ -87,6 +90,38 @@ async function exists(filename) {
   } catch {
     return false;
   }
+}
+// Native recipes already discover the portable CMake/MSVC installations. Use
+// the same toolchain directory for PowerShell when it is absent from PATH.
+let powershellExecutable;
+async function powershell() {
+  if (powershellExecutable) return powershellExecutable;
+  const localTools = path.join(
+    process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"),
+    "spark233",
+    "toolchains",
+  );
+  const candidates = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((directory) => path.join(directory.replace(/^"|"$/g, ""), "pwsh.exe"));
+  candidates.push(
+    path.join(process.env.ProgramFiles ?? "C:\\Program Files", "PowerShell", "7", "pwsh.exe"),
+  );
+  try {
+    const versions = (await fs.readdir(localTools, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && /^powershell-7\.\d+\.\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, "en", { numeric: true }));
+    candidates.push(...versions.map((version) => path.join(localTools, version, "pwsh.exe")));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  for (const candidate of candidates)
+    if (await exists(candidate)) return (powershellExecutable = candidate);
+  throw new Error(
+    "PowerShell 7 is required. Install it on PATH or in LOCALAPPDATA/spark233/toolchains/powershell-7.x.x, then retry pnpm dev.",
+  );
 }
 // Electron's TypeScript path helpers are not built yet. Use native filesystem
 // resolution here, limited to generated directories before recursive cleanup.
@@ -205,7 +240,7 @@ async function prepareResources(source, metadata) {
         );
       run(process.execPath, [path.join(source, "build.mjs"), "--native-build-dir", capture]);
     } else if (id === "spark233.clipboard") {
-      run("pwsh", [
+      run(await powershell(), [
         "-NoProfile",
         "-File",
         "scripts/native-clipboard/build.ps1",
@@ -214,14 +249,14 @@ async function prepareResources(source, metadata) {
       ]);
       run(process.execPath, [path.join(source, "build.mjs"), "--native-build-dir", clipboard]);
     } else if (id === "spark233.applications") {
-      run("pwsh", ["-NoProfile", "-File", "scripts/native-applications/build.ps1"]);
+      run(await powershell(), ["-NoProfile", "-File", "scripts/native-applications/build.ps1"]);
       run(process.execPath, [
         path.join(source, "build.mjs"),
         "--native-build-dir",
         path.join(project, "local-build/spark233/native-applications/build/bin"),
       ]);
     } else if (id === "spark233.search")
-      run("pwsh", ["-NoProfile", "-File", "scripts/native-search/build.ps1"]);
+      run(await powershell(), ["-NoProfile", "-File", "scripts/native-search/build.ps1"]);
     else throw new Error(`No native build recipe for ${id}`);
   }
   for (const { path: entry } of native)
@@ -405,17 +440,26 @@ await fs.mkdir(output, { recursive: true });
 if ((await fs.lstat(output)).isSymbolicLink()) throw new Error("Plugin output cannot be a symlink");
 if (
   !buildOptions.output &&
+  !process.env.SPARK233_DEV_PLUGIN_OUTPUT &&
   !selectedPlugin &&
   path.relative(await fs.realpath(project), await fs.realpath(output)) !== "dist-plugins"
 )
   throw new Error("Default plugin output must be the real workspace dist-plugins directory");
 const index = [];
 const offline = [];
+const devBuild = process.env.SPARK233_DEV_PLUGIN_BUILD;
+if (devBuild && !/^[0-9]{1,15}$/.test(devBuild)) throw new Error("Invalid development build id");
 for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
   const source = path.join(root, entry.name);
   const metadata = JSON.parse(await fs.readFile(path.join(source, "package.json"), "utf8"));
   if (!metadata.spark233) continue;
+  if (devBuild) {
+    const parts = metadata.version.split(".");
+    if (parts.length !== 3 || parts.some((part) => !/^\d+$/.test(part)))
+      throw new Error(`Development build requires a stable version: ${metadata.name}`);
+    metadata.version = `${parts[0]}.${parts[1]}.${devBuild}`;
+  }
   if (selectedPlugin && metadata.spark233.id !== selectedPlugin) continue;
   if (!expectedIds.has(metadata.spark233.id))
     throw new Error(`Unexpected official plugin ${metadata.spark233.id}`);
@@ -430,6 +474,11 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
     throw new Error("Package staging escaped its temporary directory");
   try {
     await copyAllowlist(source, path.join(work, "package"), metadata);
+    if (devBuild)
+      await fs.writeFile(
+        path.join(work, "package", "package.json"),
+        JSON.stringify(metadata, null, 2),
+      );
     await fs.copyFile(
       path.join(project, "LICENSE"),
       path.join(work, "package", "LICENSE.spark233"),
@@ -520,7 +569,7 @@ if (
       ? "The selected official plugin package is missing"
       : "The offline distribution requires exactly seven official plugin packages",
   );
-if (!selectedPlugin && !buildOptions.output)
+if (!selectedPlugin && !buildOptions.output && !process.env.SPARK233_DEV_PLUGIN_OUTPUT)
   for (const name of await fs.readdir(output))
     if (name.endsWith(".tgz") && !index.some((entry) => entry.file === name))
       await fs.unlink(path.join(output, name));
@@ -532,6 +581,13 @@ await fs.writeFile(
   path.join(output, "resources.json"),
   JSON.stringify({ schemaVersion: 1, plugins: offline }, null, 2),
 );
+if (devBuild && process.env.SPARK233_DEV_PLUGIN_OUTPUT)
+  for (const name of await fs.readdir(output))
+    if (
+      /^[a-z0-9-]+-\d+\.\d+\.\d{13,15}\.tgz$/.test(name) &&
+      !index.some((entry) => entry.file === name)
+    )
+      await fs.unlink(await outputPath(name));
 if (!selectedPlugin && !buildOptions.output) {
   // General launcher commands use the same pinned matcher even while the
   // applications business plugin is disabled. Keep wrapper-relative native

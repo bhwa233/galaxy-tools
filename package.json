@@ -10,13 +10,13 @@
     "dev:web": "pnpm --filter @spark233/desktop dev:web",
     "start": "pnpm --filter @spark233/desktop start",
     "typecheck": "pnpm sdk:build && pnpm -r --if-present typecheck",
-    "build": "pnpm typecheck && pnpm ui:build && pnpm --filter @spark233/desktop build",
+    "build": "pnpm typecheck && pnpm ui:build && pnpm --filter @spark233/desktop build:assets",
     "plugins:build": "node scripts/build-official-plugins.mjs",
     "sdk:build": "pnpm --filter @spark233/sdk build",
     "ui:build": "pnpm --filter @spark233/ui build",
     "test": "pnpm sdk:build && pnpm --filter @spark233/desktop test",
     "test:ui": "pnpm sdk:build && pnpm --filter @spark233/desktop test:ui",
-    "lint": "oxlint",
+    "lint": "oxlint && node scripts/check-locales.mjs",
     "fmt": "oxfmt",
     "pack:win": "pnpm sdk:build && pnpm --filter @spark233/desktop pack:win",
     "dist:win": "pnpm sdk:build && pnpm --filter @spark233/desktop dist:win",
@@ -34,7 +34,10 @@
     "typescript": "7.0.2"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,css,json,yml,yaml,html,md}": "oxfmt --no-error-on-unmatched-pattern"
+    "*.{ts,tsx,js,jsx,css,json,yml,yaml,html,md}": [
+      "oxfmt --no-error-on-unmatched-pattern"
+    ],
+    "*.{ts,tsx,cts,mts,js,jsx,mjs,cjs}": "oxlint"
   },
   "engines": {
     "node": ">=26.12.1 <27",

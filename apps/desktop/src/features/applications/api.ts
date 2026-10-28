@@ -23,7 +23,7 @@ export function pickCustomApplication(
   });
 }
 export async function pickApplicationDirectory(): Promise<string | undefined> {
-  const value = await invoke<CustomApplicationTarget | undefined>("applications_entries_pick", {
+  const value = await invoke("applications_entries_pick", {
     purpose: "cwd",
     directory: true,
   });

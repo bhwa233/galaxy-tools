@@ -2746,6 +2746,9 @@ function handlePipeResult(left, next, ctx) {
 		issues: left.issues
 	}, ctx);
 }
+var $ZodPreprocess = /*@__PURE__*/ $constructor("$ZodPreprocess", (inst, def) => {
+	$ZodPipe.init(inst, def);
+});
 var $ZodReadonly = /*@__PURE__*/ $constructor("$ZodReadonly", (inst, def) => {
 	$ZodType.init(inst, def);
 	defineLazyInternal(inst, "propValues", (zod) => zod.def.innerType._zod.propValues);
@@ -5549,6 +5552,10 @@ function pipe(in_, out) {
 		out
 	});
 }
+var ZodPreprocess = /*@__PURE__*/ $constructor("ZodPreprocess", (inst, def) => {
+	ZodPipe.init(inst, def);
+	$ZodPreprocess.init(inst, def);
+});
 var ZodReadonly = /*@__PURE__*/ $constructor("ZodReadonly", (inst, def) => {
 	$ZodReadonly.init(inst, def);
 	ZodType.init(inst, def);
@@ -5597,6 +5604,121 @@ function json(params) {
 	});
 	return jsonSchema;
 }
+function preprocess(fn, schema) {
+	return new ZodPreprocess({
+		type: "pipe",
+		in: transform(fn),
+		out: schema
+	});
+}
+// apps/desktop/src/locales/locale-whitelist.ts
+var SUPPORTED_LOCALES = ["zh-CN", "en-US"];
+var SUPPORTED_LOCALE_SET = new Set(SUPPORTED_LOCALES);
+var LOCALE_ALIASES = {
+	en: "en-US",
+	"en-us": "en-US",
+	zh: "zh-CN",
+	"zh-cn": "zh-CN",
+	"zh-hans": "zh-CN",
+	"zh-sg": "zh-CN"
+};
+function canonicalizeLocale(locale) {
+	try {
+		return Intl.getCanonicalLocales(locale)[0] ?? locale;
+	} catch {
+		return locale;
+	}
+}
+function normalizeLocale(locale) {
+	if (!locale) return null;
+	const trimmed = locale.trim();
+	if (!trimmed) return null;
+	const canonical = canonicalizeLocale(trimmed);
+	if (SUPPORTED_LOCALE_SET.has(canonical)) return canonical;
+	const segments = canonical.toLowerCase().split("-");
+	for (let length = segments.length; length > 0; length -= 1) {
+		const normalized = LOCALE_ALIASES[segments.slice(0, length).join("-")];
+		if (normalized) return normalized;
+	}
+	return null;
+}
+function resolveAppLocale(preferredLocale, navigatorLocale) {
+	return normalizeLocale(preferredLocale) ?? normalizeLocale(navigatorLocale) ?? "zh-CN";
+}
+// apps/desktop/src/features/settings/tileColor.ts
+var DEFAULT_TILE_COLOR = "#f6f3ec";
+var FULL_HEX_COLOR = /^#?([0-9a-fA-F]{6})$/;
+var SHORT_HEX_COLOR = /^#?([0-9a-fA-F]{3})$/;
+function normalizeTileColor(value) {
+	const trimmed = value?.trim() ?? "";
+	const fullMatch = trimmed.match(FULL_HEX_COLOR);
+	if (fullMatch) return `#${fullMatch[1].toLowerCase()}`;
+	const shortMatch = trimmed.match(SHORT_HEX_COLOR);
+	if (shortMatch) return `#${shortMatch[1].split("").map((character) => character + character).join("").toLowerCase()}`;
+	return DEFAULT_TILE_COLOR;
+}
+// apps/desktop/shared/config-schema.ts
+var trayMenuSchema = strictObject({
+	hidden: array(string().regex(/^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/)).max(512),
+	order: array(string().regex(/^[a-z][a-z0-9.-]*(?::[a-z][a-z0-9.-]*)?$/)).max(512)
+});
+var configPatchSchema = strictObject({
+	locale: _enum(SUPPORTED_LOCALES).optional(),
+	globalShortcut: string().max(100).optional(),
+	commandShortcuts: record(string().regex(/^([a-z][a-z0-9.-]*):([a-z][a-z0-9.-]*)$/), string().max(100)).refine((value) => Object.keys(value).length <= 128).optional(),
+	trayMenu: trayMenuSchema.optional(),
+	closeToTray: boolean().optional(),
+	autostart: boolean().optional(),
+	defaultViewMode: _enum(["edit", "split"]).optional(),
+	noteAutoSave: boolean().optional(),
+	noteSurfaceAutoSave: boolean().optional(),
+	tileColor: string().max(100).transform(normalizeTileColor).optional(),
+	tileColorMode: _enum(["system", "custom"]).optional(),
+	theme: _enum([
+		"system",
+		"light",
+		"dark"
+	]).optional(),
+	fontSize: number().min(8).max(30).optional(),
+	surfaceFontSize: number().min(8).max(30).optional(),
+	tabIndentSize: number().int().min(1).max(8).optional(),
+	externalFileAutoSave: boolean().optional(),
+	rememberSurfaceSize: boolean().optional(),
+	tileCtrlClose: boolean().optional(),
+	tileDoubleClickToEdit: boolean().optional(),
+	tileSaveReturnsToPin: boolean().optional(),
+	renderHtmlMarkdown: boolean().optional(),
+	splitScrollSync: boolean().optional(),
+	imageAutoCompress: boolean().optional(),
+	imageDisplay: _enum([
+		"show",
+		"click",
+		"hidden"
+	]).optional(),
+	reminderSound: boolean().optional(),
+	mcpEnabled: boolean().optional(),
+	mcpPermission: _enum([
+		"read",
+		"append",
+		"full"
+	]).optional(),
+	surfaceWidth: number().min(160).max(1e4).optional(),
+	surfaceHeight: number().min(60).max(1e4).optional(),
+	toggleVisibilityShortcut: string().max(100).optional(),
+	openAtCursor: boolean().optional(),
+	backgroundImagePath: string().max(32768).optional(),
+	backgroundFit: _enum([
+		"cover",
+		"contain",
+		"repeat"
+	]).optional(),
+	backgroundDim: number().min(0).max(1).optional(),
+	backgroundBlur: number().min(0).max(20).optional(),
+	backgroundScale: number().min(.5).max(2).optional(),
+	backgroundPositionX: number().min(0).max(100).optional(),
+	backgroundPositionY: number().min(0).max(100).optional()
+}).refine((patch) => Object.values(patch).every((value) => value !== void 0));
+/** Validate persisted/backup fields too; ordinary patch validation excludes dataDir. */
 // apps/desktop/src/features/plugins/settingsFields.ts
 var field = (key, type, extra = {}) => ({
 	key,
@@ -5683,52 +5805,6 @@ field("excludedRoots", "lines", { label: "pluginConfig.fields.excludedRoots" }),
 	label: "pluginConfig.fields.maxFileMiB"
 }), field("includeHidden", "boolean", { label: "pluginConfig.fields.includeHidden" });
 field("endpoint", "text", { label: "translation.endpoint" }), field("model", "text", { label: "translation.model" }), field("key", "secret", { label: "translation.key" });
-// apps/desktop/src/locales/locale-whitelist.ts
-var SUPPORTED_LOCALES = ["zh-CN", "en-US"];
-var SUPPORTED_LOCALE_SET = new Set(SUPPORTED_LOCALES);
-var LOCALE_ALIASES = {
-	en: "en-US",
-	"en-us": "en-US",
-	zh: "zh-CN",
-	"zh-cn": "zh-CN",
-	"zh-hans": "zh-CN",
-	"zh-sg": "zh-CN"
-};
-function canonicalizeLocale(locale) {
-	try {
-		return Intl.getCanonicalLocales(locale)[0] ?? locale;
-	} catch {
-		return locale;
-	}
-}
-function normalizeLocale(locale) {
-	if (!locale) return null;
-	const trimmed = locale.trim();
-	if (!trimmed) return null;
-	const canonical = canonicalizeLocale(trimmed);
-	if (SUPPORTED_LOCALE_SET.has(canonical)) return canonical;
-	const segments = canonical.toLowerCase().split("-");
-	for (let length = segments.length; length > 0; length -= 1) {
-		const normalized = LOCALE_ALIASES[segments.slice(0, length).join("-")];
-		if (normalized) return normalized;
-	}
-	return null;
-}
-function resolveAppLocale(preferredLocale, navigatorLocale) {
-	return normalizeLocale(preferredLocale) ?? normalizeLocale(navigatorLocale) ?? "zh-CN";
-}
-// apps/desktop/src/features/settings/tileColor.ts
-var DEFAULT_TILE_COLOR = "#f6f3ec";
-var FULL_HEX_COLOR = /^#?([0-9a-fA-F]{6})$/;
-var SHORT_HEX_COLOR = /^#?([0-9a-fA-F]{3})$/;
-function normalizeTileColor(value) {
-	const trimmed = value?.trim() ?? "";
-	const fullMatch = trimmed.match(FULL_HEX_COLOR);
-	if (fullMatch) return `#${fullMatch[1].toLowerCase()}`;
-	const shortMatch = trimmed.match(SHORT_HEX_COLOR);
-	if (shortMatch) return `#${shortMatch[1].split("").map((character) => character + character).join("").toLowerCase()}`;
-	return DEFAULT_TILE_COLOR;
-}
 // apps/desktop/electron/persistence.ts
 var AppError = class extends Error {
 	code;
@@ -5764,7 +5840,7 @@ function inside(root, file) {
 }
 function canonical(file) {
 	const absolute = path.resolve(file);
-	if (fs.existsSync(absolute)) return fs.realpathSync(absolute);
+	if (fs.existsSync(absolute)) return fs.realpathSync.native(absolute);
 	const parent = path.dirname(absolute);
 	return parent === absolute ? absolute : path.join(canonical(parent), path.basename(absolute));
 }
@@ -5774,92 +5850,30 @@ function confined(root, ...parts) {
 	return file;
 }
 // apps/desktop/electron/host-config.ts
-var superPanelFields = {
-	superPanelEnabled: boolean(),
-	superPanelButton: _enum([
-		"middle",
-		"x1",
-		"x2"
-	]),
-	superPanelTrigger: _enum(["click", "hold"]),
-	superPanelHoldMs: number().int().min(200).max(1500),
-	superPanelExcludedApps: array(string().trim().min(5).max(120).refine((value) => !/[\\/:]/.test(value) && !/\p{Cc}/u.test(value) && /\.exe$/i.test(value)).transform((value) => value.toLowerCase())).max(64).transform((values) => [...new Set(values)]),
-	superPanelCopyFallback: boolean()
-};
-var superPanelSettings = object(superPanelFields);
-var configPatchSchema = strictObject({
-	locale: _enum(SUPPORTED_LOCALES).optional(),
-	superPanelEnabled: superPanelFields.superPanelEnabled.optional(),
-	superPanelButton: superPanelFields.superPanelButton.optional(),
-	superPanelTrigger: superPanelFields.superPanelTrigger.optional(),
-	superPanelHoldMs: superPanelFields.superPanelHoldMs.optional(),
-	superPanelExcludedApps: superPanelFields.superPanelExcludedApps.optional(),
-	superPanelCopyFallback: superPanelFields.superPanelCopyFallback.optional(),
-	globalShortcut: string().max(100).optional(),
-	commandShortcuts: record(string().regex(/^([a-z][a-z0-9.-]*):([a-z][a-z0-9.-]*)$/), string().max(100)).refine((value) => Object.keys(value).length <= 128).optional(),
-	closeToTray: boolean().optional(),
-	autostart: boolean().optional(),
-	defaultViewMode: _enum(["edit", "split"]).optional(),
-	noteAutoSave: boolean().optional(),
-	noteSurfaceAutoSave: boolean().optional(),
-	tileColor: string().max(100).transform(normalizeTileColor).optional(),
-	tileColorMode: _enum(["system", "custom"]).optional(),
-	theme: _enum([
-		"system",
-		"light",
-		"dark"
-	]).optional(),
-	fontSize: number().min(8).max(30).optional(),
-	surfaceFontSize: number().min(8).max(30).optional(),
-	tabIndentSize: number().int().min(1).max(8).optional(),
-	externalFileAutoSave: boolean().optional(),
-	rememberSurfaceSize: boolean().optional(),
-	tileCtrlClose: boolean().optional(),
-	tileDoubleClickToEdit: boolean().optional(),
-	tileSaveReturnsToPin: boolean().optional(),
-	renderHtmlMarkdown: boolean().optional(),
-	splitScrollSync: boolean().optional(),
-	imageAutoCompress: boolean().optional(),
-	imageDisplay: _enum([
-		"show",
-		"click",
-		"hidden"
-	]).optional(),
-	reminderSound: boolean().optional(),
-	mcpEnabled: boolean().optional(),
-	mcpPermission: _enum([
-		"read",
-		"append",
-		"full"
-	]).optional(),
-	surfaceWidth: number().min(160).max(1e4).optional(),
-	surfaceHeight: number().min(60).max(1e4).optional(),
-	toggleVisibilityShortcut: string().max(100).optional(),
-	openAtCursor: boolean().optional(),
-	backgroundImagePath: string().max(32768).optional(),
-	backgroundFit: _enum([
-		"cover",
-		"contain",
-		"repeat"
-	]).optional(),
-	backgroundDim: number().min(0).max(1).optional(),
-	backgroundBlur: number().min(0).max(20).optional(),
-	backgroundScale: number().min(.5).max(2).optional(),
-	backgroundPositionX: number().min(0).max(100).optional(),
-	backgroundPositionY: number().min(0).max(100).optional()
-}).refine((patch) => Object.values(patch).every((value) => value !== void 0));
+var persistedConfigSchema = preprocess((value) => {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	return Object.fromEntries(Object.entries(value).filter(([key]) => ![
+		"superPanelEnabled",
+		"superPanelButton",
+		"superPanelTrigger",
+		"superPanelHoldMs",
+		"superPanelExcludedApps",
+		"superPanelCopyFallback"
+	].includes(key)));
+}, strictObject({
+	...configPatchSchema.shape,
+	dataDir: string().min(1).refine((value) => path.isAbsolute(value))
+}));
 function defaultConfig(dataDir) {
 	return {
 		locale: "zh-CN",
-		superPanelEnabled: false,
-		superPanelButton: "middle",
-		superPanelTrigger: "hold",
-		superPanelHoldMs: 500,
-		superPanelExcludedApps: [],
-		superPanelCopyFallback: false,
 		dataDir,
 		globalShortcut: "Alt+Space",
 		commandShortcuts: {},
+		trayMenu: {
+			hidden: [],
+			order: []
+		},
 		closeToTray: true,
 		autostart: false,
 		defaultViewMode: "edit",
@@ -5902,7 +5916,7 @@ var HostConfigStore = class {
 	constructor(configDir, defaultDataDir) {
 		this.configDir = configDir;
 		this.file = path.join(configDir, "config.json");
-		const saved = fs.existsSync(this.file) ? readJson(this.file) : {};
+		const saved = fs.existsSync(this.file) ? persistedConfigSchema.parse(readJson(this.file)) : {};
 		const dataDir = path.resolve(process.env.SPARK233_DATA_DIR || saved.dataDir || defaultDataDir);
 		this.value = {
 			...defaultConfig(dataDir),
@@ -5917,12 +5931,9 @@ var HostConfigStore = class {
 		}
 		this.value.locale = resolveAppLocale(saved.locale);
 		this.value.defaultViewMode = this.value.defaultViewMode === "split" ? "split" : "edit";
-		const panel = superPanelSettings.safeParse(this.value);
-		Object.assign(this.value, panel.success ? panel.data : superPanelSettings.parse(defaultConfig(dataDir)));
 	}
 	save(config) {
-		const panel = superPanelSettings.safeParse(config);
-		if (!panel.success) throw new AppError("invalidPayload", "超级面板设置格式不合法");
+		if (config.trayMenu !== void 0 && !trayMenuSchema.safeParse(config.trayMenu).success) throw new AppError("invalidPayload", "托盘菜单设置格式不合法");
 		if (config?.commandShortcuts !== void 0 && (typeof config.commandShortcuts !== "object" || config.commandShortcuts === null || Array.isArray(config.commandShortcuts) || Object.keys(config.commandShortcuts).length > 128 || Object.entries(config.commandShortcuts).some(([id, value]) => !/^([a-z][a-z0-9.-]*):([a-z][a-z0-9.-]*)$/.test(id) || typeof value !== "string" || value.length > 100))) throw new AppError("invalidPayload", "插件快捷键设置格式不合法");
 		if (!config || typeof config !== "object" || ![
 			"system",
@@ -5940,7 +5951,6 @@ var HostConfigStore = class {
 		const value = {
 			...this.value,
 			...config,
-			...panel.data,
 			locale: resolveAppLocale(config.locale),
 			dataDir: path.resolve(config.dataDir),
 			defaultViewMode: config.defaultViewMode === "split" ? "split" : "edit",

@@ -20,7 +20,9 @@ afterEach(() => {
 // There is no existing native runtime test fixture. Exercise the real protocol,
 // entry registry and resource scope; replace only child_process's OS transport.
 // No executable, PowerShell, GUI or user process is launched by these tests.
-function child(options: { badInit?: boolean; delayExit?: boolean; refuseSave?: boolean } = {}) {
+function child(
+  options: { badInit?: boolean; delayExit?: boolean; refuseSave?: boolean; noisy?: boolean } = {},
+) {
   const transport = new EventEmitter();
   const requests: Array<{ type: string }> = [];
   const stdout = new PassThrough(),
@@ -48,6 +50,7 @@ function child(options: { badInit?: boolean; delayExit?: boolean; refuseSave?: b
               : request.type === "activate"
                 ? { accepted: request.activation.commandId }
                 : null;
+        if (options.noisy) stdout.write("dependency diagnostic\n");
         stdout.write(
           JSON.stringify({
             protocol: 1,
@@ -130,6 +133,29 @@ describe("native entry startup recovery", () => {
       "stop",
     ]);
     expect(healthy.kill).not.toHaveBeenCalled();
+  });
+
+  // One non-JSON stdout line previously poisoned every later request in this entry.
+  it("isolates diagnostic stdout and still saves and stops the same process", async () => {
+    const native = nextChild({ noisy: true });
+    const f = await fixture();
+    await expect(f.runtime.activate({ commandId: "after-noise" })).resolves.toEqual({
+      accepted: "after-noise",
+    });
+    await expect(f.scope.stop("disable")).resolves.toEqual({ ok: true, errors: [] });
+    expect(native.kill).not.toHaveBeenCalled();
+    expect(f.onCrash).not.toHaveBeenCalled();
+  });
+
+  // Normal save refusal must keep the process alive; only explicit force exit kills it.
+  it("keeps refused business saves alive until explicitly forced to terminate", async () => {
+    const native = nextChild({ refuseSave: true });
+    const f = await fixture();
+    await f.runtime.activate({ commandId: "working" });
+    expect((await f.scope.prepareStop("quit")).ok).toBe(false);
+    expect(native.kill).not.toHaveBeenCalled();
+    await expect(f.scope.forceTerminateProcesses()).resolves.toEqual({ ok: true, errors: [] });
+    expect(native.kill).toHaveBeenCalledOnce();
   });
 
   it("tracks an unconfirmed initialization exit until close, then permits ordinary disable", async () => {

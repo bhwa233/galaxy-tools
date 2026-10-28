@@ -16,8 +16,6 @@
 <!-- 勾选受影响或已验证的平台。Check platforms affected or verified. -->
 
 - [ ] Windows
-- [ ] macOS
-- [ ] Linux
 - [ ] Platform-agnostic / 平台无关
 
 ## Screenshots or Recordings / 截图或录屏
@@ -44,4 +42,4 @@
 - [ ] `pnpm test`
 - [ ] `pnpm build`
 
-<!-- 感谢你对花笺 Floral Notepaper 的贡献！Thank you for your contribution! -->
+<!-- 感谢你对spark233 spark233 的贡献！Thank you for your contribution! -->

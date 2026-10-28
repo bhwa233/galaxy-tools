@@ -38,7 +38,9 @@
       "copy": "Copy",
       "save": "Save",
       "switchToPad": "Edit Note"
-    }
+    },
+    "hideTray": "Hide to tray",
+    "foldCapsule": "Fold into capsule"
   },
   "errors": {
     "categoryAlreadyExists": "Category \"{{category}}\" already exists",
@@ -54,7 +56,9 @@
     "unsupportedFile": "Only .md files are supported",
     "unsupportedImageFormat": "Unsupported image format",
     "unsupportedShortcut": "{{field}} configuration is invalid",
-    "unsupportedShortcutGeneric": "Shortcut configuration is invalid"
+    "unsupportedShortcutGeneric": "Shortcut configuration is invalid",
+    "externalConflict": "Another application changed this file. Your draft was kept. Save manually to confirm overwriting.",
+    "closeSaveFailed": "Saving before closing failed. Save the current note and try again."
   },
   "markdown": {
     "copied": "Copied",
@@ -81,7 +85,8 @@
       "uncategorized": "Uncategorized"
     },
     "confirm": {
-      "unsavedExternalFile": "\"{{title}}\" has unsaved changes. Save to the original file?"
+      "unsavedExternalFile": "\"{{title}}\" has unsaved changes. Save to the original file?",
+      "externalConflict": "Another application changed this file. Overwrite the disk version with your current content?"
     },
     "editor": {
       "confirmDelete": "Confirm delete?",
@@ -302,7 +307,7 @@
     "tileSaveReturnsToPin": "Return to tile after saving",
     "renderHtmlMarkdown": "Render HTML tags in Markdown",
     "splitScrollSync": "Split view scroll sync",
-    "imageAutoCompress": "Auto-compress large images (paste/drop, not window drops)",
+    "imageAutoCompress": "Auto-compress large images",
     "imageDisplay": {
       "label": "Preview image display",
       "show": "Show",
@@ -312,7 +317,7 @@
     "reminderSound": "Reminder sound",
     "mcp": {
       "label": "AI interface (MCP)",
-      "enable": "Enable MCP service (--mcp for AI clients)",
+      "enable": "Enable MCP service",
       "read": "Read-only",
       "append": "Append writes",
       "full": "Full control",
@@ -489,7 +494,8 @@
         "contain": "Contain",
         "repeat": "Repeat"
       }
-    }
+    },
+    "fontNotice": "Uses HarmonyOS Sans SC font. Copyright 2021 Huawei Device Co., Ltd. Licensed under HarmonyOS Sans Fonts License Agreement."
   },
   "tile": {
     "empty": "Empty"
@@ -505,6 +511,10 @@
     "hide": "Hide to Tray"
   },
   "launcher": {
+    "aiTranslate": "AI translation",
+    "cancelOcr": "Cancel text recognition",
+    "refreshApplications": "Refresh applications",
+    "applicationsRefreshed": "Applications refreshed",
     "recentlyUsed": "Recently used",
     "frequentlyUsed": "Frequent",
     "plugins": "Plugins",
@@ -545,7 +555,7 @@
       "manage": "Manage entries",
       "title": "Launcher entries",
       "description": "Manage frequent entries, pin order and personal aliases.",
-      "hideScope": "Hiding affects launcher entries, aliases and pins only; the plugin keeps running. Existing shortcuts and internal calls still follow their original authorization.",
+      "hideScope": "Hiding affects launcher entries only; the plugin keeps running.",
       "filterLabel": "Find an entry",
       "filterPlaceholder": "Name, alias or plugin",
       "listLabel": "Manageable launcher entries",
@@ -574,19 +584,18 @@
     },
     "learning": {
       "title": "Keyword selection memory",
-      "enable": "Allow learning successful choices (off by default)",
-      "privacy": "Associates only short keywords with explicitly selected applications or ordinary actions that execute successfully. Text bodies, AI input, images, clipboard context, and file context are excluded.",
-      "offHint": "Turning this off stops recording and learned ranking. Existing records remain and can still be cleared separately.",
-      "rankingHint": "Affects order only within the same group and match tier. Pinned entries, exact application names, and exact personal aliases take priority. Nothing runs automatically.",
+      "enable": "Allow learning successful choices",
+      "privacy": "Records only short keywords and results that ran successfully. Turning it off stops recording and removes its ranking effect.",
       "recordCount": "Saved associations: {{value}}",
       "clear": "Clear learned choices",
-      "clearHint": "Clearing learned choices does not change pins, personal aliases, or hidden entries.",
       "cleared": "Learned choices cleared.",
       "saved": "Learning settings saved.",
       "learned": "Previously chosen for this keyword"
     },
     "applicationRegion": "Applications & plugins",
-    "informationRegion": "Actions and results"
+    "informationRegion": "Actions and results",
+    "resultActions": "Actions for {{title}}",
+    "chooseAction": "Choose an action for this result."
   },
   "ocr": {
     "results": "Recognized text",
@@ -599,9 +608,20 @@
     "selection": "Original image and text selections",
     "textLabel": "Recognized text — edit or select part of the text"
   },
+  "screenshot": {
+    "history": "Screenshot history",
+    "back": "Back to launcher",
+    "count": "Up to 50 are kept · {{count}} in history",
+    "clear": "Clear",
+    "copy": "Copy",
+    "save": "Save",
+    "ocr": "Recognize text",
+    "remove": "Delete",
+    "empty": "No screenshots yet. Each completed capture is recorded here."
+  },
   "backup": {
     "title": "Backup and restore",
-    "description": "Save preferences, note text and attachments, plugin versions and enabled states, and plugin data such as clipboard history together. Restore verifies every file and preserves a copy of the current data.",
+    "description": "Saves settings, notes, plugins and plugin data. Restore verifies files and keeps a copy of current data.",
     "create": "Create backup",
     "inspect": "Choose and verify backup",
     "inspecting": "Verifying the backup manifest and files…",
@@ -621,9 +641,12 @@
     "snapshotPath": "Backup: {{path}}",
     "recoveryPath": "Preserved current data: {{path}}",
     "fileCount_one": "{{count}} file",
-    "fileCount_other": "{{count}} files"
+    "fileCount_other": "{{count}} files",
+    "nativeTrust": "Run Node / native code",
+    "permissions": "Granted capabilities"
   },
   "translation": {
+    "tooLong": "The source exceeds 20,000 characters. Split it into smaller passages. The full source has been preserved.",
     "title": "Dictionary and translation",
     "close": "Back to launcher",
     "error": "Operation did not complete",
@@ -644,10 +667,34 @@
     "cancelled": "Cancelled; current text preserved",
     "waiting": "Waiting for the service response…",
     "notCached": "The result was received, but its cache could not be saved.",
-    "translate": "Translate with default direction",
+    "translate": "Translate",
     "toChinese": "Translate to Simplified Chinese instead",
     "toEnglish": "Translate to English instead",
     "cancel": "Cancel request",
+    "targetText": "Translation",
+    "targetEmpty": "The translation will appear here.",
+    "stop": "Stop",
+    "flip": "Flip direction",
+    "resetDirection": "Use automatic",
+    "directionAuto": "Auto",
+    "directionZhEn": "Chinese → English",
+    "directionEnZh": "English → Chinese",
+    "clear": "Clear",
+    "configMissing": "No translation service is configured yet.",
+    "configAction": "Configure translation service",
+    "dictionaryCollapse": "Collapse",
+    "autoLookupOn": "Look up on selection: on",
+    "autoLookupOff": "Look up on selection: off",
+    "searching": "Looking up…",
+    "noEntry": "No matching entry",
+    "dismiss": "Dismiss message",
+    "historyTitle": "History",
+    "historyEmpty": "No translations yet",
+    "historyDelete": "Delete",
+    "historyClear": "Clear history",
+    "historyOn": "Record history: on",
+    "historyOff": "Record history: off",
+    "historyStorage": "History is stored in the plugin's local data directory.",
     "config": "Translation service configuration",
     "configHint": "One configuration is active at a time. The key is stored in the plugin’s private directory and is never included in query results or shown again.",
     "endpoint": "Compatible service address",
@@ -657,13 +704,14 @@
     "keySaved": "Saved",
     "keyHint": "Leave blank to keep the saved key. A local service without authentication may leave this empty.",
     "clearKey": "Clear saved key",
-    "saveConfig": "Save configuration"
+    "saveConfig": "Save configuration",
+    "noteSaved": "Saved as a note"
   },
   "plugins": {
     "actionUnavailable": "This action is unavailable. Enable or recover the corresponding plugin in plugin management.",
     "catalog": {
       "title": "Official offline plugin catalog",
-      "description": "The seven official plugins included with this installer. Install or reinstall offline, then review the installation and requested capabilities.",
+      "description": "Official plugins bundled with the installer. Works offline.",
       "prepare": "Prepare installation",
       "preparing": "Preparing official offline plugin",
       "installed": "Installed",
@@ -681,7 +729,7 @@
       "released": "Stopped"
     },
     "title": "Plugin management",
-    "description": "Review imported plugins before installation. Updates are checked automatically; you choose when to install them.",
+    "description": "Plugins install after you confirm; updates wait for your approval.",
     "error": "Operation did not complete",
     "errorHint": "Expand the details to see the cause, then retry the affected action.",
     "errorDetails": "View details",
@@ -690,7 +738,7 @@
     "commandRunningHint": "You can still disable the plugin. The host will ask it to save and cancel its tasks first.",
     "add": {
       "title": "Add plugin",
-      "description": "Import a local .tgz, a prebuilt development directory, or an npm package. Packages must contain a valid spark233 plugin manifest."
+      "description": "Accepts .tgz, development folders and npm packages."
     },
     "importing": "Importing plugin package",
     "importingDirectory": "Preparing development directory",
@@ -699,9 +747,9 @@
     "import": "Import local .tgz",
     "preparing": "Preparing installation preview",
     "packageName": "npm package name",
-    "registry": "Registry (optional)",
+    "registry": "Registry",
     "registryHint": "Leave blank for the official npm registry. Other registries must use HTTPS.",
-    "channel": "Update channel (optional)",
+    "channel": "Update channel",
     "channelHint": "Leave blank to use the latest stable channel.",
     "prepare": "Prepare installation preview",
     "pending": "Awaiting installation confirmation",
@@ -713,7 +761,7 @@
     "manifest": "View full manifest and integrity information",
     "native": {
       "title": "This plugin can run Node or native code",
-      "description": "This code has your user account’s full system access, including files and networks. Web capability restrictions do not constrain Node or native code. Install it only if you trust its source.",
+      "description": "These plugins run with your full system access. Process isolation is not a sandbox. Install trusted sources only.",
       "confirm": "I trust this source and allow Node / native execution"
     },
     "installing": "Installing and validating plugin",
@@ -727,7 +775,7 @@
     "loading": "Loading plugin status",
     "empty": {
       "title": "No plugins installed",
-      "description": "Add a local package or a specific npm source, then confirm installation to use it."
+      "description": "Add a plugin to get started."
     },
     "dependencies": "Required dependencies",
     "optionalDependencies": "Optional dependencies",
@@ -820,8 +868,8 @@
   },
   "diagnostics": {
     "title": "Diagnostics",
-    "description": "Review host and plugin status and counts. Content, raw output, and request bodies are excluded.",
-    "retention": "Keeps up to {{count}} recent entries. Clear removes all diagnostic logs, regardless of the current filters.",
+    "description": "Status and counts only, with no content or request bodies.",
+    "retention": "Keeps the latest {{count}} entries; clearing removes all logs.",
     "retry": "Reconnect",
     "refresh": "Refresh",
     "export": "Export current filters",
@@ -829,7 +877,7 @@
     "loading": "Connecting to diagnostics…",
     "entryCount": "Showing {{count}} entries",
     "catchingUp": "Showing {{count}} entries; receiving remaining batches…",
-    "entries": "Diagnostic entries (newest first)",
+    "entries": "Diagnostic entries",
     "unknownTime": "Time unavailable",
     "duration": "Duration: {{value}} ms",
     "bytes": "{{value}} bytes",
@@ -949,66 +997,6 @@
       "stderr": "Standard error (counts only)"
     }
   },
-  "contextPanel": {
-    "title": "Context panel",
-    "return": "Return to source",
-    "close": "Close context panel",
-    "source": "Source: {{app}}",
-    "contextStatus": "Current context status",
-    "expired": "This context has expired. Close the panel and open it again.",
-    "returnFailed": "The source window is no longer available. Focus was not restored.",
-    "operationFailed": "The operation did not complete. Close the panel and try again.",
-    "capture": {
-      "capturing": "Getting the current selection…",
-      "ready": "The current selection is ready. Choose an action.",
-      "no-context": "No context captured. Showing common entries.",
-      "error": "Capture did not complete. Common entries remain available.",
-      "window": "No selection content captured. Source application actions and common entries are available."
-    },
-    "reason": {
-      "empty": "No new content was captured. Old clipboard content is not used.",
-      "denied": "The source application did not allow reading this selection.",
-      "changed": "The source window changed. This capture was discarded.",
-      "timeout": "Selection capture timed out. Expired content was not used.",
-      "unavailable": "The selection service is unavailable."
-    },
-    "service": {
-      "disabled": "Mouse triggering is off.",
-      "starting": "Starting the input service…",
-      "ready": "The input service is ready.",
-      "unavailable": "The input service is unavailable. Try again.",
-      "unsupported": "Mouse selection triggering is unavailable on this platform. You can still preview common entries.",
-      "loading": "Reading input service status…"
-    },
-    "button": {
-      "middle": "Middle button",
-      "x1": "Side button 1",
-      "x2": "Side button 2"
-    },
-    "trigger": {
-      "click": "Click and release",
-      "hold": "Hold and release"
-    },
-    "settings": {
-      "title": "Context panel",
-      "enable": "Enable mouse triggering (off by default)",
-      "observeOnly": "Observes the selected button without blocking its original action. A hold opens the panel only after release. The source application may also scroll or navigate with that button.",
-      "button": "Mouse button",
-      "trigger": "Trigger",
-      "holdDuration": "Hold duration",
-      "milliseconds": "{{value}} ms",
-      "copyFallback": "Allow one copy shortcut as a fallback",
-      "copyHint": "Selected text is attempted first. Only with this permission may one Ctrl+C be sent to capture images or files; it updates the system clipboard. Without new content from this capture, no context is used. Old clipboard content is never reused.",
-      "excludedApps": "Excluded applications",
-      "excludedHint": "One .exe file name per line, without a path; up to 64, case insensitive. Save an empty list to remove exclusions.",
-      "excludedInvalid": "Enter up to 64 valid .exe file names without paths or control characters.",
-      "saveExclusions": "Save exclusions",
-      "operationFailed": "The operation did not complete. Try again or check diagnostics.",
-      "retry": "Retry input service",
-      "preview": "Preview common entries",
-      "previewHint": "Preview does not read a selection or send a copy shortcut."
-    }
-  },
   "settingsEditor": {
     "navigation": "Settings navigation",
     "pages": {
@@ -1016,9 +1004,10 @@
       "entries": "Launcher entries",
       "plugins": "Plugins",
       "backup": "Data & backups",
-      "diagnostics": "Diagnostics"
+      "diagnostics": "Diagnostics",
+      "shortcuts": "Keyboard shortcuts",
+      "tray": "System tray"
     },
-    "savePolicy": "General settings save automatically. Plugin settings require Save changes.",
     "autoSave": "Changes save automatically",
     "unsaved": "Unsaved changes",
     "unsavedDescription": "Save before continuing, discard changes, or cancel to stay here.",
@@ -1054,18 +1043,19 @@
     },
     "fields": {
       "paused": "Pause clipboard capture",
-      "excludedApps": "Excluded applications (one per line)",
-      "excludedText": "Excluded text (one per line)",
+      "excludedApps": "Excluded apps",
+      "excludedText": "Excluded text",
       "retentionDays": "Visible days",
       "visibleCount": "Visible entries",
       "quickKeys": "Quick keys",
       "quickAction": "Quick action",
       "compactPosition": "Compact window position",
-      "excludedRoots": "Excluded folders or volumes (one per line)",
-      "extensions": "Content extensions (one per line; empty uses defaults)",
+      "excludedRoots": "Excluded folders or volumes",
+      "extensions": "Content extensions (empty uses defaults)",
       "maxFileMiB": "Maximum content file size (MiB)",
       "includeHidden": "Include hidden files"
     },
+    "linesPlaceholder": "One per line",
     "options": {
       "digits": "Digits",
       "function": "Function keys",
@@ -1075,5 +1065,33 @@
       "edge": "Screen edge"
     },
     "secretClearing": "The key will be cleared after saving. Discard changes to keep it."
+  },
+  "capsules": {
+    "preview": "Note preview",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "empty": "Empty note",
+    "previewHint": "Hover to preview · Open to edit",
+    "master": "spark233 · Notes: {{count}} · {{action}} queue",
+    "masterHint": "Click to expand or collapse the queue; drag to reposition",
+    "hideNote": "Hide note: {{title}}",
+    "hideHint": "Hide to tray and keep content"
+  },
+  "commandSettings": {
+    "manageShortcuts": "Manage shortcuts",
+    "shortcutsDescription": "Manage global shortcuts for host and plugin actions. Save to apply; disabling a plugin releases its bindings and keeps your preferences.",
+    "trayDescription": "Choose plugin actions for the system tray and arrange plugins and actions. Disabled plugins are removed from the menu.",
+    "search": "Search plugins, actions or shortcuts",
+    "allPlugins": "Show all plugins",
+    "conflict": "This shortcut is assigned to {{action}}",
+    "unavailable": "Unavailable · preferences retained",
+    "configured": "Configured",
+    "unassigned": "Not assigned",
+    "empty": "No matching actions",
+    "saved": "Shortcut preferences saved",
+    "noTray": "Installed plugins have not declared tray actions",
+    "moveUp": "Move {{title}} up",
+    "moveDown": "Move {{title}} down",
+    "showItem": "Show {{title}}"
   }
 }

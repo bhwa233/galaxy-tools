@@ -7,16 +7,16 @@
     },
     {
       "path": "apps/desktop/electron/plugins/official/clipboard-history.ts",
-      "sha256": "443b213c7276ac5a91d1cd9b4c9c8bd5da28a9313f7e2e09b3d1066b42c470d3"
+      "sha256": "8dd5ae6be772627d2986956b88bd6ba678008dfd21f6159835c8ac4b08f7c578"
     },
     {
       "path": "apps/desktop/electron/persistence.ts",
-      "sha256": "968b941acddb76ce8cbb6964c2e3f1c9562bcdae1c9550e63322e8ade449bc00"
+      "sha256": "a694c6e53bd358f9c29850014ff13d5fea8ecdc5b1ff025cf802af44e939f165"
     }
   ],
   "file": {
     "name": "backend.mjs",
-    "bytes": 211846,
-    "sha256": "ef7b2f02d2e2cd4170d99526cde8a23dddfc28d2096a3927861e8d3fc8ed3b4b"
+    "bytes": 211914,
+    "sha256": "8ca37183fb23517ead264b125a16a63aa46be8b9ed61592b80f2108ce5b1e935"
   }
 }

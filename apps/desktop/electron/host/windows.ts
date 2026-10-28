@@ -20,7 +20,7 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     ...options.bounds,
     title: options.title,
     frame: false,
-    transparent: true,
+    transparent: options.label !== "launcher",
     show: false,
     resizable: true,
     minWidth: options.minWidth,
@@ -40,6 +40,21 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     },
   });
   win.setMenu(null);
+  win.webContents.on("before-input-event", (event, input) => {
+    if (
+      input.type !== "keyDown" ||
+      input.key !== "F12" ||
+      input.isAutoRepeat ||
+      input.control ||
+      input.alt ||
+      input.shift ||
+      input.meta
+    )
+      return;
+    event.preventDefault();
+    if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+    else win.webContents.openDevTools({ mode: "detach" });
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.on("will-attach-webview", (event) => event.preventDefault());

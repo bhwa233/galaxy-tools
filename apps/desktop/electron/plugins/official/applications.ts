@@ -227,22 +227,47 @@ export async function decorateApplicationResults(value: unknown): Promise<JsonVa
       try {
         const real = fs.realpathSync(iconPath),
           metadata = fs.statSync(real);
-        const version = `${metadata.mtimeMs}:${metadata.size}`;
-        let icon = applicationIcons.get(real);
-        if (!icon || icon.version !== version) {
-          const image =
-            /\.(?:png|ico)$/i.test(real) && metadata.size <= 2 * 1024 * 1024
-              ? nativeImage.createFromPath(real).resize({ width: 32, height: 32 })
-              : await app.getFileIcon(real, { size: "small" });
-          const data = image.toDataURL();
-          if (generation !== iconGeneration) return item;
-          if (!data.startsWith("data:image/png;base64,") || data.length > 32768) return item;
-          icon = { version, icon: data };
-          if (applicationIcons.size >= 256)
-            applicationIcons.delete(applicationIcons.keys().next().value!);
-          applicationIcons.set(real, icon);
+        const candidates = [real];
+        if (process.platform === "win32" && /\.lnk$/i.test(real)) {
+          try {
+            // Electron returns the generic .lnk icon. Resolve presentation only;
+            // launching still opens the original shortcut with its args/cwd.
+            const shortcut = shell.readShortcutLink(real);
+            candidates.unshift(shortcut.target);
+            // Electron cannot select a nonzero EXE/DLL resource index. In that
+            // case use the target's icon instead of an unrelated resource.
+            if (shortcut.icon && shortcut.iconIndex === 0) candidates.unshift(shortcut.icon);
+          } catch {
+            // Broken or unsupported shortcuts keep the normal file-icon fallback.
+          }
         }
-        return { ...item, icon: icon.icon };
+        for (const candidate of new Set(candidates)) {
+          if (!candidate || !path.isAbsolute(candidate)) continue;
+          try {
+            const source = fs.realpathSync(candidate),
+              sourceMetadata = fs.statSync(source);
+            const version = `${metadata.mtimeMs}:${metadata.size}:${source}:${sourceMetadata.mtimeMs}:${sourceMetadata.size}`;
+            let icon = applicationIcons.get(real);
+            if (!icon || icon.version !== version) {
+              const image =
+                /\.(?:png|ico)$/i.test(source) && sourceMetadata.size <= 2 * 1024 * 1024
+                  ? nativeImage.createFromPath(source).resize({ width: 32, height: 32 })
+                  : await app.getFileIcon(source, { size: "small" });
+              if (generation !== iconGeneration) return item;
+              const data = image.toDataURL();
+              if (!/^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(data) || data.length > 32768)
+                continue;
+              icon = { version, icon: data };
+              if (applicationIcons.size >= 256)
+                applicationIcons.delete(applicationIcons.keys().next().value!);
+              applicationIcons.set(real, icon);
+            }
+            return { ...item, icon: icon.icon };
+          } catch {
+            // Missing/invalid custom icons fall back to the shortcut target.
+          }
+        }
+        return item;
       } catch {
         return item;
       }

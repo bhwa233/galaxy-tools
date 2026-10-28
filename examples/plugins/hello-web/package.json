@@ -11,8 +11,10 @@
     "sdk.js",
     "README.md"
   ],
+  "type": "module",
   "scripts": {
-    "build": "pnpm --filter @spark233/sdk build && node build.mjs"
+    "build": "pnpm --filter @spark233/sdk build && node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@spark233/sdk": "workspace:*"
@@ -49,6 +51,12 @@
     ],
     "ui": {
       "theme": "^1.0.0"
-    }
+    },
+    "tray": [
+      {
+        "id": "open",
+        "commandId": "open"
+      }
+    ]
   }
 }

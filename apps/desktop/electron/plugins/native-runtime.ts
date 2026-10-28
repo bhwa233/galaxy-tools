@@ -102,7 +102,7 @@ class NativeEntryProcess {
       stdio: "pipe",
     });
     this.exit = new Promise((resolve) => {
-      this.child.once("error", (error) => this.fail(error));
+      this.child.on("error", (error) => this.fail(error));
       this.child.once("close", (code) => {
         this.ended = true;
         const error = this.fault ?? new Error(`Native plugin exited (${code})`);
@@ -110,7 +110,8 @@ class NativeEntryProcess {
         resolve(code);
       });
     });
-    this.child.stdin.on("error", (error) => this.fail(error));
+    for (const stream of [this.child.stdin, this.child.stdout, this.child.stderr])
+      stream.on("error", (error) => this.fail(error));
     this.child.stdout.on("data", (chunk: Buffer) => {
       this.output("stdout", chunk.length);
       this.receive(chunk);
@@ -158,7 +159,18 @@ class NativeEntryProcess {
         this.buffer = this.buffer.slice(newline + 1);
         if (Buffer.byteLength(line) > MAX_LINE) throw new Error("Native plugin line exceeds 1 MiB");
         if (!line.trim()) continue;
-        const message = messageSchema.parse(JSON.parse(line));
+        let message: z.infer<typeof messageSchema>;
+        try {
+          const decoded = JSON.parse(line);
+          if (decoded && typeof decoded.error === "string")
+            decoded.error = decoded.error.slice(0, 4096);
+          message = messageSchema.parse(decoded);
+        } catch {
+          // stdout is reserved for protocol lines. Isolate a stray diagnostic
+          // without poisoning this process or discarding subsequent valid replies.
+          console.warn("native-plugin-invalid-line", this.entryId);
+          continue;
+        }
         if (
           message.sessionId !== this.sessionId ||
           !samePluginOwner(message.owner, this.options.scope.owner)
@@ -171,12 +183,16 @@ class NativeEntryProcess {
             this.options.scope.accepts(message.owner) &&
             (message.requestId === this.initId || this.pending.has(message.requestId))
           )
-            this.options.onEvent?.({
-              owner: message.owner,
-              entryId: this.entryId,
-              name: message.name,
-              payload: message.payload as JsonValue | undefined,
-            });
+            try {
+              this.options.onEvent?.({
+                owner: message.owner,
+                entryId: this.entryId,
+                name: message.name,
+                payload: message.payload as JsonValue | undefined,
+              });
+            } catch (error) {
+              console.error("native-plugin-event", error);
+            }
           continue;
         }
         if (typeof message.ok !== "boolean") throw new Error("Invalid native plugin response");
@@ -274,7 +290,14 @@ class NativeEntryProcess {
       // this exception never applies to a running plugin's save refusal.
       this.disposing = true;
       if (!this.ended) this.child.kill();
-      await this.waitForClose();
+      try {
+        await this.waitForClose();
+      } catch (cleanup) {
+        throw new AggregateError(
+          [error, cleanup],
+          "Native startup cleanup failed: " + String(cleanup),
+        );
+      }
       throw error;
     }
   }
@@ -309,6 +332,11 @@ class NativeEntryProcess {
     this.child.stdin.end();
     const code = await this.waitForClose();
     if (code !== 0) throw new Error(`Native plugin shutdown exited (${code})`);
+  }
+  async forceTerminate(): Promise<void> {
+    this.disposing = true;
+    if (!this.ended) this.child.kill();
+    await this.waitForClose();
   }
   private async waitForClose() {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -474,7 +502,13 @@ export async function createNativePluginRuntime(
       return { ok: true };
     },
     async dispose() {
-      for (const process of processes.values()) await process.dispose();
+      const results = await Promise.allSettled(
+        [...processes.values()].map((process) => process.dispose()),
+      );
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length) throw new AggregateError(errors, "Native plugin cleanup failed");
       disposed = true;
       processes.clear();
     },
@@ -482,6 +516,16 @@ export async function createNativePluginRuntime(
   options.scope.own("process", {
     prepareStop: (reason) => runtime.prepareStop(reason),
     dispose: () => runtime.dispose(),
+    forceTerminate: async () => {
+      const results = await Promise.allSettled(
+        [...processes.values()].map((process) => process.forceTerminate()),
+      );
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length)
+        throw new AggregateError(errors, "Native processes remain tracked after forced exit");
+    },
   });
   return runtime;
 }

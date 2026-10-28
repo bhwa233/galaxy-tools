@@ -402,7 +402,7 @@ export default function applicationsPlugin(lifetime) {
         queries.clear();
         return { entries: structuredClone(customEntries), supportedKinds: [...SUPPORTED_KINDS] };
       });
-      saving = task.catch(() => {});
+      saving = task.then(() => {}, () => {});
       return task;
     }
     if (["launch", "reveal", "copy-path"].includes(action)) {
@@ -654,8 +654,8 @@ export default function applicationsPlugin(lifetime) {
             ? english
               ? "Some application sources are unavailable; results may be incomplete or stale. "
               : "应用来源读取异常，结果可能不完整或过期。 "
-            : "") +
-          (english
+            : ""),
+        instructions: (english
             ? "Search original names, full pinyin, initials, or mixed Chinese and Latin text."
             : "支持应用原名、中文全拼、拼音首字母与中英混排。"),
         pinyinSupported: true,

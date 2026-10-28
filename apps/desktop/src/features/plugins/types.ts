@@ -57,6 +57,7 @@ export interface PluginSummary {
   updateSource?: PluginUpdateSource;
   capabilities: PluginCapability[];
   commands: PluginCommand[];
+  tray?: import("@spark233/sdk").PluginTrayItem[];
   dependencies: Record<string, string>;
   optionalDependencies: Record<string, string>;
   lastError?: string;

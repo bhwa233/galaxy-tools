@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-applications",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "private": true,
   "description": "Windows Start menu and registered application search for spark233",
   "license": "(MIT AND Apache-2.0)",
@@ -16,7 +16,8 @@
   "type": "module",
   "scripts": {
     "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.applications",
-    "build:native": "node build.mjs"
+    "build:native": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "vitest": "5.0.5"
@@ -141,6 +142,13 @@
     "dataVersion": 1,
     "migration": {
       "entry": "migration.mjs"
-    }
+    },
+    "tray": [
+      {
+        "id": "search",
+        "commandId": "search",
+        "order": 0
+      }
+    ]
   }
 }

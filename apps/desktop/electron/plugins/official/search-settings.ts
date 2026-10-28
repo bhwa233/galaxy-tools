@@ -1,59 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { settingsSchema } from "../../../shared/search-schema.js";
 
-const admittedExtensions = [
-  "txt",
-  "md",
-  "markdown",
-  "ts",
-  "tsx",
-  "js",
-  "jsx",
-  "mjs",
-  "cjs",
-  "json",
-  "jsonc",
-  "yaml",
-  "yml",
-  "toml",
-  "ini",
-  "conf",
-  "config",
-  "xml",
-  "html",
-  "css",
-  "scss",
-  "less",
-  "py",
-  "rs",
-  "go",
-  "c",
-  "cpp",
-  "h",
-  "hpp",
-  "cs",
-  "java",
-  "kt",
-  "swift",
-  "rb",
-  "php",
-  "sql",
-  "sh",
-  "ps1",
-  "bat",
-  "cmd",
-  "vue",
-  "svelte",
-  "log",
-  "csv",
-] as const;
-export const settingsSchema = z.strictObject({
-  excludedRoots: z.array(z.string().trim().min(1).max(32768)).max(128),
-  extensions: z.array(z.enum(admittedExtensions)).max(64).default([]),
-  maxFileMiB: z.number().int().min(1).max(64).default(64),
-  includeHidden: z.boolean().default(false),
-});
+export { settingsSchema } from "../../../shared/search-schema.js";
 export function validateSettings(value: unknown): z.infer<typeof settingsSchema> {
   const parsed = settingsSchema.parse(value);
   if (Buffer.byteLength(JSON.stringify(parsed)) > 256 * 1024)

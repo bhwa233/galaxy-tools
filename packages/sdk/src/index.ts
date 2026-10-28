@@ -55,6 +55,7 @@ export interface PluginSessionContext {
   theme: PluginTheme;
   activation?: PluginActivation;
 }
+/** @deprecated Reserved contract; use PluginLauncherPage for current launcher queries. */
 export interface PluginSearchQuery {
   queryId: string;
   text: string;
@@ -63,6 +64,7 @@ export interface PluginSearchQuery {
   cursor?: string;
   context?: PluginContext;
 }
+/** @deprecated Reserved contract; use PluginLauncherPage for current launcher queries. */
 export interface PluginSearchResult {
   id: string;
   kind: "command" | "application" | "file" | "directory" | "note" | "clipboard" | "dictionary";
@@ -73,12 +75,16 @@ export interface PluginSearchResult {
   snippet?: string;
   actions: Array<{ commandId: string; title: string; parameters?: JsonValue }>;
 }
+/** @deprecated Reserved contract; use PluginLauncherPage for current launcher queries. */
 export interface PluginSearchPage {
   queryId: string;
   results: PluginSearchResult[];
   cursor?: string;
 }
 /** Local launcher candidates. Actions always name this plugin's declared commands. */
+/** Web query pages: at most 100 items and 8 actions per item; complete IPC
+ * payload at most 256 KiB. Titles at most 1000 chars, kinds at most 40 chars;
+ * icons must be PNG data URLs at most 32768 chars. The host validates these limits. */
 export interface PluginLauncherPage {
   items: Array<{
     id: string;

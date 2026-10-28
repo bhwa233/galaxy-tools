@@ -1,18 +1,17 @@
 /** Desktop boundary shared by the existing React features; business components never import Electron. */
+import type { CommandName } from "../../shared/command-policies.js";
+import type {
+  CommandInput,
+  CommandResult,
+  Commands,
+  DesktopBridge,
+  DialogOptions,
+  Events,
+  UnlistenFn,
+} from "../../shared/desktop-contract.js";
 import type { CustomApplicationTarget } from "../features/applications/types";
+export type { DialogOptions, UnlistenFn } from "../../shared/desktop-contract.js";
 
-export type UnlistenFn = () => void;
-interface DesktopBridge {
-  label: string;
-  invoke(
-    command: string,
-    args?: unknown,
-  ): Promise<{ ok: boolean; value?: unknown; error?: unknown }>;
-  emit(name: string, payload?: unknown): Promise<void>;
-  on(name: string, callback: (payload: unknown) => void): UnlistenFn;
-  droppedPaths(files: File[]): Promise<string[]>;
-  droppedApplicationEntries(files: File[]): Promise<CustomApplicationTarget[]>;
-}
 declare global {
   interface Window {
     spark233Desktop?: DesktopBridge;
@@ -22,25 +21,22 @@ function bridge(): DesktopBridge {
   if (!window.spark233Desktop) throw new Error("请使用 Electron 桌面入口启动spark233");
   return window.spark233Desktop;
 }
-export async function invoke<T>(
-  command: string,
-  args?: unknown,
-  options?: { headers?: Record<string, string> },
-): Promise<T> {
-  const result = await bridge().invoke(
-    command,
-    options ? { data: args, headers: options.headers } : args,
-  );
+export async function invoke<
+  C extends CommandName,
+  const A extends Commands[C]["args"] = Commands[C]["args"],
+>(command: C, ...input: CommandInput<C, A>): Promise<CommandResult<C, A>> {
+  const result = await bridge().invoke<C, A>(command, ...input);
   if (!result.ok) throw result.error;
-  return result.value as T;
+  return result.value;
 }
-export async function listen<T = unknown>(
-  name: string,
-  callback: (event: { payload: T }) => void,
+export const invokeCommand = invoke;
+export async function listen<E extends keyof Events>(
+  name: E,
+  callback: (event: { payload: Events[E] }) => void,
 ): Promise<UnlistenFn> {
-  return bridge().on(name, (payload) => callback({ payload: payload as T }));
+  return bridge().on(name, (payload) => callback({ payload }));
 }
-export async function emit(name: string, payload?: unknown): Promise<void> {
+export async function emit<E extends keyof Events>(name: E, payload?: Events[E]): Promise<void> {
   await bridge().emit(name, payload);
 }
 export function droppedApplicationEntries(files: File[]): Promise<CustomApplicationTarget[]> {
@@ -52,20 +48,16 @@ export function getVersion(): Promise<string> {
 export function openUrl(url: string): Promise<void> {
   return invoke("shell_open", { url });
 }
-export interface DialogOptions {
-  directory?: boolean;
-  multiple?: boolean;
-  filters?: { name: string; extensions: string[] }[];
-  defaultPath?: string;
-  title?: string;
-}
 export function open(options: DialogOptions = {}): Promise<string | string[] | null> {
   return invoke("dialog_open", options);
 }
 export function save(options: DialogOptions = {}): Promise<string | null> {
   return invoke("dialog_save", options);
 }
-export function message(text: string, options?: { title?: string; kind?: string }): Promise<void> {
+export function message(
+  text: string,
+  options?: { title?: string; kind?: "info" | "warning" | "error" | "question" },
+): Promise<void> {
   return invoke("dialog_message", { text, ...options });
 }
 export function readText(): Promise<string> {
@@ -89,26 +81,25 @@ export class PhysicalSize {
     public height: number,
   ) {}
 }
-function control<T = void>(action: string, value?: unknown): Promise<T> {
-  return invoke("window_control", { action, value });
-}
 export function getCurrentWindow() {
   return {
     label: bridge().label,
-    show: () => control("show"),
-    setFocus: () => control("focus"),
-    hide: () => control("hide"),
-    close: () => control("close"),
-    minimize: () => control("minimize"),
-    toggleMaximize: () => control("toggleMaximize"),
-    isMaximized: () => control<boolean>("isMaximized"),
-    setAlwaysOnTop: (enabled: boolean) => control("alwaysOnTop", enabled),
+    show: () => invoke("window_control", { action: "show" }),
+    setFocus: () => invoke("window_control", { action: "focus" }),
+    hide: () => invoke("window_control", { action: "hide" }),
+    close: () => invoke("window_control", { action: "close" }),
+    minimize: () => invoke("window_control", { action: "minimize" }),
+    toggleMaximize: () => invoke("window_control", { action: "toggleMaximize" }),
+    isMaximized: () => invoke("window_control", { action: "isMaximized" }),
+    setAlwaysOnTop: (enabled: boolean) =>
+      invoke("window_control", { action: "alwaysOnTop", value: enabled }),
     startDragging: () => startPointerOperation(),
     startResizeDragging: (direction: string) => startPointerOperation(direction),
-    outerPosition: () => control<{ x: number; y: number }>("position"),
-    innerSize: () => control<{ width: number; height: number }>("size"),
-    setPosition: (position: PhysicalPosition) => control("setPosition", position),
-    setSize: (size: PhysicalSize) => control("setSize", size),
+    outerPosition: () => invoke("window_control", { action: "position" }),
+    innerSize: () => invoke("window_control", { action: "size" }),
+    setPosition: (position: PhysicalPosition) =>
+      invoke("window_control", { action: "setPosition", value: position }),
+    setSize: (size: PhysicalSize) => invoke("window_control", { action: "setSize", value: size }),
     onResized: (callback: () => void) => listen("window-resized", callback),
     onDragDropEvent: async (
       callback: (event: { payload: { type: "drop"; paths: string[] } }) => void,
@@ -123,7 +114,8 @@ export function getCurrentWindow() {
         event.preventDefault();
         void bridge()
           .droppedPaths(Array.from(event.dataTransfer.files))
-          .then((paths) => callback({ payload: { type: "drop", paths } }));
+          .then((paths) => callback({ payload: { type: "drop", paths } }))
+          .catch((error) => console.error("file-drop", error));
       };
       const allow = (event: DragEvent) => {
         if (
@@ -190,7 +182,7 @@ export async function startPointerOperation(direction?: string): Promise<void> {
   const pointer = lastPointer;
   if (!pointer) return;
   pointer.target.setPointerCapture(pointer.id);
-  const start = await control<{ x: number; y: number; width: number; height: number }>("bounds");
+  const start = await invoke("window_control", { action: "bounds" });
   if (lastPointer !== pointer) return;
   const move = (event: PointerEvent) => {
     if (event.pointerId !== pointer.id || !(event.buttons & 1)) return;
@@ -212,7 +204,9 @@ export async function startPointerOperation(direction?: string): Promise<void> {
         y += start.height - height;
       }
     }
-    void control("setBounds", { x, y, width, height }).catch(console.error);
+    void invoke("window_control", { action: "setBounds", value: { x, y, width, height } }).catch(
+      console.error,
+    );
   };
   const end = () => {
     window.removeEventListener("pointermove", move);
@@ -233,5 +227,5 @@ export function setWindowBounds(bounds: {
   width: number;
   height: number;
 }): Promise<void> {
-  return control("setBounds", bounds);
+  return invoke("window_control", { action: "setBounds", value: bounds });
 }

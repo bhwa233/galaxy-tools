@@ -21,9 +21,15 @@ import {
   type LauncherPreferenceTarget,
 } from "./launcher-preferences.js";
 import type { CommandPinyinMatcher } from "./launcher-command-matcher.js";
+import {
+  pluginActionCommands,
+  pluginEntryCommands,
+  pluginKeywordOnlyCommands,
+  pluginManagedCommands,
+} from "../shared/launcher-entries.js";
 
 const querySchema = z.strictObject({
-  query: z.string().max(8192),
+  query: z.string().max(65536),
   mode: z.string().max(170).optional(),
   sessionId: z.string().min(1).max(100),
   directory: z.string().max(32768).optional(),
@@ -63,6 +69,7 @@ const pageSchema = z.object({
     )
     .max(100),
   hint: z.string().optional(),
+  instructions: z.string().optional(),
 });
 interface LauncherAction {
   pluginId: string;
@@ -160,7 +167,7 @@ export class LauncherController {
    * Query replies and execution still perform their own live owner checks. */
   private withCatalog<T>(operation: () => T): T {
     if (this.catalog) return operation();
-    this.catalog = this.options.manager()?.commands() ?? [];
+    this.catalog = this.options.manager()?.commands(true) ?? [];
     this.catalogOwners = new Map();
     this.catalogManifests = new Map();
     try {
@@ -172,13 +179,13 @@ export class LauncherController {
     }
   }
   private publicCommands(): ReturnType<PluginManager["commands"]> {
-    return this.catalog ?? this.options.manager()?.commands() ?? [];
+    return this.catalog ?? this.options.manager()?.commands(true) ?? [];
   }
   private manifest(pluginId: string): PluginManifest {
     const known = this.catalogManifests?.get(pluginId);
     if (known) return known;
     const manifest = localizePluginManifest(
-      this.options.manager()!.describe(pluginId).spark233,
+      this.options.manager()!.describe(pluginId, true).spark233,
       this.options.getLocale?.() ?? "zh-CN",
     );
     this.catalogManifests?.set(pluginId, manifest);
@@ -188,7 +195,7 @@ export class LauncherController {
     const key = JSON.stringify([owner.pluginId, owner.version, owner.instanceId, commandId]);
     const known = this.catalogOwners?.get(key);
     if (known !== undefined) return known;
-    const current = this.options.manager()?.isOwnerCurrent(owner, commandId) ?? false;
+    const current = this.options.manager()?.isOwnerCurrent(owner, commandId, true) ?? false;
     this.catalogOwners?.set(key, current);
     return current;
   }
@@ -680,7 +687,7 @@ export class LauncherController {
   }
   enterMode(value: unknown, callerId = "internal"): void {
     const { mode } = z.strictObject({ mode: z.string().max(170) }).parse(value);
-    const entry = this.commands(false, callerId).find(
+    const entry = this.commands(true, callerId).find(
       ({ pluginId, command }) => command.mode && `${pluginId}:${command.mode}` === mode,
     );
     if (!entry) throw new Error("Plugin mode is unavailable");
@@ -985,7 +992,7 @@ export class LauncherController {
     this.sessions.set(callerId, session);
     const manager = this.options.manager();
     if (!manager) return { ...this.snapshot(session), hint: "插件正在准备，请稍后重试" };
-    const commands = this.commands(false, callerId);
+    const commands = this.commands(!!mode, callerId);
     const installations = new Map(
       commands.map((entry) => [entry.pluginId, this.installation(entry.pluginId)]),
     );
@@ -1035,7 +1042,9 @@ export class LauncherController {
             limit:
               entry.pluginId === "spark233.applications"
                 ? Math.min(100, Math.max(60, modeApplicationIds.length + 12))
-                : 60,
+                : entry.pluginId === "spark233.translation"
+                  ? 5 // Keep dictionary suggestions compact and within its provider budget.
+                  : 60,
             callerId,
             requestId: session.requestId,
             locale,
@@ -1063,6 +1072,7 @@ export class LauncherController {
           pluginId: entry.pluginId,
           status: "ready",
           hint: page.hint,
+          instructions: page.instructions,
           items:
             entry.pluginId === "spark233.applications"
               ? this.rankApplications(
@@ -1083,6 +1093,8 @@ export class LauncherController {
           (entry) =>
             entry.pinned &&
             !entry.hidden &&
+            (entry.target.kind !== "command" ||
+              !pluginManagedCommands[entry.target.pluginId]?.includes(entry.target.commandId)) &&
             (entry.target.kind !== "command" ||
               this.commandSourceAllowed(entry.target.pluginId, entry.target.commandId, callerId)),
         )
@@ -1137,6 +1149,8 @@ export class LauncherController {
     };
     const rankCommands = (pinyin = new Map<number, number>()) =>
       this.withCatalog(() => {
+        const sentenceInput =
+          !!needle && (!localWord.test(query.trim()) || query.trim().split(/\s+/u).length > 4);
         commandsGroup.items = commands
           .map((entry, index) => {
             const words = wordsByCommand[index];
@@ -1191,7 +1205,14 @@ export class LauncherController {
               : undefined;
             return {
               ...entry,
-              score: contextInput ? Math.max(110, score) : score || (textInput ? 10 : 0),
+              score: contextInput
+                ? Math.max(110, score)
+                : textInput &&
+                    sentenceInput &&
+                    entry.pluginId === "spark233.translation" &&
+                    entry.command.id === "translate"
+                  ? Math.max(90, score)
+                  : score || (textInput ? 10 : 0),
               textInput,
               contextInput,
               commandContext,
@@ -1214,7 +1235,32 @@ export class LauncherController {
                 })(),
             };
           })
-          .filter((entry) => entry.score)
+          .filter((entry) => {
+            if (!entry.score) return false;
+            const { pluginId, command } = entry;
+            if (
+              pluginManagedCommands[pluginId]?.includes(command.id) &&
+              !(
+                pluginId === "spark233.translation" &&
+                command.id === "translate" &&
+                (entry.contextInput || entry.textInput)
+              )
+            )
+              return false;
+            if (needle || inputContext) return true;
+            const target = this.commandTarget(pluginId, command.id);
+            if (!!target && pinnedKeys.has(launcherTargetKey(target))) return true;
+            // A pinned keyword-only entry still shows; an unpinned one waits for
+            // the user to type, so the empty launcher stays free of entries that
+            // only re-enter the same search box.
+            if (pluginKeywordOnlyCommands[pluginId]?.includes(command.id)) return false;
+            return (
+              !Object.hasOwn(pluginEntryCommands, pluginId) ||
+              pluginEntryCommands[pluginId] === command.id ||
+              !!pluginActionCommands[pluginId]?.includes(command.id) ||
+              (pluginId === "spark233.notes" && command.id === "new")
+            );
+          })
           .sort((a, b) =>
             !needle && (!inputContext || inputContext.kind === "window")
               ? Number(b.contextInput || !!b.command.sourceApplications) -
@@ -1302,7 +1348,13 @@ export class LauncherController {
             commandsGroup.hint = String(error);
             this.publish(session);
           },
-        );
+        )
+        .catch((error) => {
+          if (!this.current(session)) return;
+          commandsGroup.status = "error";
+          commandsGroup.hint = String(error);
+          this.publish(session);
+        });
     }
     for (const entry of commands.filter(
       ({ command, pluginId }) =>
@@ -1337,7 +1389,9 @@ export class LauncherController {
         ? 100
         : entry.pluginId === "spark233.applications" && applicationIds.length
           ? Math.min(100, Math.max(12, applicationIds.length + 12))
-          : 12;
+          : entry.pluginId === "spark233.translation"
+            ? 5
+            : 12;
       void manager
         .queryOwned(
           entry.pluginId,
@@ -1408,6 +1462,7 @@ export class LauncherController {
                 : items;
           group.status = "ready";
           group.hint = resolvingPins ? undefined : page.hint;
+          group.instructions = page.instructions;
           this.publish(session);
         })
         .catch((error: unknown) => {

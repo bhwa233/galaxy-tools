@@ -344,6 +344,24 @@ class ClipboardController implements ClipboardRuntime {
     options.scope.own("process", {
       prepareStop: (reason) => this.prepareStop(reason),
       dispose: () => this.dispose(),
+      forceTerminate: async () => {
+        this.stopping = true;
+        if (!this.ended) this.child.kill();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            this.exit,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("Clipboard process remains tracked after forced exit")),
+                10000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      },
     });
   }
   get pid() {
@@ -549,7 +567,11 @@ class ClipboardController implements ClipboardRuntime {
   rememberTarget(): Promise<void> {
     if (this.closed || this.stopping || this.options.scope.state !== "active")
       return Promise.reject(new Error("Clipboard runtime is stopping"));
-    return this.serial(() => this.rpc("remember"));
+    return this.serial(() => this.rpc("remember")).catch((error: unknown) => {
+      if (error instanceof Error && error.message === "no external paste target is available")
+        return;
+      throw error;
+    });
   }
   private async exportedImage(id: string) {
     const info = z

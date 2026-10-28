@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-notes",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "MIT",
   "files": [
     "legal/**",
@@ -145,6 +145,23 @@
     "entry": "renderer/index.html",
     "ui": {
       "theme": "^1.0.0"
-    }
+    },
+    "tray": [
+      {
+        "id": "open",
+        "commandId": "open",
+        "order": 0
+      },
+      {
+        "id": "new",
+        "commandId": "new",
+        "order": 1
+      },
+      {
+        "id": "search",
+        "commandId": "search",
+        "order": 2
+      }
+    ]
   }
 }

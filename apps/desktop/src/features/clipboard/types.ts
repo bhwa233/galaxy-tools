@@ -57,6 +57,7 @@ export interface ClipboardPage {
   nativeStatus?: { running: boolean; error?: string };
 }
 export type ClipboardRequest =
+  | { action: "open-quick" }
   | {
       action: "list";
       query?: string;

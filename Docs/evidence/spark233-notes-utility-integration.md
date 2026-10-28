@@ -2,7 +2,7 @@
 
 > 本文保留最初接线阶段及其输入。后续通用备份、私有数据保护、崩溃恢复、设置补丁与新 Windows 候选见[便签收口记录](spark233-notes-finalization.md)；下述“缺少 Windows 原生资源”是当时状态，当前工具链及资源已经恢复。
 
-日期：2026-10-26。接续 [10 月 25 日交接](../spark233-handoff-2026-10-25.md)。本轮完成暂停的异步接线，并取得当前源码的 Linux Electron utility 与真实 main/renderer 代表证据。尚未生成包含这些改动的新 Windows 安装包，P3.1 保持未勾选；原 `ui-contract-followup` 安装器继续只证明原输入。
+日期：2026-10-26。接续 [10 月 25 日交接](../archive/2026-10/spark233-handoff-2026-10-25.md)。本轮完成暂停的异步接线，并取得当前源码的 Linux Electron utility 与真实 main/renderer 代表证据。尚未生成包含这些改动的新 Windows 安装包，P3.1 保持未勾选；原 `ui-contract-followup` 安装器继续只证明原输入。
 
 ## 源码边界与修复
 

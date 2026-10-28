@@ -1,7 +1,7 @@
 import { createPluginClient } from "./sdk.js";
 
 const client = createPluginClient();
-const input = document.querySelector("#message");
+const input = /** @type {HTMLInputElement} */ (document.querySelector("#message"));
 const status = document.querySelector("#status");
 let dirty = false;
 const applyTheme = (theme) => {

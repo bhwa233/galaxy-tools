@@ -6,7 +6,6 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn, execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
-const tar = require("tar");
 const root = path.resolve(__dirname, "../..");
 const compiledRoot =
   process.env.SPARK233_SEARCH_COMPILED_ROOT || path.join(root, "apps/desktop/dist-electron");
@@ -98,20 +97,25 @@ app
     };
     let manager;
     try {
-      const work = path.join(run, "source");
-      fs.mkdirSync(work, { recursive: true });
-      fs.cpSync(path.join(root, "packages/official/search"), path.join(work, "package"), {
-        recursive: true,
-      });
-      const archive = path.join(run, "search-0.1.0.tgz");
-      await tar.c({ gzip: true, file: archive, cwd: work, portable: true }, ["package"]);
+      const bundled = path.join(root, "dist-plugins");
+      const index = JSON.parse(fs.readFileSync(path.join(bundled, "index.json"), "utf8"));
+      const entry = index.plugins.find((item) => item.pluginId === "spark233.search");
+      check("bundledSearchPackageAvailable", !!entry);
+      const archive = path.join(bundled, entry.file);
       const environment = {
         version: "1.2.0",
         apiVersion: "1.0.0",
         platform: process.platform,
         arch: process.arch,
       };
-      const staged = await stageLocalPluginPackage(archive, environment, paths);
+      const staged = await stageLocalPluginPackage(archive, environment, paths, {
+        integrity: entry.integrity,
+      });
+      check(
+        "bundledSearchIdentityMatchesIndex",
+        staged.metadata.spark233.id === entry.pluginId && staged.metadata.version === entry.version,
+      );
+      report.packageVersion = staged.metadata.version;
       report.packageIntegrity = staged.integrity;
       let beforePublish;
       const opened = [],
@@ -446,9 +450,18 @@ app
         "declinedHostAuthorizationIsRetryable",
         report.declined.items[0].commandId === "install-service",
       );
-      const stoppingQuery = query("content", "中文");
+      const stoppingQuery = query("content", "中文").then(
+        (value) => ({ value }),
+        (error) => ({ error: String(error) }),
+      );
       await manager.setEnabled("spark233.search", false);
-      await stoppingQuery;
+      const stoppedQuery = await stoppingQuery;
+      check(
+        "disabledQueryCannotPublishBusinessResults",
+        stoppedQuery.error
+          ? /disabled|cancelled|stopping/i.test(stoppedQuery.error)
+          : stoppedQuery.value === undefined,
+      );
       check(
         "disableCompletesAndClearsSessions",
         !manager.list()[0].enabled &&
@@ -459,36 +472,51 @@ app
         "noPersistentContentBodyDatabase",
         !findFiles(run).some((filename) => path.basename(filename) === "content-v1.sqlite"),
       );
-      // Exercise ordinary production missing-service status without fixture routing;
-      // no UAC, service install, fallback, or disk scan is requested.
-      const missing = path.join(run, "missing-service");
-      fs.mkdirSync(missing);
-      fs.writeFileSync(
-        path.join(missing, "request.json"),
-        JSON.stringify({
-          protocol: 1,
-          sessionId: "missing-service",
-          owner: { pluginId: "spark233.search", version: "0.1.0", instanceId: "isolated" },
-          action: "search",
-          mode: "files",
-          query: "spark233",
-          profile: path.join(run, "missing-profile"),
-          offset: 0,
-          limit: 10,
-        }),
-      );
-      execFileSync(
-        path.join(binaries, "spark233.Search.exe"),
-        ["--request", path.join(missing, "request.json")],
-        { windowsHide: true, timeout: 15000 },
-      );
-      report.missingService = JSON.parse(
-        fs.readFileSync(path.join(missing, "result.json"), "utf8"),
-      );
-      check(
-        "missingServiceClearAndRetryable",
-        report.missingService.status === "service-not-installed",
-      );
+      // Never uninstall a pre-existing machine service to force a missing-service case.
+      const installedService =
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[bool](Get-Service -Name spark233Index -ErrorAction SilentlyContinue)",
+          ],
+          { encoding: "utf8", windowsHide: true },
+        ).trim() === "True";
+      report.missingServiceCheck = { executed: !installedService };
+      if (installedService) {
+        report.missingServiceCheck.reason = "Existing machine service preserved";
+      } else {
+        const missing = path.join(run, "missing-service");
+        fs.mkdirSync(missing);
+        fs.writeFileSync(
+          path.join(missing, "request.json"),
+          JSON.stringify({
+            protocol: 1,
+            sessionId: "missing-service",
+            owner: { pluginId: "spark233.search", version: "0.1.0", instanceId: "isolated" },
+            action: "search",
+            mode: "files",
+            query: "spark233",
+            profile: path.join(run, "missing-profile"),
+            offset: 0,
+            limit: 10,
+          }),
+        );
+        execFileSync(
+          path.join(binaries, "spark233.Search.exe"),
+          ["--request", path.join(missing, "request.json")],
+          { windowsHide: true, timeout: 15000 },
+        );
+        report.missingService = JSON.parse(
+          fs.readFileSync(path.join(missing, "result.json"), "utf8"),
+        );
+        check(
+          "missingServiceClearAndRetryable",
+          report.missingService.status === "service-not-installed",
+        );
+      }
       execFileSync(path.join(binaries, "spark233_search_probe.exe"), ["shutdown", pipeName], {
         windowsHide: true,
         timeout: 15000,

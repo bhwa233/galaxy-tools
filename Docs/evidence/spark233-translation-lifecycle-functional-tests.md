@@ -1,6 +1,6 @@
 # 翻译默认方向及生命周期续修
 
-日期：2026-10-27。对应[实施基线 2.5–2.7](../spark233-remaining-implementation-2026-10-27.md)：先只读复核并记录合同，再并行集中修改，最后统一验证。仅新增功能测试，不做 UI 测试，不使用 PowerShell 或 Windows 烟测。
+日期：2026-10-27。对应[实施基线 2.5–2.7](../archive/2026-10/spark233-remaining-implementation-2026-10-27.md)：先只读复核并记录合同，再并行集中修改，最后统一验证。仅新增功能测试，不做 UI 测试，不使用 PowerShell 或 Windows 烟测。
 
 ## 发现及修复
 

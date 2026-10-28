@@ -67,3 +67,19 @@ export function completeLauncherOnboarding(): Promise<unknown> {
 export function hideLauncher(): Promise<void> {
   return invoke("launcher_hide");
 }
+
+export function takeLauncherWorkspace(): Promise<{ kind: string; result?: unknown } | undefined> {
+  return invoke("launcher_take_workspace");
+}
+export function setLauncherContextFiles(paths: string[]): Promise<LauncherState> {
+  return invoke("launcher_context_files", { paths });
+}
+export function clearLauncherContext(): Promise<LauncherState> {
+  return invoke("launcher_context_clear");
+}
+export function returnToLauncher(): Promise<void> {
+  return invoke("launcher_return");
+}
+export function setLauncherComposition(active: boolean): Promise<void> {
+  return invoke("launcher_composition", { active });
+}

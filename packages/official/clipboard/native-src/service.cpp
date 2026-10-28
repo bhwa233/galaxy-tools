@@ -26,6 +26,7 @@ FILETIME targetCreated{};
 constexpr UINT kInput = WM_APP + 37, kEof = WM_APP + 38,kImageResult=WM_APP+39;
 std::mutex outputMutex;
 std::thread imageWorker;
+bool imageBusy = false;
 struct ImageResult {std::wstring id;bool ok=false;std::string error;};
 
 std::wstring Lower(std::wstring value) {
@@ -231,7 +232,9 @@ void Command(const std::string& line) {
             if(input.empty()||output.empty()||input.has_parent_path()||output.has_parent_path()||input.extension()!=L".bmp"||output.extension()!=L".png")throw std::runtime_error("image conversion requires private spool basenames");
             const auto source=std::filesystem::canonical(spool/input),destination=spool/output;
             if(source.parent_path()!=spool||std::filesystem::exists(destination))throw std::runtime_error("invalid image conversion scope");
+            if(imageBusy)throw std::runtime_error("An image conversion is already running");
             if(imageWorker.joinable())imageWorker.join();
+            imageBusy=true;
             imageWorker=std::thread([source,destination,id]{
                 auto result=std::make_unique<ImageResult>();result->id=id;bool initialized=false;
                 try{winrt::init_apartment(winrt::apartment_type::multi_threaded);initialized=true;ConvertImage(source,destination);result->ok=true;}catch(const std::exception& error){result->error=error.what();}catch(...){result->error="Windows image conversion failed";}
@@ -256,7 +259,7 @@ void Command(const std::string& line) {
 LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam){
     if(message==WM_CLIPBOARDUPDATE){try{CaptureChange();}catch(const std::exception& error){auto event=Event(L"error");event.SetNamedValue(L"error",JsonValue::CreateStringValue(winrt::to_hstring(error.what())));Send(event);}catch(...){auto event=Event(L"error");event.SetNamedValue(L"error",JsonValue::CreateStringValue(L"native clipboard capture failed"));Send(event);}return 0;}
     if(message==kInput){auto line=std::unique_ptr<std::string>(reinterpret_cast<std::string*>(lparam));Command(*line);return 0;}
-    if(message==kImageResult){auto result=std::unique_ptr<ImageResult>(reinterpret_cast<ImageResult*>(lparam));Reply(result->id,result->ok,result->error);return 0;}
+    if(message==kImageResult){imageBusy=false;auto result=std::unique_ptr<ImageResult>(reinterpret_cast<ImageResult*>(lparam));Reply(result->id,result->ok,result->error);return 0;}
     if(message==kEof){finished=true;PostQuitMessage(0);return 0;}
     return DefWindowProcW(window,message,wparam,lparam);
 }

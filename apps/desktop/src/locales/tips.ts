@@ -1,5 +1,5 @@
-import zhCN from "./zh-CN/tips.json";
 import enUS from "./en-US/tips.json";
+import zhCN from "./zh-CN/tips.json";
 
 const tipsMap: Record<string, string[]> = {
   "zh-CN": zhCN,
