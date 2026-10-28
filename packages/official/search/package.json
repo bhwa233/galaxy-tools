@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-search",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pulse powered NTFS filename and Instant text search for spark233",
   "license": "Apache-2.0",
   "files": [
