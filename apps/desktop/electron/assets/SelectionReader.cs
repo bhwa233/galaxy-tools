@@ -113,9 +113,47 @@ class SelectionReader {
     }
     [STAThread] static int Main(string[] args) {
         Console.OutputEncoding=new UTF8Encoding(false);
+        Console.InputEncoding=new UTF8Encoding(false);
+        int hostPid;
+        if(args.Length==2 && args[0]=="--server" && Int32.TryParse(args[1],out hostPid))
+            return Serve(hostPid);
         string text=""; int ownPid;
         try { if(args.Length==1 && Int32.TryParse(args[0],out ownPid)) text=Read(ownPid); } catch { }
         Console.Write(new JavaScriptSerializer {MaxJsonLength=524288}.Serialize(new {text=text}));
+        return 0;
+    }
+    static int Serve(int hostPid) {
+        // Bind the helper to this host lifetime, including a host crash while UIA is blocked.
+        Process host;
+        try { host=Process.GetProcessById(hostPid); } catch { return 1; }
+        var lifetime=new Thread(delegate() {
+            try { host.WaitForExit(); } catch { }
+            Environment.Exit(0);
+        });
+        lifetime.IsBackground=true;
+        lifetime.Start();
+        // Pay CLR/UIA initialization once. No external selection is read until requested.
+        try { var root=AutomationElement.RootElement; } catch { }
+        var serializer=new JavaScriptSerializer {MaxJsonLength=524288};
+        Console.WriteLine("{\"ready\":true}");
+        Console.Out.Flush();
+        string line;
+        while((line=Console.ReadLine())!=null) {
+            try {
+                if(line.Length>4096) return 1;
+                var request=serializer.Deserialize<Dictionary<string,object>>(line);
+                object idValue,operation; Guid id;
+                if(request==null || request.Count!=2 ||
+                    !request.TryGetValue("id",out idValue) || !(idValue is string) ||
+                    !Guid.TryParse((string)idValue,out id) ||
+                    !request.TryGetValue("operation",out operation) || !Object.Equals(operation,"read"))
+                    return 1;
+                string text="";
+                try { text=Read(hostPid); } catch { }
+                Console.WriteLine(serializer.Serialize(new {id=(string)idValue,text=text}));
+                Console.Out.Flush();
+            } catch { return 1; }
+        }
         return 0;
     }
 }

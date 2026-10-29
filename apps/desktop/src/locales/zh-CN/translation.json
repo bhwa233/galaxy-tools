@@ -598,6 +598,7 @@
     "chooseAction": "选择此结果的操作。"
   },
   "ocr": {
+    "close": "关闭窗口",
     "results": "取字结果",
     "back": "返回启动器",
     "all": "全部文字",
@@ -609,6 +610,7 @@
     "textLabel": "识别文字，可编辑或框选部分文字"
   },
   "screenshot": {
+    "close": "关闭窗口",
     "history": "截图历史",
     "back": "返回启动器",
     "count": "共 {{count}} 张，最多保留 50 张",
@@ -622,7 +624,7 @@
   "translation": {
     "tooLong": "原文超过 20,000 字符，请分段翻译。原文已完整保留。",
     "title": "词典与翻译",
-    "close": "返回启动器",
+    "close": "关闭窗口",
     "error": "操作未完成",
     "dictionary": "离线词典",
     "dictionaryHint": "基础 77 万词条，支持词形与短语。查词不发起网络请求。",

@@ -2,9 +2,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { Spinner } from "@/components/ui/spinner";
+import {
   AppWindow,
   Copy,
-  CornerDownLeft,
+  FileText,
   Pause,
   Pin,
   Play,
@@ -31,7 +39,7 @@ interface Detail extends ClipboardEntry {
   previewError?: string;
 }
 const kinds: Array<{ id?: ClipboardKind; label: string }> = [
-  { label: "全部类型" },
+  { label: "全部" },
   { id: "text", label: "文字" },
   { id: "html", label: "HTML" },
   { id: "rtf", label: "RTF" },
@@ -58,8 +66,9 @@ export function ClipboardWorkspace({
   );
   const [page, setPage] = useState<ClipboardPage>();
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<ClipboardKind>();
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [filter, setFilter] = useState<ClipboardKind | "all" | "favorites">("all");
+  const favoritesOnly = filter === "favorites";
+  const kind = filter === "all" || filter === "favorites" ? undefined : filter;
   const [pageOffset, setPageOffset] = useState(0);
   const [selected, setSelected] = useState<string>();
   const [detail, setDetail] = useState<Detail>();
@@ -165,9 +174,49 @@ export function ClipboardWorkspace({
     setDetail(undefined);
     void perform({ action: "history.remove", ids: [id] });
   };
+  const entryMenu = (entry: ClipboardEntry) => (
+    <ContextMenuContent aria-label={t("条目操作")} onKeyDown={(event) => event.stopPropagation()}>
+      <ContextMenuItem disabled={busy} onSelect={() => void copy(entry.id, "copy")}>
+        <Copy />
+        {t("复制原格式")}
+      </ContextMenuItem>
+      {(entry.kind === "html" || entry.kind === "rtf") && (
+        <ContextMenuItem disabled={busy} onSelect={() => void copy(entry.id, "copy", "text")}>
+          <FileText />
+          {t("纯文本复制")}
+        </ContextMenuItem>
+      )}
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        disabled={busy}
+        onSelect={() =>
+          void perform({ action: "favorite", id: entry.id, enabled: !entry.favorite })
+        }
+      >
+        <Star className={entry.favorite ? "fill-current text-primary" : undefined} />
+        {entry.favorite ? t("取消收藏") : t("收藏")}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem variant="destructive" disabled={busy} onSelect={() => removeEntry(entry.id)}>
+        <Trash2 />
+        {t("删除条目")}
+      </ContextMenuItem>
+    </ContextMenuContent>
+  );
   const keys = (event: KeyboardEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
-    if (target.closest("input,textarea,[contenteditable=true]") || busy) return;
+    if (
+      event.defaultPrevented ||
+      target.closest("input,textarea,[role=menu],[contenteditable=true]") ||
+      busy
+    )
+      return;
+    if (
+      event.key === "Enter" &&
+      target.closest("button") &&
+      !target.closest("[data-clipboard-select]")
+    )
+      return;
     if (event.key === "Escape") {
       event.preventDefault();
       onClose?.();
@@ -184,7 +233,7 @@ export function ClipboardWorkspace({
       );
     } else if (event.key === "Enter" && selected) {
       event.preventDefault();
-      void copy(selected, page?.settings.quickAction ?? "copy");
+      void copy(selected, compact ? (page?.settings.quickAction ?? "copy") : "copy");
     } else if (compact) {
       const quick =
         page?.settings.quickKeys === "function"
@@ -206,7 +255,7 @@ export function ClipboardWorkspace({
       tabIndex={-1}
       aria-label={t("剪贴板工作区")}
     >
-      <header className="flex flex-wrap items-center gap-2 border-b p-3">
+      <header className="electron-title-drag flex flex-wrap items-center gap-2 border-b p-3">
         <strong className="mr-auto">{compact ? t("快捷剪贴板") : t("剪贴板历史")}</strong>
         {!compact && (
           <Button
@@ -277,13 +326,14 @@ export function ClipboardWorkspace({
             <Search className="size-4 shrink-0 opacity-50" />
           </InputGroupAddon>
         </InputGroup>
-        <div className="flex flex-wrap gap-1">
+        <div role="group" aria-label={t("内容筛选")} className="flex flex-wrap gap-1">
           {kinds.map((item) => (
             <Button
               key={item.id ?? "all"}
               size="xs"
-              variant={kind === item.id ? "secondary" : "ghost"}
-              onClick={() => setKind(item.id)}
+              aria-pressed={filter === (item.id ?? "all")}
+              variant={filter === (item.id ?? "all") ? "secondary" : "ghost"}
+              onClick={() => setFilter(item.id ?? "all")}
             >
               {t(item.label, { defaultValue: item.label, keySeparator: false })}
             </Button>
@@ -293,15 +343,15 @@ export function ClipboardWorkspace({
             aria-pressed={favoritesOnly}
             aria-label={t("只看收藏")}
             variant={favoritesOnly ? "secondary" : "ghost"}
-            onClick={() => setFavoritesOnly((previous) => !previous)}
+            onClick={() => setFilter("favorites")}
           >
-            <Star data-icon="inline-start" />
+            <Star data-icon="inline-start" className="fill-current" />
             {t("收藏")}
           </Button>
         </div>
       </div>
       <div
-        className={`grid min-h-0 flex-1 ${compact ? "grid-cols-1" : "md:grid-cols-[minmax(230px,0.9fr)_minmax(0,1.2fr)]"}`}
+        className={`grid min-h-0 flex-1 ${compact ? "grid-cols-1" : "grid-cols-[minmax(180px,0.7fr)_minmax(0,1.3fr)]"}`}
       >
         <div className="min-h-0 overflow-auto border-r">
           {!page?.entries.length && (
@@ -312,163 +362,159 @@ export function ClipboardWorkspace({
             </p>
           )}
           {page?.entries.map((entry, index) => (
-            <div
-              key={entry.id}
-              className={`flex items-start gap-2 border-b px-3 py-2 ${selected === entry.id ? "bg-accent" : "hover:bg-muted/50"}`}
-            >
-              <button
-                className="min-w-0 flex-1 text-left"
-                onClick={() => setSelected(entry.id)}
-                onDoubleClick={() => void copy(entry.id, "copy")}
-              >
-                <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                  {compact && index < 9 && (
-                    <Badge variant="outline">
-                      {page.settings.quickKeys === "function" ? "F" : ""}
-                      {index + 1}
-                    </Badge>
+            <ContextMenu key={entry.id}>
+              <ContextMenuTrigger asChild>
+                <button
+                  data-clipboard-select
+                  className={`block w-full min-w-0 border-b px-3 py-2 text-left ${selected === entry.id ? "bg-accent" : "hover:bg-muted/50"}`}
+                  onContextMenu={() => setSelected(entry.id)}
+                  onClick={() => setSelected(entry.id)}
+                  onDoubleClick={() => void copy(entry.id, "copy")}
+                >
+                  <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                    {compact && index < 9 && (
+                      <Badge variant="outline">
+                        {page.settings.quickKeys === "function" ? "F" : ""}
+                        {index + 1}
+                      </Badge>
+                    )}
+                    {entry.pinned && <Pin className="size-3" />}
+                    {entry.favorite && <Star className="size-3 fill-current" />}
+                    <span>{t(`kind.${entry.kind}`)}</span>
+                    <span className="ml-auto">×{entry.copies}</span>
+                  </div>
+                  {entry.thumbnailDataUrl && (
+                    <img
+                      src={entry.thumbnailDataUrl}
+                      alt={t("图片缩略图")}
+                      className="max-h-24 max-w-40 object-contain"
+                    />
                   )}
-                  {entry.pinned && <Pin className="size-3" />}
-                  {entry.favorite && <Star className="size-3" />}
-                  <span>{t(`kind.${entry.kind}`)}</span>
-                  <span className="ml-auto">×{entry.copies}</span>
-                </div>
-                {entry.thumbnailDataUrl && (
-                  <img
-                    src={entry.thumbnailDataUrl}
-                    alt={t("图片缩略图")}
-                    className="max-h-24 max-w-40 object-contain"
-                  />
-                )}
-                <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm">
-                  {entry.preview || t(entry.kind === "image" ? "图片" : "剪贴板内容")}
-                </p>
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("复制此条目")}
-                disabled={busy}
-                onClick={() => void copy(entry.id, "copy")}
-              >
-                <Copy />
-              </Button>
-            </div>
+                  <p
+                    className="line-clamp-2 whitespace-pre-wrap break-words text-sm"
+                    title={entry.preview}
+                  >
+                    {entry.kind === "files" && entry.files.length
+                      ? entry.files.map((file) => file.split(/[/\\]/).pop() || file).join("\n")
+                      : entry.preview || t(entry.kind === "image" ? "图片" : "剪贴板内容")}
+                  </p>
+                </button>
+              </ContextMenuTrigger>
+              {entryMenu(entry)}
+            </ContextMenu>
           ))}
         </div>
         {!compact && (
-          <div className="min-h-0 flex flex-col gap-3 overflow-auto p-3">
-            {detail ? (
-              <>
-                {/* Source and time live here; the list keeps only the content. */}
-                <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-                  {detail.note && <p className="break-all">{detail.note}</p>}
-                  <p className="break-all">
-                    {[
-                      detail.sourceTitle || detail.source,
-                      new Date(detail.lastUsedAt).toLocaleString(),
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </div>
-                {detail.previewError && (
-                  <p role="status">{t("缩略图不可用，原始图片仍可复制或导出")}</p>
-                )}
-                {detail.imageDataUrl && (
-                  <img
-                    src={detail.imageDataUrl}
-                    alt={t("剪贴板图片预览")}
-                    className="max-h-56 max-w-full rounded-md border object-contain"
-                  />
-                )}
-                {!!detail.files.length && (
-                  <div className="rounded-md border p-2 text-xs">
-                    {detail.files.map((filename) => (
-                      <p
-                        key={filename}
-                        className={
-                          detail.invalidFiles.includes(filename)
-                            ? "break-all text-destructive"
-                            : "break-all"
-                        }
-                      >
-                        {filename}
-                        {detail.invalidFiles.includes(filename) ? t("（引用已失效）") : ""}
-                      </p>
-                    ))}
-                  </div>
-                )}
-                {detail.kind !== "image" && detail.kind !== "files" && (
-                  <div className="max-h-64 overflow-auto rounded-md border p-2 text-sm whitespace-pre-wrap break-words">
-                    {detail.text || t("剪贴板内容")}
-                  </div>
-                )}
-                {detail.textTruncated && (
-                  <p role="status" className="text-xs text-muted-foreground">
-                    {t("内容较大，仅预览前 256 Ki 字符。原始复制保持完整。")}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button disabled={busy} onClick={() => void copy(detail.id, "copy")}>
-                    <Copy />
-                    {t("复制原格式")}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => void copy(detail.id, "paste")}
+          <div className="flex min-h-0 min-w-0 flex-col" aria-label={t("条目详情")}>
+            {detail && detail.id === selected ? (
+              <ContextMenu>
+                <ContextMenuTrigger asChild className="select-text">
+                  <div
+                    className="flex min-h-0 flex-1 flex-col outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+                    tabIndex={0}
                   >
-                    <CornerDownLeft />
-                    {t("回贴原应用")}
-                  </Button>
-                  {(detail.kind === "html" || detail.kind === "rtf") && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => void copy(detail.id, "copy", "text")}
+                    <section
+                      className="flex min-h-0 flex-1 flex-col gap-3 p-4"
+                      aria-label={t("内容预览")}
                     >
-                      {t("纯文本复制")}
-                    </Button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void perform({
-                        action: "favorite",
-                        id: detail.id,
-                        enabled: !detail.favorite,
-                      })
-                    }
-                  >
-                    <Star />
-                    {detail.favorite ? t("取消收藏") : t("收藏")}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => removeEntry(detail.id)}
-                  >
-                    <Trash2 />
-                    {t("删除条目")}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t("来源：")}
-                  {detail.source || t("未知应用")} · {new Date(detail.lastUsedAt).toLocaleString()}
-                  {t("。复制仅修改剪贴板，回贴会恢复之前的应用并发送粘贴按键。")}
-                </p>
-              </>
+                      <div className="flex shrink-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+                        <h3 className="font-medium">{t("内容预览")}</h3>
+                        <span>{t("右键查看操作")}</span>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-auto">
+                        {detail.previewError && (
+                          <p role="status" className="mb-3 text-sm text-muted-foreground">
+                            {t("缩略图不可用，原始图片仍可复制或导出")}
+                          </p>
+                        )}
+                        {detail.kind === "image" && detail.imageDataUrl && (
+                          <div className="flex h-full min-h-40 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/20 p-3">
+                            <img
+                              src={detail.imageDataUrl}
+                              alt={t("剪贴板图片预览")}
+                              className="max-h-full max-w-full rounded object-contain"
+                            />
+                          </div>
+                        )}
+                        {!!detail.files.length && (
+                          <div className="space-y-2">
+                            {detail.files.map((filename) => (
+                              <div
+                                key={filename}
+                                className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/10 p-3"
+                              >
+                                <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                                <div className="min-w-0 space-y-1">
+                                  <p className="break-words text-sm font-medium">
+                                    {filename.split(/[/\\]/).pop() || filename}
+                                  </p>
+                                  <p className="break-all text-xs text-muted-foreground">
+                                    {filename}
+                                  </p>
+                                  {detail.invalidFiles.includes(filename) && (
+                                    <p className="text-xs text-destructive">
+                                      {t("（引用已失效）")}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {detail.kind !== "image" && detail.kind !== "files" && (
+                          <div className="rounded-lg border border-border/60 bg-muted/10 p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
+                            {detail.text || t("剪贴板内容")}
+                          </div>
+                        )}
+                        {detail.textTruncated && (
+                          <p role="status" className="mt-3 text-xs text-muted-foreground">
+                            {t("内容较大，仅预览前 256 Ki 字符。原始复制保持完整。")}
+                          </p>
+                        )}
+                      </div>
+                    </section>
+                    <section
+                      className="shrink-0 space-y-3 border-t px-4 py-3"
+                      aria-label={t("条目信息")}
+                    >
+                      <h3 className="text-xs font-medium text-muted-foreground">{t("条目信息")}</h3>
+                      <dl className="grid max-h-36 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 overflow-auto text-xs">
+                        <dt className="text-muted-foreground">{t("来源应用")}</dt>
+                        <dd className="truncate" title={detail.source}>
+                          {detail.sourceTitle ||
+                            detail.source.split(/[/\\]/).pop() ||
+                            t("未知应用")}
+                        </dd>
+                        <dt className="text-muted-foreground">{t("记录时间")}</dt>
+                        <dd>
+                          <time dateTime={new Date(detail.createdAt).toISOString()}>
+                            {new Date(detail.createdAt).toLocaleString()}
+                          </time>
+                        </dd>
+                        <dt className="text-muted-foreground">{t("内容格式")}</dt>
+                        <dd className="truncate" title={detail.formats.join(" · ")}>
+                          {t(`kind.${detail.kind}`)}
+                        </dd>
+                        {detail.note && (
+                          <>
+                            <dt className="text-muted-foreground">{t("备注")}</dt>
+                            <dd className="whitespace-pre-wrap break-words">{detail.note}</dd>
+                          </>
+                        )}
+                      </dl>
+                    </section>
+                  </div>
+                </ContextMenuTrigger>
+                {entryMenu(detail)}
+              </ContextMenu>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                {t("选择一条内容查看原始格式和操作。")}
-              </p>
+              <div
+                role={selected ? "status" : undefined}
+                className="flex flex-1 items-center justify-center gap-2 p-6 text-sm text-muted-foreground"
+              >
+                {selected && <Spinner />}
+                {selected ? t("正在加载预览…") : t("选择一条内容查看原始格式和操作。")}
+              </div>
             )}
           </div>
         )}

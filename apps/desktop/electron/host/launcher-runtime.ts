@@ -45,8 +45,8 @@ export function createLauncherRuntime(
   let reader: NativeSelectionReader | undefined;
   const selectionLauncher = new SelectionLauncher({
     read: (signal) => getReader().read(signal),
+    prepare: () => prepareLauncher(),
     present: async (text, revision, signal) => {
-      await prepareLauncher();
       if (signal.aborted) return;
       if (ctx.maintenance || ctx.hostShutdown.isQuitting) return;
       ctx.clearLauncherContext();
@@ -226,6 +226,20 @@ export function createLauncherRuntime(
     void showLauncher().catch((error) => ctx.reportError(error));
   }
 
+  function preloadLauncher(): void {
+    if (ctx.windows.has("launcher") || ctx.maintenance || ctx.hostShutdown.isQuitting) return;
+    const layout: Layout = {
+      ...(ctx.layouts.get("launcher") ?? {
+        label: "launcher",
+        view: "launcher",
+        bounds: ctx.safeBounds({ width: 760, height: 560 }),
+        topmost: false,
+      }),
+      visible: false,
+    };
+    ctx.createWindow(layout);
+  }
+
   async function activateHostCommand(pluginId: string, commandId: string): Promise<unknown> {
     if (ctx.maintenance || ctx.hostShutdown.isQuitting)
       throw new AppError("maintenance", "宿主当前正在保存或恢复");
@@ -357,6 +371,7 @@ export function createLauncherRuntime(
     cancelSelection,
     stopSelectionReader,
     requestLauncher,
+    preloadLauncher,
     activateHostCommand,
     showOfficialWorkspace,
     showClipboardWorkspace,

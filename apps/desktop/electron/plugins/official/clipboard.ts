@@ -235,6 +235,8 @@ class ClipboardController implements ClipboardRuntime {
   >();
   private queue: Array<z.infer<typeof snapshotEvent>> = [];
   private operations: Promise<unknown> = Promise.resolve();
+  private targetVersion = 0;
+  private targetValid = false;
   private ended = false;
   private stopping = false;
   private closed = false;
@@ -504,7 +506,11 @@ class ClipboardController implements ClipboardRuntime {
       if (result.captured) this.notify();
     }
   }
-  private rpc(operation: string, payload: Record<string, unknown> = {}) {
+  private rpc(
+    operation: string,
+    payload: Record<string, unknown> = {},
+    timeoutMs = this.options.timeoutMs ?? 10000,
+  ) {
     if (this.ended)
       return Promise.reject(new Error(this.lastError ?? "Clipboard native helper is not running"));
     const id = randomUUID();
@@ -515,7 +521,7 @@ class ClipboardController implements ClipboardRuntime {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Native clipboard ${operation} timed out; process remains tracked`));
-      }, this.options.timeoutMs ?? 10000);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.child.stdin.write(message, (error) => {
         if (error) {
@@ -567,11 +573,23 @@ class ClipboardController implements ClipboardRuntime {
   rememberTarget(): Promise<void> {
     if (this.closed || this.stopping || this.options.scope.state !== "active")
       return Promise.reject(new Error("Clipboard runtime is stopping"));
-    return this.serial(() => this.rpc("remember")).catch((error: unknown) => {
-      if (error instanceof Error && error.message === "no external paste target is available")
-        return;
-      throw error;
-    });
+    const version = ++this.targetVersion;
+    this.targetValid = false;
+    // This control RPC must not wait for history persistence or image conversion.
+    // A late acknowledgement cannot authorize pasting after a newer capture.
+    return this.rpc("remember", {}, Math.min(this.options.timeoutMs ?? 150, 150))
+      .then(() => {
+        if (version === this.targetVersion) this.targetValid = true;
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.message === "no external paste target is available")
+          return;
+        throw error;
+      });
+  }
+  private assertPasteTarget(version: number): void {
+    if (!this.targetValid || version !== this.targetVersion)
+      throw new Error("粘贴目标已失效，请从目标应用重新打开剪贴板，或复制后手动粘贴");
   }
   private async exportedImage(id: string) {
     const info = z
@@ -656,7 +674,9 @@ class ClipboardController implements ClipboardRuntime {
     mode: "original" | "text" | "image-file" = "original",
     paste = false,
     emoji = false,
+    targetVersion = this.targetVersion,
   ) {
+    if (paste) this.assertPasteTarget(targetVersion);
     const name = `restore-${randomUUID()}.scb`,
       filename = confined(this.spool, name);
     try {
@@ -683,7 +703,11 @@ class ClipboardController implements ClipboardRuntime {
         fs.statSync(filename).size !== result.bytes
       )
         throw new Error("Clipboard replay output identity mismatch");
-      if (paste) await this.options.beforePaste?.();
+      if (paste) {
+        this.assertPasteTarget(targetVersion);
+        await this.options.beforePaste?.();
+        this.assertPasteTarget(targetVersion);
+      }
       await this.rpc(paste ? "paste" : "restore", { file: name });
       await this.data({ action: emoji ? "emoji.used" : "copied", id });
       return { copied: true, pasted: paste };
@@ -698,6 +722,7 @@ class ClipboardController implements ClipboardRuntime {
       (command.action === "draft.save" && this.options.scope.state === "preparing");
     if (this.closed || this.stopping || !accepts())
       return Promise.reject(new Error("剪贴板插件正在停止"));
+    const targetVersion = this.targetVersion;
     return this.serial(async () => {
       if (this.closed || this.stopping || !accepts()) throw new Error("剪贴板插件正在停止");
       let result: unknown;
@@ -751,7 +776,13 @@ class ClipboardController implements ClipboardRuntime {
         case "paste": {
           const mode = z.enum(["original", "text", "image-file"]).parse(command.mode ?? "original");
           if (mode === "image-file") await this.ensurePng(command.id);
-          result = await this.restore(command.id, mode, command.action === "paste");
+          result = await this.restore(
+            command.id,
+            mode,
+            command.action === "paste",
+            false,
+            targetVersion,
+          );
           break;
         }
         case "emoji.copy":

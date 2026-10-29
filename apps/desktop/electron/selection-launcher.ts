@@ -8,6 +8,7 @@ export class SelectionLauncher {
   constructor(
     private readonly options: {
       read(signal: AbortSignal): Promise<string>;
+      prepare?(signal: AbortSignal): Promise<void>;
       present(text: string, revision: number, signal: AbortSignal): void | Promise<void>;
     },
   ) {}
@@ -18,12 +19,15 @@ export class SelectionLauncher {
     const generation = this.generation;
     const controller = new AbortController();
     this.pending = controller;
+    const preparation =
+      this.options.prepare?.(controller.signal).catch(() => {}) ?? Promise.resolve();
     let text = "";
     try {
       text = await this.options.read(controller.signal);
     } catch {
       // Unsupported, inaccessible or timed-out selection opens an empty input.
     }
+    await preparation;
     if (this.stopped || controller.signal.aborted || generation !== this.generation) return;
     try {
       await this.options.present(text, generation, controller.signal);

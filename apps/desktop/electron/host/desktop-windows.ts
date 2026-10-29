@@ -226,6 +226,10 @@ export function createDesktopWindows(
     });
     win.on("show", () => {
       layout.visible = true;
+      if (layout.label === "launcher") {
+        ctx.preparedWindows.delete(win.id);
+        ctx.emit("launcher-visibility-changed", { visible: true }, win);
+      }
       ctx.applyNoteTopmost(win, layout);
       if (layout.hostPage !== "settings") ctx.scheduleLayout();
       ctx.publishNoteStates();
@@ -233,6 +237,8 @@ export function createDesktopWindows(
     win.on("hide", () => {
       const caller = ctx.launcherCallers.get(launcherContentsId);
       if (layout.label === "launcher") {
+        layout.visible = false;
+        ctx.emit("launcher-visibility-changed", { visible: false }, win);
         ctx.workspaceRequests.delete("launcher");
         ctx.cancelSelection();
       }
@@ -277,8 +283,10 @@ export function createDesktopWindows(
       if (ctx.exiting) return;
       event.preventDefault();
       if (
+        layout.label !== "launcher" &&
         isHostView(layout) &&
         layout.hostPage !== "settings" &&
+        !layout.workspace &&
         !layout.compact &&
         !ctx.hostConfig.value.closeToTray
       )
@@ -310,6 +318,7 @@ export function createDesktopWindows(
     });
     const params = new URLSearchParams({
       view: layout.hostPage ?? layout.view,
+      ...(layout.label === "launcher" && !layout.visible ? { preload: "1" } : {}),
       ...layout.settingsTarget,
       ...(layout.noteId ? { noteId: layout.noteId } : {}),
       ...(layout.workspace ? { workspace: layout.workspace } : {}),

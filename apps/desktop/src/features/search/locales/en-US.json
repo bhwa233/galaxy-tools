@@ -1,5 +1,6 @@
 {
   "title": "File search scope",
+  "workspaceClose": "Close window",
   "chooseDirectory": "Choose search directory",
   "allDirectories": "Search all directories",
   "description": "Searches enabled NTFS volumes; exclude a folder or a whole volume.",

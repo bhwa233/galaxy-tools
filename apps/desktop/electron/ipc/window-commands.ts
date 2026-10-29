@@ -22,12 +22,17 @@ export function createWindowCommands(
     | "applyNoteTopmost"
     | "remember"
     | "publishNoteStates"
+    | "workspaceRequests"
   >,
 ) {
   async function run({ win, command, args, layout }: CommandInvocation): Promise<unknown> {
     switch (command) {
-      case "desktop_ready":
+      case "desktop_ready": {
         ctx.ready.add(win.id);
+        // A hotkey may arrive after the preloaded renderer's initial take but
+        // before this readiness acknowledgement. Deliver the still-owned handoff.
+        const workspace = ctx.workspaceRequests.get(layout.label);
+        if (workspace) ctx.emit("open-workspace", workspace, win);
         if (layout.hostPage === "settings" && layout.settingsTarget)
           ctx.emit("settings-navigate", layout.settingsTarget, win);
         if (ctx.pendingManagerOpen?.windowId === win.id) {
@@ -40,6 +45,7 @@ export function createWindowCommands(
           win.focus();
         }
         return;
+      }
       case "surface_state": {
         if (layout.view === "main") return;
         // A final save already validated/bound this identity. Its renderer must
@@ -75,8 +81,10 @@ export function createWindowCommands(
             return;
           case "close":
             if (
+              layout.label !== "launcher" &&
               ctx.isHostView(layout) &&
               layout.hostPage !== "settings" &&
+              !layout.workspace &&
               !layout.compact &&
               !ctx.hostConfig.value.closeToTray
             )

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { PluginActivation, JsonValue, PluginContext, PluginOwner } from "@spark233/sdk";
 import {
@@ -1023,6 +1024,7 @@ export class LauncherController {
         },
       ];
       const controller = new AbortController();
+      const signal = AbortSignal.any([session.controller.signal, controller.signal]);
       session.providers.set(mode, {
         pluginId: entry.pluginId,
         commandId: entry.command.id,
@@ -1030,6 +1032,8 @@ export class LauncherController {
         controller,
         group: session.groups[0],
       });
+      if (query.trim() && entry.pluginId !== "spark233.applications")
+        await delay(100, undefined, { signal });
       const { value, owner } = await manager.queryOwned(
         entry.pluginId,
         {
@@ -1054,7 +1058,7 @@ export class LauncherController {
             ...(directory ? { directory } : {}),
           },
         },
-        AbortSignal.any([session.controller.signal, controller.signal]),
+        signal,
         () => {
           if (
             !this.current(session) ||
@@ -1392,34 +1396,41 @@ export class LauncherController {
           : entry.pluginId === "spark233.translation"
             ? 5
             : 12;
-      void manager
-        .queryOwned(
-          entry.pluginId,
-          {
-            commandId: entry.command.id,
-            context: this.providerContext(callerId, entry.pluginId, entry.command.id),
-            parameters: {
-              action: "search",
-              query,
-              limit: providerLimit,
-              callerId,
-              requestId: session.requestId,
-              locale,
-              ...(entry.pluginId === "spark233.applications" &&
-              entry.command.id === "search" &&
-              applicationIds.length
-                ? { includeIds: applicationIds, ...(resolvingPins ? { onlyIds: true } : {}) }
-                : {}),
+      const signal = AbortSignal.any([session.controller.signal, provider.controller.signal]);
+      const providerReady =
+        needle && entry.pluginId !== "spark233.applications"
+          ? delay(100, undefined, { signal })
+          : Promise.resolve();
+      void providerReady
+        .then(() =>
+          manager.queryOwned(
+            entry.pluginId,
+            {
+              commandId: entry.command.id,
+              context: this.providerContext(callerId, entry.pluginId, entry.command.id),
+              parameters: {
+                action: "search",
+                query,
+                limit: providerLimit,
+                callerId,
+                requestId: session.requestId,
+                locale,
+                ...(entry.pluginId === "spark233.applications" &&
+                entry.command.id === "search" &&
+                applicationIds.length
+                  ? { includeIds: applicationIds, ...(resolvingPins ? { onlyIds: true } : {}) }
+                  : {}),
+              },
             },
-          },
-          AbortSignal.any([session.controller.signal, provider.controller.signal]),
-          () => {
-            if (
-              !this.current(session) ||
-              !this.commandSourceAllowed(entry.pluginId, entry.command.id, callerId)
-            )
-              throw new Error("来源程序已变化，请重新查询");
-          },
+            signal,
+            () => {
+              if (
+                !this.current(session) ||
+                !this.commandSourceAllowed(entry.pluginId, entry.command.id, callerId)
+              )
+                throw new Error("来源程序已变化，请重新查询");
+            },
+          ),
         )
         .then(({ value, owner }) => {
           if (

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,6 +31,7 @@ export interface TranslatePaneProps {
   onSaveNote: () => void;
   onConfigure: () => void;
   onLookupSelection: (value: string) => void;
+  onClose: () => void;
 }
 
 export function TranslatePane({
@@ -55,6 +57,7 @@ export function TranslatePane({
   onSaveNote,
   onConfigure,
   onLookupSelection,
+  onClose,
 }: TranslatePaneProps) {
   const { t } = useTranslation();
   const direction = target === "en" ? "translation.directionZhEn" : "translation.directionEnZh";
@@ -62,9 +65,20 @@ export function TranslatePane({
   return (
     <div className={cn("flex min-h-0 flex-col gap-3", className)}>
       <div className="flex min-h-0 flex-[3] flex-col gap-1.5">
-        <label htmlFor="translation-text" className="text-xs text-muted-foreground">
-          {t("translation.sourceText", { defaultValue: "原文" })}
-        </label>
+        <div className="electron-title-drag flex shrink-0 items-center justify-between gap-2">
+          <label htmlFor="translation-text" className="text-xs text-muted-foreground">
+            {t("translation.sourceText", { defaultValue: "原文" })}
+          </label>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            title={t("translation.close")}
+            aria-label={t("translation.close")}
+            onClick={onClose}
+          >
+            <XIcon />
+          </Button>
+        </div>
         <Textarea
           id="translation-text"
           value={text}

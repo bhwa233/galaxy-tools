@@ -721,6 +721,7 @@ const {
   stopSelectionReader,
   openLauncherWindow,
   requestLauncher,
+  preloadLauncher,
   activateHostCommand,
   showOfficialWorkspace,
   showClipboardWorkspace,
@@ -1472,6 +1473,7 @@ export function startDesktopHost(): void {
           if (item) void openNoteWithAnchor(item.noteId, item.taskText).catch(reportError);
         },
       });
+      preloadLauncher();
       if (launcher.state().firstRun) await showLauncher();
       if (startupFile && notesActive) showMain();
       try {

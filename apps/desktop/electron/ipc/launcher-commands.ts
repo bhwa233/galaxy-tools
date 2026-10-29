@@ -78,6 +78,8 @@ export function createLauncherCommands(
           await ctx.hideAndRelease(win);
           return;
         case "launcher_query": {
+          if (layout.label === "launcher" && !win.isVisible())
+            throw new AppError("cancelled", "启动器已隐藏，搜索已取消");
           let queryArgs = args;
           if (args.directory !== undefined) {
             const directory = grants.assert(args.directory);

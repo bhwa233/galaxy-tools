@@ -1,5 +1,6 @@
 {
   "title": "文件搜索范围",
+  "workspaceClose": "关闭窗口",
   "chooseDirectory": "选择搜索目录",
   "allDirectories": "搜索全部目录",
   "description": "默认搜索已启用的 NTFS 卷，可排除目录或整卷。",

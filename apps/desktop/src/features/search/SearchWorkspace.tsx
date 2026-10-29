@@ -14,6 +14,7 @@ import {
   Presentation,
   Search,
   Settings,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
@@ -393,6 +394,16 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
             aria-label={t("workspaceSettings")}
           >
             <Settings className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            onClick={onClose}
+            title={t("workspaceClose")}
+            aria-label={t("workspaceClose")}
+          >
+            <X aria-hidden="true" />
           </Button>
         </div>
       </div>

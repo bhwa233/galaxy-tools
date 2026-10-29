@@ -202,6 +202,11 @@ compiler.on("exit", async (code) => {
         stdio: "inherit",
         windowsHide: true,
       });
+      execFileSync(process.execPath, [path.join(desktopRoot, "scripts/copy-electron-assets.mjs")], {
+        cwd: desktopRoot,
+        stdio: "inherit",
+        windowsHide: true,
+      });
       buildPlugins();
       restarting = true;
       electron.send("spark233-dev-reload");

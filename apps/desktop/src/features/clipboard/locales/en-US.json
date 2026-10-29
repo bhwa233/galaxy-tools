@@ -1,5 +1,7 @@
 {
   "全部类型": "All types",
+  "全部": "All",
+  "内容筛选": "Content filters",
   "文字": "Text",
   "图片": "Images",
   "文件": "Files",
@@ -154,5 +156,14 @@
   "保存期间草稿发生变化，请重试关闭": "The draft changed while saving. Try closing again.",
   "删除条目": "Delete entry",
   "只看收藏": "Favorites only",
-  "内容较大，仅预览前 256 Ki 字符。原始复制保持完整。": "Large content: only the first 256 Ki characters are previewed. Copy still uses the full original."
+  "内容较大，仅预览前 256 Ki 字符。原始复制保持完整。": "Large content: only the first 256 Ki characters are previewed. Copy still uses the full original.",
+  "条目详情": "Item details",
+  "内容预览": "Content preview",
+  "条目信息": "Item information",
+  "来源应用": "Source application",
+  "记录时间": "Captured at",
+  "内容格式": "Content format",
+  "条目操作": "Item actions",
+  "右键查看操作": "Right-click for actions",
+  "正在加载预览…": "Loading preview…"
 }

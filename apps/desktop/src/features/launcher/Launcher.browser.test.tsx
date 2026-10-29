@@ -5,6 +5,51 @@ import { installDesktopBridge } from "../../test/browser/desktop-bridge";
 import { Launcher } from "./Launcher";
 import type { LauncherItem, LauncherState } from "./types";
 
+it("preloads without searching and cancels hidden queries before reopening", async () => {
+  const previousUrl = window.location.href;
+  window.history.replaceState(null, "", "?view=launcher&preload=1");
+  let resolveQuery!: (value: unknown) => void;
+  let querySession = "";
+  const desktop = installDesktopBridge({
+    launcher_state: () => ({ firstRun: false, pluginsReady: true, commands: [] }),
+    launcher_take_workspace: () => undefined,
+    launcher_cancel_query: () => undefined,
+    launcher_query: (value) => {
+      querySession = (value as { sessionId: string }).sessionId;
+      return new Promise((resolve) => {
+        resolveQuery = resolve;
+      });
+    },
+  });
+  const view = await render(<Launcher />);
+  try {
+    await expect
+      .poll(() => desktop.calls.some((call) => call.command === "launcher_state"))
+      .toBe(true);
+    expect(desktop.calls.some((call) => call.command === "launcher_query")).toBe(false);
+    desktop.emit("launcher-visibility-changed", { visible: true });
+    await expect.poll(() => querySession).not.toBe("");
+    const previousSession = querySession;
+    desktop.emit("launcher-visibility-changed", { visible: false });
+    await expect
+      .poll(() => desktop.calls.some((call) => call.command === "launcher_cancel_query"))
+      .toBe(true);
+    resolveQuery({
+      sessionId: previousSession,
+      items: [{ id: "stale", pluginId: "fixture", title: "隐藏后的旧结果" }],
+    });
+    desktop.emit("launcher-visibility-changed", { visible: true });
+    await expect.poll(() => querySession).not.toBe(previousSession);
+    await expect.element(page.getByText("隐藏后的旧结果", { exact: true })).not.toBeInTheDocument();
+    expect(desktop.calls.filter((call) => call.command === "launcher_state")).toHaveLength(1);
+  } finally {
+    resolveQuery?.({ sessionId: querySession, items: [] });
+    await view.unmount();
+    desktop.restore();
+    window.history.replaceState(null, "", previousUrl);
+  }
+});
+
 it("fills the shared launcher with a selection and ignores stale handoffs after the user edits it", async () => {
   type Handoff = { kind: string; result: { text: string; revision: number } };
   let resolveInitial!: (value: Handoff) => void;

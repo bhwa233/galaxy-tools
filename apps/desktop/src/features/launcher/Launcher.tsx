@@ -2,7 +2,6 @@ import {
   takeLauncherWorkspace,
   setLauncherContextFiles,
   clearLauncherContext,
-  returnToLauncher,
   setLauncherComposition,
 } from "./api";
 import {
@@ -18,6 +17,8 @@ import {
   useMemo,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -57,15 +58,10 @@ import {
   ContextMenuGroup,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { OcrWorkspace } from "../ocr/OcrWorkspace";
-import { ScreenshotHistoryWorkspace } from "../screenshot/ScreenshotHistoryWorkspace";
-import { SearchWorkspace } from "../search/SearchWorkspace";
-import { TranslationWorkspace } from "../translation/TranslationWorkspace";
 import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
 import { LauncherItemActions } from "./LauncherItemActions";
-import { ClipboardPanel } from "./ClipboardPanel";
 import { prepareHostWindow } from "../windows/hostPreparation";
-import { SearchPreviewDialog, type SearchPreview } from "../search/SearchPreviewDialog";
+import type { SearchPreview } from "../search/SearchPreviewDialog";
 import { openSettingsWindow } from "../settings/api";
 import {
   cancelLauncherQuery,
@@ -87,6 +83,27 @@ import type {
   LauncherQueryResult,
   LauncherState,
 } from "./types";
+
+const OcrWorkspace = lazy(() =>
+  import("../ocr/OcrWorkspace").then((module) => ({ default: module.OcrWorkspace })),
+);
+const ScreenshotHistoryWorkspace = lazy(() =>
+  import("../screenshot/ScreenshotHistoryWorkspace").then((module) => ({
+    default: module.ScreenshotHistoryWorkspace,
+  })),
+);
+const SearchWorkspace = lazy(() =>
+  import("../search/SearchWorkspace").then((module) => ({ default: module.SearchWorkspace })),
+);
+const TranslationWorkspace = lazy(() => import("../translation/TranslationWorkspace"));
+const ClipboardPanel = lazy(() =>
+  import("./ClipboardPanel").then((module) => ({ default: module.ClipboardPanel })),
+);
+const SearchPreviewDialog = lazy(() =>
+  import("../search/SearchPreviewDialog").then((module) => ({
+    default: module.SearchPreviewDialog,
+  })),
+);
 
 function message(value: unknown): string {
   return value instanceof Error
@@ -123,6 +140,8 @@ export function Launcher() {
   const [preview, setPreview] = useState<SearchPreview>();
   const [previewOpen, setPreviewOpen] = useState(false);
   const routeParams = new URLSearchParams(window.location.search);
+  const [panelVisible, setPanelVisible] = useState(() => routeParams.get("preload") !== "1");
+  const panelVisibleRef = useRef(panelVisible);
   const compactWorkspace = routeParams.get("compact") === "1";
   const separateWorkspace = routeParams.has("workspace");
   const [workspace, setWorkspace] = useState<{ kind: string; result?: unknown } | undefined>(() =>
@@ -180,7 +199,7 @@ export function Launcher() {
   const inputRevision = useRef(0);
 
   const focusInput = useCallback(() => {
-    requestAnimationFrame(() => input.current?.focus());
+    if (panelVisibleRef.current) requestAnimationFrame(() => input.current?.focus());
   }, []);
   const acceptWorkspace = useCallback(
     (value: { kind: string; result?: unknown }) => {
@@ -283,9 +302,22 @@ export function Launcher() {
         setScopeRevision((value) => value + 1);
       }),
       listen("launcher-shown", () => {
-        setScopeRevision((value) => value + 1);
-        void refreshState();
+        panelVisibleRef.current = true;
+        setPanelVisible(true);
         focusInput();
+      }),
+      listen("launcher-visibility-changed", ({ payload }) => {
+        panelVisibleRef.current = payload.visible;
+        setPanelVisible(payload.visible);
+        if (payload.visible) focusInput();
+        else {
+          queryGeneration.current++;
+          setResult(undefined);
+          setSelected("");
+          setLoading(false);
+          setActionItem(undefined);
+          setPreviewOpen(false);
+        }
       }),
       listen("ocr-result", (event) => setWorkspace({ kind: "ocr", result: event.payload })),
       listen("open-workspace", (event) => {
@@ -363,7 +395,7 @@ export function Launcher() {
   );
   useEffect(() => {
     const generation = ++queryGeneration.current;
-    if (!state || composing || workspace) {
+    if (!panelVisible || !state || composing || workspace) {
       setLoading(false);
       if (workspace) setQueryError(undefined);
       return;
@@ -401,24 +433,21 @@ export function Launcher() {
     // IPC response; revision checks prevent that response rolling the UI back.
     const subscription = listen("launcher-query-updated", (event) => accept(event.payload));
     setLoading(true);
-    const timer = setTimeout(
-      () => {
-        void subscription
-          .then(() => {
-            if (!live) return;
-            dispatched = true;
-            return queryLauncher(query, sessionId, mode?.key, directory).then(accept);
-          })
-          .catch((value: unknown) => {
-            if (live && mounted.current && generation === queryGeneration.current) {
-              setQueryError(message(value));
-              setResult(undefined);
-              setLoading(false);
-            }
-          });
-      },
-      query ? 100 : 0,
-    );
+    const timer = setTimeout(() => {
+      void subscription
+        .then(() => {
+          if (!live) return;
+          dispatched = true;
+          return queryLauncher(query, sessionId, mode?.key, directory).then(accept);
+        })
+        .catch((value: unknown) => {
+          if (live && mounted.current && generation === queryGeneration.current) {
+            setQueryError(message(value));
+            setResult(undefined);
+            setLoading(false);
+          }
+        });
+    }, 0);
     return () => {
       live = false;
       clearTimeout(timer);
@@ -426,7 +455,16 @@ export function Launcher() {
       void subscription.then((stop) => stop()).catch(() => {});
       if (dispatched) void cancelLauncherQuery(sessionId, requestId).catch(() => {});
     };
-  }, [query, mode?.key, directory, scopeRevision, queryStateKey, composing, workspace]);
+  }, [
+    query,
+    mode?.key,
+    directory,
+    scopeRevision,
+    queryStateKey,
+    composing,
+    workspace,
+    panelVisible,
+  ]);
 
   const returnFromMode = () => {
     queryGeneration.current++;
@@ -442,11 +480,10 @@ export function Launcher() {
   const closeWorkspace = async () => {
     await prepareHostWindow();
     if (separateWorkspace) {
-      if (compactWorkspace) await getCurrentWindow().close();
-      else await returnToLauncher();
+      await getCurrentWindow().close();
     } else {
+      await hideLauncher();
       setWorkspace(undefined);
-      focusInput();
     }
   };
   const escape = () => {
@@ -860,18 +897,20 @@ export function Launcher() {
   };
   const workspaceFrame = (content: ReactNode) => (
     <main className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <header className="electron-title-drag flex shrink-0 items-center justify-between gap-3 px-4 py-2">
-        <span>spark233</span>
-        <Button size="sm" variant="ghost" onClick={close}>
-          {t("common.back")}
-        </Button>
-      </header>
       {displayError && (
         <Alert variant="destructive">
           <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
-      {content}
+      <Suspense
+        fallback={
+          <div className="flex flex-1 items-center justify-center">
+            <Spinner />
+          </div>
+        }
+      >
+        {content}
+      </Suspense>
     </main>
   );
   const availableCommands = new Set(
@@ -1323,14 +1362,18 @@ export function Launcher() {
           </div>
         </DialogContent>
       </Dialog>
-      <SearchPreviewDialog
-        value={preview}
-        open={previewOpen}
-        onOpenChange={(open) => {
-          setPreviewOpen(open);
-          if (!open) focusInput();
-        }}
-      />
+      {previewOpen && (
+        <Suspense fallback={null}>
+          <SearchPreviewDialog
+            value={preview}
+            open={previewOpen}
+            onOpenChange={(open) => {
+              setPreviewOpen(open);
+              if (!open) focusInput();
+            }}
+          />
+        </Suspense>
+      )}
     </main>
   );
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { XIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -88,10 +89,7 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4"
       aria-label={t("screenshot.history", { defaultValue: "截图历史" })}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          {t("screenshot.back", { defaultValue: "返回启动器" })}
-        </Button>
+      <div className="electron-title-drag flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">
           {t("screenshot.count", {
             defaultValue: "共 {{count}} 张，最多保留 50 张",
@@ -107,6 +105,15 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
           }}
         >
           {t("screenshot.clear", { defaultValue: "清空" })}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title={t("screenshot.close")}
+          aria-label={t("screenshot.close")}
+          onClick={onClose}
+        >
+          <XIcon />
         </Button>
       </div>
       {error && (

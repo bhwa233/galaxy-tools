@@ -198,6 +198,25 @@ async function fixture(
 const caller = "owned-caller",
   pluginId = "fixture.source";
 describe("source application command authority", () => {
+  it("returns local matches immediately and starts only the latest debounced provider", async () => {
+    const f = await fixture({
+      commands: [
+        { id: "common", title: "lookup local", keywords: ["lookup"] },
+        { id: "lookup", title: "Provider", search: "default" },
+        { id: "word", title: "Word result" },
+      ],
+      modes: [],
+    });
+    f.setContext(undefined);
+    const first = await f.controller.query({ query: "lookup", sessionId: "first" }, caller);
+    expect(first.items.some((item) => item.commandId === "common")).toBe(true);
+    const latest = await f.controller.query({ query: "lookup local", sessionId: "latest" }, caller);
+    expect(latest.items.some((item) => item.commandId === "common")).toBe(true);
+    expect(f.queries).toHaveLength(0);
+    await vi.waitFor(() => expect(f.queries).toHaveLength(1));
+    expect((f.queries[0].parameters as { query: string }).query).toBe("lookup local");
+    f.controller.clear(caller);
+  });
   it("offers AI translation for ordinary sentence input and forwards the full text only on execution", async () => {
     // The managed-command filter previously admitted contextInput but dropped
     // textInput, so pasting or injecting a selection hid the Translate action.

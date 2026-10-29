@@ -74,7 +74,9 @@ export function createWindowClose(
       }
       ctx.hideHostWindow(win);
       if (layout.noteId) ctx.emit("tile-window-closed", layout.noteId);
-      win.destroy();
+      // The search panel keeps its renderer warm; business workspaces still
+      // release only after the save acknowledgement above.
+      if (layout.label !== "launcher") win.destroy();
       ctx.capsules.refresh();
       ctx.refreshTray();
     })();

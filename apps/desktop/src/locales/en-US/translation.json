@@ -598,6 +598,7 @@
     "chooseAction": "Choose an action for this result."
   },
   "ocr": {
+    "close": "Close window",
     "results": "Recognized text",
     "back": "Back to launcher",
     "all": "All text",
@@ -609,6 +610,7 @@
     "textLabel": "Recognized text — edit or select part of the text"
   },
   "screenshot": {
+    "close": "Close window",
     "history": "Screenshot history",
     "back": "Back to launcher",
     "count": "Up to 50 are kept · {{count}} in history",
@@ -648,7 +650,7 @@
   "translation": {
     "tooLong": "The source exceeds 20,000 characters. Split it into smaller passages. The full source has been preserved.",
     "title": "Dictionary and translation",
-    "close": "Back to launcher",
+    "close": "Close window",
     "error": "Operation did not complete",
     "dictionary": "Offline dictionary",
     "dictionaryHint": "About 770,000 base entries, with inflections and phrases. Looking up a word never sends a network request.",

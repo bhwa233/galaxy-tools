@@ -299,6 +299,7 @@ export interface Events {
   "launcher-status-changed": undefined;
   "search-scope-changed": undefined;
   "launcher-shown": undefined;
+  "launcher-visibility-changed": { visible: boolean };
   "ocr-result": JsonValue;
   "open-workspace": { kind: string; result?: unknown };
   "clipboard-changed": undefined;

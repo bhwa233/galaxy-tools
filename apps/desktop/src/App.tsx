@@ -1,25 +1,41 @@
 import { tabToIndentListener } from "indent-textarea";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import "./App.css";
 import { ContextMenuProvider } from "./components/ContextMenu";
-import { TileShowcase } from "./components/TileShowcase";
 import { ToastContainer } from "./components/Toast";
-import { CapsuleHost } from "./features/capsules/CapsuleHost";
-import { Launcher } from "./features/launcher/Launcher";
-import { MainWindow } from "./features/notes/MainWindow";
-import { NotePad } from "./features/notes/NotePad";
+import { Spinner } from "./components/ui/spinner";
 import { getConfig } from "./features/settings/api";
-import { SettingsWindow } from "./features/settings/SettingsWindow";
 import { applyTheme, watchSystemTheme } from "./features/settings/theme";
 import type { ThemeOption } from "./features/settings/types";
 import { prepareHostWindow } from "./features/windows/hostPreparation";
-import { getInitialRoute } from "./features/windows/windowRoutes";
+import { getInitialRoute, type AppView } from "./features/windows/windowRoutes";
 import { syncLanguage } from "./locales";
 import { invoke, listen, reportClosePreparation } from "./platform/desktop";
 
-function App() {
-  const route = getInitialRoute();
-  const activeView = route.view;
+const Launcher = lazy(() =>
+  import("./features/launcher/Launcher").then((module) => ({ default: module.Launcher })),
+);
+const MainWindow = lazy(() =>
+  import("./features/notes/MainWindow").then((module) => ({ default: module.MainWindow })),
+);
+const NotePad = lazy(() =>
+  import("./features/notes/NotePad").then((module) => ({ default: module.NotePad })),
+);
+const SettingsWindow = lazy(() =>
+  import("./features/settings/SettingsWindow").then((module) => ({
+    default: module.SettingsWindow,
+  })),
+);
+const CapsuleHost = lazy(() =>
+  import("./features/capsules/CapsuleHost").then((module) => ({ default: module.CapsuleHost })),
+);
+const TileShowcase = lazy(() =>
+  import("./components/TileShowcase").then((module) => ({ default: module.TileShowcase })),
+);
+
+// This commits with the selected lazy view, so desktop_ready cannot reveal a
+// blank window before the page has loaded and its save handlers have mounted.
+function WindowLifecycle({ activeView }: { activeView: AppView }) {
   useEffect(() => {
     const subscription =
       activeView === "launcher" || activeView === "settings"
@@ -43,6 +59,12 @@ function App() {
       void subscription.then((stop) => stop()).catch(() => {});
     };
   }, [activeView]);
+  return null;
+}
+
+function App() {
+  const route = getInitialRoute();
+  const activeView = route.view;
 
   useEffect(() => {
     let cleanup = () => {};
@@ -105,22 +127,36 @@ function App() {
     return () => document.removeEventListener("keydown", preventSystemMenu, true);
   }, []);
 
-  if (activeView === "capsule") return <CapsuleHost />;
+  const loading = (
+    <div className="flex h-screen items-center justify-center bg-background">
+      <Spinner />
+    </div>
+  );
+  if (activeView === "capsule")
+    return (
+      <Suspense fallback={loading}>
+        <CapsuleHost />
+        <WindowLifecycle activeView={activeView} />
+      </Suspense>
+    );
 
   return (
     <ContextMenuProvider>
       <div className="app-window-shell h-screen font-body text-ink overflow-hidden">
-        {activeView === "settings" ? (
-          <SettingsWindow />
-        ) : activeView === "launcher" ? (
-          <Launcher />
-        ) : activeView === "main" ? (
-          <MainWindow />
-        ) : activeView === "notepad" ? (
-          <NotePad initialNoteId={route.noteId} />
-        ) : (
-          <TileShowcase noteId={route.noteId} />
-        )}
+        <Suspense fallback={loading}>
+          {activeView === "settings" ? (
+            <SettingsWindow />
+          ) : activeView === "launcher" ? (
+            <Launcher />
+          ) : activeView === "main" ? (
+            <MainWindow />
+          ) : activeView === "notepad" ? (
+            <NotePad initialNoteId={route.noteId} />
+          ) : (
+            <TileShowcase noteId={route.noteId} />
+          )}
+          <WindowLifecycle activeView={activeView} />
+        </Suspense>
         <ToastContainer />
       </div>
     </ContextMenuProvider>

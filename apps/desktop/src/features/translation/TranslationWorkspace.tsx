@@ -472,6 +472,7 @@ export function TranslationWorkspace({
           onSaveNote={() => void exportResult("notes")}
           onConfigure={configure}
           onLookupSelection={lookupSelection}
+          onClose={() => void cancel().finally(onClose)}
         />
         {dictionaryOpen && (
           <DictionaryPane

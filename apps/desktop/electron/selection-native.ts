@@ -1,75 +1,212 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 import { atomicWrite, confined } from "./persistence.js";
 
 const selection = z.strictObject({
+  id: z.uuid(),
   text: z
     .string()
     .max(65536)
     .refine((text) => Buffer.byteLength(text, "utf8") <= 65536),
 });
+interface SelectionWorker {
+  child: ChildProcessWithoutNullStreams;
+  ready: Promise<void>;
+  exited: Promise<void>;
+  active: boolean;
+  finish?: (text: string) => void;
+}
 
 /** Reuses windows-runtime's in-box compiler and the host's cache primitives.
  * Electron has no external-app selection API. This helper only reads UIA;
  * it installs no hooks and never accesses the clipboard or sends input. */
 export class NativeSelectionReader {
   private executable?: Promise<string>;
-  private readonly pending = new Set<Promise<string>>();
+  private starting?: Promise<SelectionWorker>;
+  private worker?: SelectionWorker;
+  private readonly workers = new Set<SelectionWorker>();
   private readonly abort = new AbortController();
 
   constructor(private readonly options: { assetDirectory: string; cacheDirectory: string }) {}
 
-  prepare(): Promise<string> {
-    return (this.executable ??= this.compile().catch((error: unknown) => {
-      this.executable = undefined;
-      throw error;
-    }));
+  async prepare(): Promise<void> {
+    if (process.platform === "win32") await this.getWorker();
   }
 
   async read(signal: AbortSignal): Promise<string> {
     if (process.platform !== "win32" || signal.aborted || this.abort.signal.aborted) return "";
-    const work = this.capture(AbortSignal.any([signal, this.abort.signal]));
-    this.pending.add(work);
     try {
-      return await work;
-    } finally {
-      this.pending.delete(work);
+      return await this.capture(AbortSignal.any([signal, this.abort.signal]));
+    } catch {
+      return "";
     }
   }
 
   async stop(): Promise<void> {
     this.abort.abort();
-    await Promise.allSettled([...this.pending, ...(this.executable ? [this.executable] : [])]);
+    await this.starting?.catch(() => {});
+    await Promise.all(
+      [...this.workers].map(async (worker) => {
+        worker.child.stdin.end();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            worker.exited,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, 1000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (this.workers.has(worker)) {
+          this.retire(worker);
+          try {
+            await Promise.race([
+              worker.exited,
+              new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error("Selection helper did not exit")), 2500);
+              }),
+            ]);
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+      }),
+    );
   }
 
   private async capture(signal: AbortSignal): Promise<string> {
-    const executable = await this.prepare();
+    let worker = await this.getWorker();
     if (signal.aborted) return "";
+    if (worker.finish) {
+      this.retire(worker);
+      worker = await this.getWorker();
+      if (signal.aborted) return "";
+    }
+    const id = randomUUID();
     return new Promise<string>((resolve) => {
-      execFile(
-        executable,
-        [String(process.pid)],
-        {
-          windowsHide: true,
-          encoding: "utf8",
-          timeout: 2500,
-          maxBuffer: 262144,
-          signal,
-        },
-        (error, stdout) => {
-          if (error || signal.aborted) return resolve("");
-          try {
-            const result = selection.safeParse(JSON.parse(stdout));
-            resolve(result.success ? result.data.text : "");
-          } catch {
-            resolve("");
-          }
-        },
-      );
+      const cancel = () => this.retire(worker);
+      const timer = setTimeout(cancel, 2500);
+      worker.finish = (text) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", cancel);
+        worker.finish = undefined;
+        resolve(signal.aborted ? "" : text);
+      };
+      this.requests.set(worker, id);
+      signal.addEventListener("abort", cancel, { once: true });
+      if (signal.aborted) return cancel();
+      worker.child.stdin.write(JSON.stringify({ id, operation: "read" }) + "\n", (error) => {
+        if (error) this.retire(worker);
+      });
     });
+  }
+
+  private readonly requests = new Map<SelectionWorker, string>();
+
+  private retire(worker: SelectionWorker): void {
+    worker.active = false;
+    if (this.worker === worker) this.worker = undefined;
+    this.requests.delete(worker);
+    worker.finish?.("");
+    if (this.workers.has(worker)) worker.child.kill();
+  }
+
+  private getWorker(): Promise<SelectionWorker> {
+    if (this.abort.signal.aborted) return Promise.reject(new Error("Selection reader stopped"));
+    const worker = this.worker;
+    if (worker?.active)
+      return worker.ready.then(() => {
+        if (!worker.active) throw new Error("Selection helper retired");
+        return worker;
+      });
+    return (this.starting ??= this.startWorker().finally(() => {
+      this.starting = undefined;
+    }));
+  }
+
+  private async startWorker(): Promise<SelectionWorker> {
+    const executable = await (this.executable ??= this.compile().catch((error: unknown) => {
+      this.executable = undefined;
+      throw error;
+    }));
+    if (this.abort.signal.aborted) throw new Error("Selection reader stopped");
+    const child = spawn(executable, ["--server", String(process.pid)], {
+      windowsHide: true,
+      stdio: "pipe",
+    });
+    let ready!: () => void;
+    let failed!: (error: Error) => void;
+    let exited!: () => void;
+    const worker: SelectionWorker = {
+      child,
+      active: true,
+      ready: new Promise<void>((resolve, reject) => {
+        ready = resolve;
+        failed = reject;
+      }),
+      exited: new Promise<void>((resolve) => {
+        exited = resolve;
+      }),
+    };
+    this.worker = worker;
+    this.workers.add(worker);
+    const timeout = setTimeout(() => fail(), 2500);
+    const fail = () => {
+      clearTimeout(timeout);
+      failed(new Error("Selection helper unavailable"));
+      this.retire(worker);
+    };
+    let readyReceived = false;
+    let buffer = "";
+    const decoder = new StringDecoder("utf8");
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (!worker.active) return;
+      buffer += decoder.write(chunk);
+      if (Buffer.byteLength(buffer, "utf8") > 262144) return fail();
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        try {
+          const message: unknown = JSON.parse(line);
+          if (!readyReceived) {
+            if (!z.strictObject({ ready: z.literal(true) }).safeParse(message).success)
+              return fail();
+            readyReceived = true;
+            clearTimeout(timeout);
+            ready();
+          } else {
+            const result = selection.safeParse(message);
+            if (!result.success || result.data.id !== this.requests.get(worker)) return fail();
+            this.requests.delete(worker);
+            worker.finish?.(result.data.text);
+          }
+        } catch {
+          return fail();
+        }
+      }
+    });
+    child.stderr.resume();
+    child.stdin.on("error", fail);
+    child.on("error", fail);
+    child.on("close", () => {
+      clearTimeout(timeout);
+      worker.active = false;
+      if (this.worker === worker) this.worker = undefined;
+      this.requests.delete(worker);
+      worker.finish?.("");
+      failed(new Error("Selection helper exited"));
+      this.workers.delete(worker);
+      exited();
+    });
+    await worker.ready;
+    return worker;
   }
 
   private async compile(): Promise<string> {

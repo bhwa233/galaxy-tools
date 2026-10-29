@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -149,10 +150,7 @@ function OcrResultWorkspace({
       className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4"
       aria-label={t("ocr.results", { defaultValue: "取字结果" })}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          {t("ocr.back", { defaultValue: "返回启动器" })}
-        </Button>
+      <div className="electron-title-drag flex flex-wrap items-center gap-2">
         <Button
           variant="outline"
           onClick={() => {
@@ -200,6 +198,16 @@ function OcrResultWorkspace({
           }}
         >
           {t("ocr.saveNote", { defaultValue: "保存便签" })}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="ml-auto"
+          title={t("ocr.close")}
+          aria-label={t("ocr.close")}
+          onClick={onClose}
+        >
+          <XIcon />
         </Button>
       </div>
       {Object.values(availableTargets).some((available) => !available) && (

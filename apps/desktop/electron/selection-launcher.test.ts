@@ -10,6 +10,23 @@ function deferred<T>() {
 }
 
 describe("native selection handoff to the existing launcher", () => {
+  it("captures the paste target alongside selection reading before showing the launcher", async () => {
+    const selection = deferred<string>();
+    const target = deferred<void>();
+    const read = vi.fn(() => selection.promise);
+    const prepare = vi.fn(() => target.promise);
+    const present = vi.fn();
+    const launcher = new SelectionLauncher({ read, prepare, present });
+    const opening = launcher.open();
+    expect(read).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledOnce();
+    selection.resolve("selected");
+    await Promise.resolve();
+    expect(present).not.toHaveBeenCalled();
+    target.resolve();
+    await opening;
+    expect(present.mock.calls[0][0]).toBe("selected");
+  });
   it("keeps focus at the source until capture finishes and prevents late A from replacing B", async () => {
     const a = deferred<string>();
     const b = deferred<string>();
