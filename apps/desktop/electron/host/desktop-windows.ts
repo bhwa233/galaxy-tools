@@ -1,11 +1,17 @@
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, nativeTheme, screen } from "electron";
+import type { PluginManifest } from "@spark233/sdk";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { shouldHideLauncher } from "../host/launcher-presentation.js";
 import { createHostWindow } from "../host/windows.js";
-import { AppError, confined } from "../persistence.js";
+import { AppError, confined, readJson } from "../persistence.js";
 import type { PluginResourceScope } from "../plugins/resources.js";
 import type { Layout, RuntimeContext } from "../runtime.js";
+import { pluginPresentation } from "../plugins/presentation.js";
+import type { PluginWindowActivation, PluginWindowInfo } from "../../shared/plugin-windows.js";
+import { PluginWindowActivations } from "./plugin-window-activations.js";
+import { PluginWindowStateStore } from "./plugin-window-state.js";
 
 /** desktop-windows owns this domain; shared state remains in the composition root. */
 export function createDesktopWindows(
@@ -19,6 +25,7 @@ export function createDesktopWindows(
     | "windowPresentations"
     | "ready"
     | "here"
+    | "configDir"
     | "officialRenderers"
     | "officialWindows"
     | "launcherComposition"
@@ -55,6 +62,217 @@ export function createDesktopWindows(
     | "ui"
   >,
 ) {
+  let hostDeclarations:
+    | Record<
+        string,
+        {
+          title: Record<string, string>;
+          icon: NonNullable<NonNullable<PluginManifest["ui"]>["icon"]>;
+        }
+      >
+    | undefined;
+  function nativeIconTheme() {
+    return {
+      accent: ctx.hostConfig.value.accentColor ?? "green",
+      effective: nativeTheme.shouldUseDarkColors ? ("dark" as const) : ("light" as const),
+    };
+  }
+  function hostPresentation(layout: { hostPage?: string }) {
+    if (!layout.hostPage) return undefined;
+    const root = path.join(ctx.here, "assets");
+    const file = path.join(root, "host-windows.json");
+    if (!hostDeclarations && fs.existsSync(file)) hostDeclarations = readJson(file);
+    const entry = hostDeclarations?.[layout.hostPage];
+    const theme = nativeIconTheme();
+    const resource = entry?.icon.themes?.[theme.accent]?.[theme.effective] ?? entry?.icon;
+    return entry
+      ? {
+          title: entry.title[ctx.hostConfig.value.locale.startsWith("en") ? "en-US" : "zh-CN"],
+          image: confined(root, resource!.png),
+          shellIcon: confined(root, resource!.ico ?? resource!.png),
+        }
+      : undefined;
+  }
+  function getHostIcon(page: string): string | undefined {
+    return hostPresentation({ hostPage: page })?.image;
+  }
+  let windowStates: PluginWindowStateStore | undefined;
+  function pluginWindowStates() {
+    if (!windowStates) {
+      windowStates = new PluginWindowStateStore(
+        path.join(ctx.configDir, "host", "plugin-windows.json"),
+      );
+      if (windowStates.readError)
+        console.error("plugin-window-state-unreadable", windowStates.readError);
+    }
+    return windowStates;
+  }
+  let stateTimer: ReturnType<typeof setTimeout> | undefined;
+  function flushPluginWindowStates(): void {
+    if (stateTimer) clearTimeout(stateTimer);
+    windowStates?.flush();
+  }
+  const activations = new PluginWindowActivations();
+  function windowPresentation(layout: Layout) {
+    const pluginId =
+      layout.pluginId ?? (layout.view !== "launcher" ? ctx.notesScope?.owner.pluginId : undefined);
+    if (!pluginId || !ctx.pluginHost) return undefined;
+    const presentation = pluginPresentation(
+      ctx.pluginHost.manager,
+      pluginId,
+      ctx.hostConfig.value.locale,
+    );
+    const profiles = presentation.manifest.ui?.windows ?? {};
+    const profile =
+      layout.windowProfile ??
+      Object.entries(profiles).find(
+        ([, window]) =>
+          window.legacyLabels?.includes(layout.label) ||
+          window.legacyLabels?.includes(layout.workspace ?? "") ||
+          (layout.compact && window.presentation === "compact"),
+      )?.[0] ??
+      (layout.view !== "launcher" ? layout.view : Object.keys(profiles)[0]);
+    if (profile && Object.hasOwn(profiles, profile)) layout.windowProfile = profile;
+    return pluginPresentation(
+      ctx.pluginHost.manager,
+      pluginId,
+      ctx.hostConfig.value.locale,
+      profile,
+      nativeIconTheme(),
+    );
+  }
+  function applyWindowPresentation(win: BrowserWindow, layout: Layout) {
+    const presentation = windowPresentation(layout);
+    const host = hostPresentation(layout);
+    win.setTitle(presentation?.title ?? host?.title ?? "spark233");
+    if (presentation?.image) win.setIcon(presentation.image);
+    else if (host?.image) win.setIcon(host.image);
+    if (process.platform === "win32" && presentation)
+      win.setAppDetails({
+        appId: `com.spark233.desktop.${presentation.manifest.id}`,
+        ...(presentation.shellIcon ? { appIconPath: presentation.shellIcon, appIconIndex: 0 } : {}),
+      });
+    else if (process.platform === "win32" && host)
+      win.setAppDetails({
+        appId:
+          layout.hostPage === "launcher"
+            ? "com.spark233.desktop"
+            : `com.spark233.desktop.host.${layout.hostPage}`,
+        appIconPath: host.shellIcon,
+        appIconIndex: 0,
+      });
+  }
+  function refreshWindowPresentations(): void {
+    for (const [label, win] of ctx.windows) {
+      const layout = ctx.layouts.get(label);
+      if (layout && !win.isDestroyed())
+        try {
+          applyWindowPresentation(win, layout);
+        } catch (error) {
+          ctx.reportError(error, win);
+        }
+    }
+  }
+  function getPluginIcon(pluginId: string): string | undefined {
+    if (!ctx.pluginHost) return;
+    try {
+      return pluginPresentation(ctx.pluginHost.manager, pluginId, ctx.hostConfig.value.locale)
+        .iconData;
+    } catch {
+      return;
+    }
+  }
+  function queuePluginWindowActivation(win: BrowserWindow, payload: unknown): void {
+    const owner = ctx.officialWindows.get(win.id) ?? ctx.notesScope?.owner;
+    if (!owner) throw new AppError("pluginDisabled", "Plugin window owner is unavailable");
+    const activation = activations.enqueue(win.id, owner, payload);
+    ctx.emit("plugin-window-activation", activation, win);
+  }
+  function takePluginWindowActivation(win: BrowserWindow): PluginWindowActivation | undefined {
+    const owner = ctx.officialWindows.get(win.id) ?? ctx.notesScope?.owner;
+    return owner ? activations.take(win.id, owner) : undefined;
+  }
+  function pluginWindowInfo(win: BrowserWindow): PluginWindowInfo {
+    const layout = ctx.layouts.get(labelOf(win));
+    if (!layout) throw new AppError("permissionDenied", "Window is not registered");
+    const presentation = windowPresentation(layout);
+    if (!presentation) throw new AppError("permissionDenied", "Window does not belong to a plugin");
+    return {
+      pluginId: presentation.manifest.id,
+      profile: layout.windowProfile ?? "main",
+      title: presentation.title,
+      icon: presentation.iconData,
+      presentation: presentation.window?.presentation ?? "standard",
+      maximizable: presentation.window?.maximizable ?? true,
+      commands: ctx
+        .pluginHost!.manager.commands(true)
+        .map(({ pluginId, command }) => `${pluginId}:${command.id}`),
+    };
+  }
+  async function openPluginWindow(
+    pluginId: string,
+    profile: string,
+    payload?: unknown,
+    placement?: "cursor" | "edge",
+  ): Promise<BrowserWindow> {
+    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
+      throw new AppError("hostStopping", "Host is not available");
+    const renderer = ctx.officialRenderers.get(pluginId);
+    if (!ctx.pluginHost || !renderer || renderer.scope.state !== "active")
+      throw new AppError("pluginDisabled", "Plugin renderer is unavailable");
+    const presentation = pluginPresentation(
+      ctx.pluginHost.manager,
+      pluginId,
+      ctx.hostConfig.value.locale,
+      profile,
+    );
+    if (!presentation.window)
+      throw new AppError("invalidPlugin", "Plugin window profile is not declared");
+    const declaration = presentation.window;
+    const previous =
+      declaration.reuse === "document"
+        ? undefined
+        : [...ctx.layouts.values()].find(
+            (layout) =>
+              layout.pluginId === pluginId &&
+              (layout.windowProfile === profile ||
+                declaration.legacyLabels?.includes(layout.label)),
+          );
+    const saved = pluginWindowStates().get(pluginId, profile);
+    const layout: Layout = previous ?? {
+      label: `plugin:${pluginId}:${profile}${declaration.reuse === "document" ? `:${randomUUID()}` : ""}`,
+      view: "launcher",
+      pluginId,
+      windowProfile: profile,
+      bounds: safeBounds(saved?.bounds ?? declaration.size ?? { width: 1040, height: 700 }),
+      visible: true,
+      topmost: false,
+      compact: declaration.presentation === "compact",
+    };
+    layout.windowProfile = profile;
+    layout.visible = true;
+    if (saved && !previous) layout.topmost = saved.topmost;
+    if (placement) {
+      const point = screen.getCursorScreenPoint(),
+        area = screen.getDisplayNearestPoint(point).workArea;
+      layout.bounds = safeBounds({
+        ...layout.bounds,
+        x: placement === "edge" ? area.x + area.width - layout.bounds.width : point.x,
+        y: point.y,
+      });
+    }
+    const execution = ctx.launcherExecutions.getStore();
+    if (execution?.active && execution.query)
+      ctx.launcher.clear(
+        execution.callerId,
+        execution.query.sessionId,
+        execution.query.requestId,
+        "execution",
+      );
+    const win = createWindow(layout);
+    if (payload !== undefined) queuePluginWindowActivation(win, payload);
+    return win;
+  }
   function labelOf(win: BrowserWindow): string {
     return [...ctx.windows].find(([, value]) => value === win)?.[0] ?? "";
   }
@@ -62,7 +280,23 @@ export function createDesktopWindows(
   function remember(win: BrowserWindow): void {
     const layout = ctx.layouts.get(labelOf(win));
     if (!layout || win.isDestroyed()) return;
-    layout.bounds = win.getBounds();
+    layout.bounds = layout.pluginId ? win.getNormalBounds() : win.getBounds();
+    if (layout.pluginId && layout.windowProfile) {
+      pluginWindowStates().remember({
+        pluginId: layout.pluginId,
+        profile: layout.windowProfile,
+        bounds: layout.bounds,
+        topmost: layout.topmost,
+      });
+      if (stateTimer) clearTimeout(stateTimer);
+      stateTimer = setTimeout(() => {
+        try {
+          flushPluginWindowStates();
+        } catch (error) {
+          console.error("plugin-window-state-save", error);
+        }
+      }, 200);
+    }
     if (layout.hostPage === "settings") return;
     ctx.applyNoteTopmost(win, layout);
     ctx.scheduleLayout();
@@ -109,6 +343,7 @@ export function createDesktopWindows(
     if (!presentation()) throw new AppError("cancelled", "面板操作已失效");
     const existing = ctx.windows.get(layout.label);
     if (existing && !existing.isDestroyed()) {
+      applyWindowPresentation(existing, layout);
       ctx.windowPresentations.set(existing, presentation);
       layout.visible = true;
       // Repeated shortcut events can reuse a window before its renderer is ready.
@@ -123,13 +358,19 @@ export function createDesktopWindows(
     ctx.layouts.set(layout.label, layout);
     if (!isHostView(layout)) layout.everOpened = true;
     const area = screen.getDisplayMatching(layout.bounds).workArea;
+    const presentationConfig = windowPresentation(layout);
+    const hostConfig = hostPresentation(layout);
     const win = createHostWindow({
       bounds: layout.bounds,
-      title: "spark233",
+      title: presentationConfig?.title ?? hostConfig?.title ?? "spark233",
       preload: path.join(ctx.here, "preload.cjs"),
-      icon: path.join(ctx.here, "assets/icon.ico"),
-      minWidth:
-        layout.hostPage === "settings"
+      icon:
+        presentationConfig?.image ?? hostConfig?.image ?? path.join(ctx.here, "assets/icon.ico"),
+      resizable: presentationConfig?.window?.resizable,
+      maximizable: presentationConfig?.window?.maximizable,
+      minWidth: presentationConfig?.window?.minSize
+        ? Math.min(presentationConfig.window.minSize.width, area.width)
+        : layout.hostPage === "settings"
           ? Math.min(800, area.width)
           : layout.compact
             ? 320
@@ -138,8 +379,9 @@ export function createDesktopWindows(
               : layout.view === "main"
                 ? 900
                 : 160,
-      minHeight:
-        layout.hostPage === "settings"
+      minHeight: presentationConfig?.window?.minSize
+        ? Math.min(presentationConfig.window.minSize.height, area.height)
+        : layout.hostPage === "settings"
           ? Math.min(600, area.height)
           : layout.compact
             ? 240
@@ -148,11 +390,16 @@ export function createDesktopWindows(
               : layout.view === "main"
                 ? 620
                 : 60,
-      skipTaskbar: layout.label === "launcher" || !isHostView(layout),
+      skipTaskbar:
+        layout.label === "launcher" ||
+        (presentationConfig?.window?.taskbar !== undefined
+          ? !presentationConfig.window.taskbar
+          : !isHostView(layout)),
       alwaysOnTop: layout.topmost,
       hasShadow: isHostView(layout),
       label: layout.label,
     });
+    applyWindowPresentation(win, layout);
     if (layout.pluginId) {
       const renderer = ctx.officialRenderers.get(layout.pluginId);
       if (!renderer || renderer.scope.state !== "active") {
@@ -171,6 +418,7 @@ export function createDesktopWindows(
       initialNavigation = false;
       // The first load belongs to the capture-to-window handoff already in flight.
       if (layout.label === "launcher" && first) return;
+      ctx.ready.delete(win.id);
       ctx.launcherComposition.delete(win.id);
       ctx.nativeDialogDepth.delete(win.id);
       ctx.revokeLauncherCaller(launcherContentsId);
@@ -287,6 +535,7 @@ export function createDesktopWindows(
         isHostView(layout) &&
         layout.hostPage !== "settings" &&
         !layout.workspace &&
+        !layout.pluginId &&
         !layout.compact &&
         !ctx.hostConfig.value.closeToTray
       )
@@ -304,6 +553,12 @@ export function createDesktopWindows(
       void ctx.quit();
     });
     win.on("closed", () => {
+      try {
+        flushPluginWindowStates();
+      } catch (error) {
+        console.error("plugin-window-state-save", error);
+      }
+      activations.revoke(win.id);
       ctx.revokeLauncherCaller(launcherContentsId);
       if (ctx.pendingManagerOpen?.windowId === win.id) ctx.pendingManagerOpen = undefined;
       ctx.ready.delete(win.id);
@@ -318,6 +573,7 @@ export function createDesktopWindows(
     });
     const params = new URLSearchParams({
       view: layout.hostPage ?? layout.view,
+      ...(layout.windowProfile ? { window: layout.windowProfile } : {}),
       ...(layout.label === "launcher" && !layout.visible ? { preload: "1" } : {}),
       ...layout.settingsTarget,
       ...(layout.noteId ? { noteId: layout.noteId } : {}),
@@ -328,9 +584,11 @@ export function createDesktopWindows(
     // server so renderer edits hot-update in place. Production keeps loading
     // the plugin package's own renderer, which is the shipped artifact.
     const url = ctx.devUrl
-      ? ctx.devUrl
+      ? presentationConfig?.window
+        ? `${ctx.devUrl}/@fs/${presentationConfig.root.split(path.sep).join("/")}/${presentationConfig.window.entry}`
+        : ctx.devUrl
       : layout.pluginId
-        ? `spark233://workspace/${encodeURIComponent(layout.pluginId)}/index.html`
+        ? `spark233://workspace/${encodeURIComponent(layout.pluginId)}/${presentationConfig?.entry ?? "index.html"}`
         : layout.view === "launcher"
           ? "spark233://app/index.html"
           : "spark233://notes/index.html";
@@ -412,6 +670,14 @@ export function createDesktopWindows(
     return true;
   }
   return {
+    flushPluginWindowStates,
+    refreshWindowPresentations,
+    getPluginIcon,
+    getHostIcon,
+    queuePluginWindowActivation,
+    takePluginWindowActivation,
+    pluginWindowInfo,
+    openPluginWindow,
     labelOf,
     remember,
     safeBounds,

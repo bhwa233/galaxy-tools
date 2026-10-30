@@ -1,3 +1,4 @@
+import { showToast } from "../../components/Toast";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -12,10 +13,17 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { getConfig } from "../settings/api";
 import type { AppConfig } from "../settings/types";
 import { useUnsavedChanges } from "../settings/useUnsavedChanges";
+import { SettingsFooter } from "../settings/SettingsFooter";
 import { activatePlugin, getPluginSettings, savePluginSettings } from "./api";
 import type { PluginSettingsSnapshot } from "./settingsTypes";
 
-export function PluginConfiguration({ pluginId }: { pluginId: string }) {
+export function PluginConfiguration({
+  pluginId,
+  footerVisible = true,
+}: {
+  pluginId: string;
+  footerVisible?: boolean;
+}) {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<PluginSettingsSnapshot>();
   const [patch, setPatch] = useState<Record<string, unknown>>({});
@@ -24,7 +32,6 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [refreshed, setRefreshed] = useState(false);
   const [retry, setRetry] = useState(0);
   const mounted = useRef(true);
   useEffect(() => {
@@ -66,6 +73,7 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
       setSnapshot(result);
       setPatch({});
       setSaved(true);
+      showToast(t("notifications.saved", { ns: "translation" }), "success");
     } catch (value) {
       setError((value as Error)?.message ?? String(value));
       throw value;
@@ -123,9 +131,8 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
                 onClick={() => {
                   setBusy(true);
                   setError(undefined);
-                  setRefreshed(false);
                   void activatePlugin(pluginId, "refresh")
-                    .then(() => setRefreshed(true))
+                    .then(() => showToast(t("notifications.refreshed"), "success"))
                     .catch((value) =>
                       setError(value instanceof Error ? value.message : String(value)),
                     )
@@ -134,11 +141,6 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
               >
                 {t("launcher.refreshApplications")}
               </Button>
-              {refreshed && (
-                <span role="status" className="text-sm">
-                  {t("launcher.applicationsRefreshed")}
-                </span>
-              )}
             </div>
           )}
           {!snapshot.fields.length && (
@@ -262,21 +264,19 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
               })}
             </FieldGroup>
           )}
-          {!!snapshot.fields.length && (
-            <footer className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t bg-background py-4">
-              <span
-                role="status"
-                data-testid="plugin-save-status"
-                className="mr-auto text-xs text-muted-foreground"
-              >
-                {t(
-                  dirty
+          {!!snapshot.fields.length && footerVisible && (
+            <SettingsFooter
+              statusTestId="plugin-save-status"
+              status={t(
+                busy
+                  ? "launcher.preferences.saving"
+                  : dirty
                     ? "settingsEditor.unsaved"
                     : saved
                       ? "pluginConfig.saved"
                       : "pluginConfig.explicitSave",
-                )}
-              </span>
+              )}
+            >
               <Button variant="outline" disabled={busy || !dirty} onClick={discard}>
                 {t("settingsEditor.discard")}
               </Button>
@@ -289,7 +289,7 @@ export function PluginConfiguration({ pluginId }: { pluginId: string }) {
                 {busy && <Spinner />}
                 {t("settingsEditor.save")}
               </Button>
-            </footer>
+            </SettingsFooter>
           )}
         </>
       )}

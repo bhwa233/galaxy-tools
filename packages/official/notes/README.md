@@ -43,3 +43,17 @@ pnpm --filter @spark233/plugin-notes build
 
 See [official package assembly](../README.md) and the
 [current integration evidence](../../../Docs/evidence/spark233-notes-utility-integration.md).
+
+## Version recovery
+
+The manager's note context menu offers version history. Before changing a saved
+body, the engine preserves it under `.history/<noteId>/`; the latest 30 versions
+or about 64 MiB are retained, always keeping the newest previous version.
+Historical attachment references prevent unused-image cleanup from removing
+those images. Data-directory migration includes the history directory.
+
+Restoring a version first saves the active editor, checks an optimistic content
+fingerprint, and keeps the replaced content as a new history entry. The current
+category is preserved. Independent editors for the same note must be closed
+before restoration, so an older editor cannot immediately overwrite the result.
+Scheduled whole-application backups remain a host feature under Backup and Restore.

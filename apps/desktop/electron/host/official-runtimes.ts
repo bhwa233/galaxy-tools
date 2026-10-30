@@ -1,3 +1,4 @@
+import { OcrSessions } from "../plugins/official/ocr-sessions.js";
 import { clipboard, dialog, nativeImage, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -60,14 +61,13 @@ export function createOfficialRuntimeFactory(
     | "syncMcp"
     | "bindOfficialRenderer"
     | "translationSettings"
-    | "showOfficialWorkspace"
+    | "openPluginWindow"
     | "pluginHost"
     | "configDir"
     | "diagnostics"
     | "privateDataRoots"
     | "emit"
     | "hideHostWindow"
-    | "showClipboardWorkspace"
     | "clipboardRuntime"
     | "hostShutdown"
     | "exiting"
@@ -336,11 +336,18 @@ export function createOfficialRuntimeFactory(
             signal,
           ),
         activate: async (activation) => {
+          const window = metadata.spark233.commands.find(
+            (command) => command.id === activation.commandId,
+          )?.window;
+          if (window && !activation.parameters) {
+            await ctx.openPluginWindow(id, window, { activation });
+            return;
+          }
           // Executing Translate with text is explicit consent for this one
           // request. Merely matching or opening the workspace never sends it.
           if (activation.commandId === "translate" && !activation.parameters) {
             const text = activation.context?.kind === "text" ? activation.context.text : "";
-            await ctx.showOfficialWorkspace("translation", {
+            await ctx.openPluginWindow(id, "main", {
               kind: "translate-input",
               text,
               ...(text.trim() ? { translateRequestId: randomUUID() } : {}),
@@ -361,7 +368,7 @@ export function createOfficialRuntimeFactory(
               ? activation.parameters
               : {};
           if (activation.commandId === "detail" && parameters.hostWorkspace !== false)
-            await ctx.showOfficialWorkspace("translation", result);
+            await ctx.openPluginWindow(id, "main", result);
           return result;
         },
       };
@@ -442,11 +449,24 @@ export function createOfficialRuntimeFactory(
         activate: async (activation) => {
           // Entering the workspace does not run a query; the window asks for its
           // own results so the launcher session stays untouched.
-          if (activation.commandId === "workspace") {
-            await ctx.showOfficialWorkspace("search", {});
+          const window = metadata.spark233.commands.find(
+            (command) => command.id === activation.commandId,
+          )?.window;
+          if (window && !activation.parameters) {
+            await ctx.openPluginWindow(id, window, { activation });
             return;
           }
-          return runtime.activate(activation);
+          const result = await runtime.activate(activation);
+          if (
+            result &&
+            typeof result === "object" &&
+            !Array.isArray(result) &&
+            "searchPreview" in result
+          ) {
+            await ctx.openPluginWindow(id, "main", { preview: result.searchPreview });
+            return;
+          }
+          return result;
         },
       };
     }
@@ -483,7 +503,18 @@ export function createOfficialRuntimeFactory(
               ctx.hideHostWindow(win);
         },
         openWorkspace: async (presentation) => {
-          await ctx.showClipboardWorkspace(presentation);
+          const hostFocused =
+            [...ctx.windows.values()].some((win) => !win.isDestroyed() && win.isFocused()) ||
+            [...(ctx.capsules?.surfaces.values() ?? [])].some(
+              (surface) => !surface.win.isDestroyed() && surface.win.isFocused(),
+            );
+          if (!hostFocused) await ctx.clipboardRuntime?.rememberTarget();
+          await ctx.openPluginWindow(
+            id,
+            presentation?.compact ? "quick" : "main",
+            undefined,
+            presentation?.compact ? presentation.position : undefined,
+          );
         },
         prepareWorkspace: async () => {
           const saved = await Promise.all(
@@ -544,7 +575,16 @@ export function createOfficialRuntimeFactory(
             ctx.pluginImages.delete(image.resource.id);
         },
         onResult: async (result) => {
-          await ctx.showOfficialWorkspace("ocr", result);
+          const sessions = new OcrSessions(common.dataDir);
+          const image = ctx.pluginImages.get(result.source.id);
+          if (!image) throw new Error("OCR source image is unavailable");
+          const saved = sessions.remember(result, image.path);
+          ctx.pluginImages.set(saved.source.id, {
+            ...image,
+            path: sessions.image(saved.sessionId),
+            resource: { id: saved.source.id, kind: "image", mimeType: "image/png" },
+          });
+          await ctx.openPluginWindow(id, "result", saved);
         },
       });
       scope.own("event", {
@@ -636,7 +676,12 @@ export function createOfficialRuntimeFactory(
         activate: async (activation) => {
           // The plugin entry opens history; the capture itself is an action.
           if (activation.commandId === "history") {
-            await ctx.showOfficialWorkspace("screenshot-history", {});
+            await ctx.openPluginWindow(
+              id,
+              metadata.spark233.commands.find((command) => command.id === activation.commandId)!
+                .window!,
+              {},
+            );
             return;
           }
           if (activation.commandId !== "cancel") {

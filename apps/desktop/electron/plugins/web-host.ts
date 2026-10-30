@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  screen,
   protocol,
   session,
   type CustomScheme,
@@ -14,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   isPluginPackagePath,
+  localizePluginManifest,
   pluginCapabilitySchema,
   type JsonValue,
   type PluginActivation,
@@ -66,6 +68,8 @@ export interface PluginWebCapabilityRequest {
   signal: AbortSignal;
 }
 export interface WebPluginOptions {
+  windowProfile?: string;
+  getLocale?: () => string;
   scope: PluginResourceScope;
   pluginRoot: string;
   entryPath: string;
@@ -204,14 +208,42 @@ class WebRuntime implements WebPluginController {
       dispose: () => this.dispose(),
     });
     if (options.subscribeTheme) {
-      const unsubscribe = options.subscribeTheme(() =>
-        this.send({ type: "theme", owner: this.owner, theme: options.getTheme() }),
-      );
+      const unsubscribe = options.subscribeTheme(() => {
+        this.applyWindowIdentity();
+        this.send({ type: "theme", owner: this.owner, theme: options.getTheme() });
+      });
       options.scope.own("event", { dispose: unsubscribe });
     }
   }
   get window(): BrowserWindow | undefined {
     return this.currentWindow;
+  }
+  private presentation() {
+    const manifest = localizePluginManifest(
+      this.options.manifest,
+      this.options.getLocale?.() ?? "zh-CN",
+    );
+    const profile = this.options.windowProfile;
+    const window =
+      profile && Object.hasOwn(manifest.ui?.windows ?? {}, profile)
+        ? manifest.ui!.windows![profile]
+        : undefined;
+    return { manifest, window, icon: window?.icon ?? manifest.ui?.icon };
+  }
+  private applyWindowIdentity() {
+    const window = this.currentWindow;
+    if (!window || window.isDestroyed()) return;
+    const presentation = this.presentation();
+    window.setTitle(presentation.window?.title ?? presentation.manifest.displayName);
+    if (presentation.icon) {
+      window.setIcon(confined(this.root, presentation.icon.png));
+      if (process.platform === "win32")
+        window.setAppDetails({
+          appId: `com.spark233.desktop.${this.owner.pluginId}`,
+          appIconPath: confined(this.root, presentation.icon.ico ?? presentation.icon.png),
+          appIconIndex: 0,
+        });
+    }
   }
   private allowed(capability: PluginCapability): void {
     if (
@@ -492,9 +524,16 @@ class WebRuntime implements WebPluginController {
           return new Response("Not found", { status: 404 });
         }
       });
+      const declaration = this.presentation().window;
+      const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       const window = new BrowserWindow({
-        width: 900,
-        height: 620,
+        width: Math.min(declaration?.size?.width ?? 900, area.width),
+        height: Math.min(declaration?.size?.height ?? 620, area.height),
+        minWidth: Math.min(declaration?.minSize?.width ?? 160, area.width),
+        minHeight: Math.min(declaration?.minSize?.height ?? 60, area.height),
+        resizable: declaration?.resizable ?? true,
+        maximizable: declaration?.maximizable ?? true,
+        skipTaskbar: declaration?.taskbar === false,
         show: false,
         title: this.options.manifest.displayName,
         webPreferences: {
@@ -512,6 +551,8 @@ class WebRuntime implements WebPluginController {
         },
       });
       this.currentWindow = window;
+      this.applyWindowIdentity();
+      window.on("page-title-updated", (event) => event.preventDefault());
       this.connected = false;
       window.setMenuBarVisibility(false);
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

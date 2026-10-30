@@ -12,6 +12,8 @@ export interface HostWindowOptions {
   alwaysOnTop: boolean;
   hasShadow: boolean;
   label: string;
+  resizable?: boolean;
+  maximizable?: boolean;
 }
 
 /** Reuse the host's Electron window setup without exposing security overrides. */
@@ -22,7 +24,8 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     frame: false,
     transparent: options.label !== "launcher",
     show: false,
-    resizable: true,
+    resizable: options.resizable ?? true,
+    maximizable: options.maximizable ?? true,
     minWidth: options.minWidth,
     minHeight: options.minHeight,
     skipTaskbar: options.skipTaskbar,
@@ -40,6 +43,7 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     },
   });
   win.setMenu(null);
+  win.on("page-title-updated", (event) => event.preventDefault());
   win.webContents.on("before-input-event", (event, input) => {
     if (
       input.type !== "keyDown" ||

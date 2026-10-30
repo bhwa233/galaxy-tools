@@ -76,7 +76,12 @@ export interface OcrResult {
   text: string;
   detectionMs: number;
   recognitionMs: number;
-  lines: Array<{ text: string; score: number; box: number[][] }>;
+  lines: Array<{
+    text: string;
+    score: number;
+    box: number[][];
+    characters?: Array<{ text: string; box: number[][] }>;
+  }>;
 }
 export interface CaptureRuntime {
   readonly owner: PluginOwner;
@@ -114,6 +119,15 @@ const ocrResult = envelope.extend({
         text: z.string(),
         score: z.number().finite(),
         box: z.array(z.array(z.number().finite()).length(2)).length(4),
+        characters: z
+          .array(
+            z.object({
+              text: z.string(),
+              box: z.array(z.array(z.number().finite()).length(2)).length(4),
+            }),
+          )
+          .max(20000)
+          .optional(),
       }),
     )
     .max(50000),

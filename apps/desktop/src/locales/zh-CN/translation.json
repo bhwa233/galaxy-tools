@@ -1,4 +1,23 @@
 {
+  "notifications": {
+    "dismiss": "关闭通知",
+    "copied": "已复制",
+    "saved": "已保存",
+    "deleted": "已删除",
+    "cleared": "已清空",
+    "refreshed": "已刷新",
+    "noteSaved": "已保存到便签",
+    "copyFailed": "复制失败，请重试",
+    "exported": "已导出",
+    "backupCreated": "备份已创建",
+    "backupRestored": "备份已恢复",
+    "installed": "{{name}} 已安装",
+    "updated": "{{name}} 已更新",
+    "uninstalled": "{{name}} 已删除",
+    "enabled": "{{name}} 已启用",
+    "disabled": "{{name}} 已停用",
+    "region": "操作通知"
+  },
   "about": {
     "closeTitle": "关闭关于",
     "contributors": "贡献者",
@@ -12,6 +31,7 @@
     "version": "版本：v{{version}}"
   },
   "common": {
+    "retry": "重试",
     "back": "返回",
     "blankNote": "空白便签",
     "cancel": "取消",
@@ -89,6 +109,7 @@
       "externalConflict": "文件已被其他程序修改。是否用当前内容覆盖磁盘版本？"
     },
     "editor": {
+      "viewMode": "编辑视图",
       "confirmDelete": "确认删除？",
       "contentPlaceholder": "开始写作……",
       "emptyHint": "选择或新建一张便签",
@@ -155,6 +176,7 @@
       "ul": "无序列表"
     },
     "window": {
+      "manager": "便签管理",
       "close": "关闭",
       "collapseSidebar": "收起侧栏",
       "expandSidebar": "展开侧栏",
@@ -292,9 +314,18 @@
     },
     "theme": {
       "dark": "深色",
-      "label": "主题",
+      "label": "明暗模式",
       "light": "浅色",
       "system": "跟随系统"
+    },
+    "accent": {
+      "label": "主题色",
+      "description": "应用到启动器和所有独立窗口，选择后自动保存。",
+      "green": "竹绿",
+      "blue": "蓝",
+      "purple": "紫",
+      "orange": "橙",
+      "rose": "玫红"
     },
     "tileColor": {
       "custom": "自定义",
@@ -607,9 +638,20 @@
     "ai": "AI 翻译",
     "saveNote": "保存便签",
     "selection": "原图与文字选区",
-    "textLabel": "识别文字，可编辑或框选部分文字"
+    "textLabel": "识别文字，可编辑或框选部分文字",
+    "history": "最近识别",
+    "historyHelp": "保留最近 20 份未修订结果；已修订的草稿保留至手动删除。",
+    "draft": "修订稿",
+    "noSessions": "还没有识别会话，可从最近识别恢复修订稿。",
+    "removeSession": "删除此识别会话？",
+    "removeSessionHelp": "将删除原图、识别结果和修订稿，此操作不可撤销。",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "fit": "适应窗口",
+    "selectionHelp": "拖动选择字符，Shift 扩选，Ctrl+A 全选；空格或中键拖动平移。旧结果与已修改的行按行选择。"
   },
   "screenshot": {
+    "refresh": "刷新截图历史",
     "close": "关闭窗口",
     "history": "截图历史",
     "back": "返回启动器",
@@ -622,6 +664,8 @@
     "empty": "还没有截图。截图完成后会自动记录在这里。"
   },
   "translation": {
+    "searchHistory": "搜索历史",
+    "searchHistoryEmpty": "还没有查词记录",
     "tooLong": "原文超过 20,000 字符，请分段翻译。原文已完整保留。",
     "title": "词典与翻译",
     "close": "关闭窗口",
@@ -681,7 +725,9 @@
     "keyHint": "留空保留已保存密钥。本机免密服务可以不填。",
     "clearKey": "清除已保存密钥",
     "saveConfig": "保存配置",
-    "noteSaved": "已保存为便签"
+    "noteSaved": "已保存为便签",
+    "historySaveFailed": "译文已返回，但本次未能保存历史，请复制或保存便签。",
+    "historyIncomplete": "旧版历史最多保存前 2,000 字符，此记录可能不完整。"
   },
   "backup": {
     "title": "备份与恢复",
@@ -710,7 +756,7 @@
     "permissions": "授权能力"
   },
   "plugins": {
-    "actionUnavailable": "目标动作不可用，请在插件管理中启用或恢复对应插件。",
+    "actionUnavailable": "目标动作不可用，请在插件市场中启用或恢复对应插件。",
     "catalog": {
       "title": "官方离线插件目录",
       "description": "随安装包提供的官方插件，离线可装。",
@@ -730,7 +776,7 @@
       "released": "已停止",
       "enabled": "已启用"
     },
-    "title": "插件管理",
+    "title": "插件市场",
     "description": "插件经你确认后安装，更新也由你决定。",
     "error": "操作未完成",
     "errorHint": "展开详细信息查看原因，再重试相关操作。",
@@ -773,6 +819,12 @@
     "installed": "已安装插件",
     "checking": "正在检查插件更新",
     "checkUpdates": "检查更新",
+    "updateStatus": {
+      "title": "更新检查提示",
+      "notPublished": "更新源中未找到 {{count}} 个插件的更新包，已安装的插件仍可使用。",
+      "failed": "部分在线更新信息暂时无法获取，已安装的插件仍可使用。",
+      "check": "更新检查"
+    },
     "lastChecked": "上次检查",
     "loading": "正在读取插件状态",
     "empty": {
@@ -1004,13 +1056,15 @@
     "pages": {
       "general": "常规设置",
       "entries": "入口管理",
-      "plugins": "插件管理",
+      "plugins": "插件配置",
+      "marketplace": "插件市场",
       "backup": "数据与备份",
       "diagnostics": "诊断",
       "shortcuts": "快捷键管理",
       "tray": "托盘菜单"
     },
     "autoSave": "更改自动保存",
+    "saved": "更改已保存",
     "unsaved": "有未保存的更改",
     "unsavedDescription": "保存这些更改后继续，或放弃更改。取消将留在当前页面。",
     "save": "保存更改",
@@ -1023,10 +1077,22 @@
     "maximize": "最大化或还原",
     "backGeneral": "返回常规设置"
   },
+  "pluginMarket": {
+    "tabs": {
+      "discover": "发现插件",
+      "installed": "已安装",
+      "tasks": "安装进度"
+    },
+    "noTasks": "暂无安装或更新任务",
+    "configurePlugin": "配置此插件",
+    "managePlugin": "管理此插件"
+  },
   "pluginConfig": {
+    "title": "插件配置",
+    "description": "调整已安装插件的配置、功能与匹配规则。",
     "loading": "正在加载配置…",
     "loadFirst": "请先加载配置",
-    "noSettings": "此插件没有声明可编辑配置，可查看功能及信息。",
+    "noSettings": "此插件没有可编辑配置，可切换到功能或匹配页查看。",
     "explicitSave": "修改后点击保存更改才会生效",
     "saved": "配置已保存",
     "secretSet": "密钥已配置；留空保留原密钥，输入新值后保存以替换。",
@@ -1036,7 +1102,7 @@
     "findPlugin": "搜索插件",
     "installAndTasks": "安装与任务",
     "declaredRules": "以下为插件声明的只读匹配规则。个人别名在入口管理中设置。",
-    "openSettings": "在插件管理中配置",
+    "openSettings": "打开插件配置",
     "tabs": {
       "config": "配置",
       "functions": "功能",
@@ -1080,10 +1146,21 @@
     "hideHint": "隐藏到托盘，保留内容"
   },
   "commandSettings": {
+    "mainProgram": "主程序",
+    "pluginNavigation": "快捷键分组",
+    "hostDescription": "设置启动器与应用的全局快捷键。",
+    "pluginDescription": "设置此插件各项操作的快捷键。切换插件会保留未保存的修改。",
+    "bindingCount": "已设置 {{assigned}} / {{total}}",
+    "staleBindings": "失效绑定",
+    "staleDescription": "插件已卸载或操作已移除。可以清除遗留绑定，保存后释放对应快捷键。",
+    "clearBinding": "清除绑定",
+    "noStaleBindings": "没有失效的快捷键绑定。",
+    "noPlugins": "没有匹配的插件。",
+    "noActions": "此插件没有可绑定快捷键的操作。",
     "manageShortcuts": "管理快捷键",
-    "shortcutsDescription": "统一管理宿主与插件操作的全局快捷键。录制后保存生效；插件停用时保留配置并释放绑定。",
+    "shortcutsDescription": "先选择主程序或插件，再设置操作的全局快捷键。修改统一保存后生效；插件停用时保留配置并释放绑定。",
     "trayDescription": "选择右下角托盘中显示的插件操作，并调整插件与操作顺序。插件停用时自动移除菜单。",
-    "search": "搜索插件、操作或快捷键",
+    "search": "搜索当前分组的操作或快捷键",
     "allPlugins": "显示全部插件",
     "conflict": "此快捷键已分配给「{{action}}」",
     "unavailable": "当前不可用 · 配置已保留",
@@ -1095,5 +1172,25 @@
     "moveUp": "上移 {{title}}",
     "moveDown": "下移 {{title}}",
     "showItem": "显示 {{title}}"
+  },
+  "noteHistory": {
+    "title": "版本历史",
+    "description": "保存修改前的版本，最多 30 份或约 64 MiB。恢复前会保存当前内容并保留为历史版本；分类保持不变。",
+    "preview": "历史正文预览",
+    "empty": "还没有历史版本，修改并保存后会保留上一版。",
+    "restore": "恢复此版本"
+  },
+  "backupSchedule": {
+    "title": "定期备份",
+    "enabled": "启用定期备份",
+    "description": "应用运行时到期创建一致快照；未运行时顺延到下次启动。保存未完成则取消本次备份，失败后稍后重试。仅清理此计划创建的旧备份。",
+    "noDirectory": "尚未选择备份目录",
+    "choose": "选择备份目录",
+    "interval": "备份间隔（天，1–30）",
+    "keep": "保留份数（1–100）",
+    "lastSuccess": "最近成功",
+    "never": "尚未备份",
+    "run": "立即备份",
+    "refresh": "刷新状态"
   }
 }

@@ -11,12 +11,6 @@ const HISTORY_TEXT = 2_000;
 const HISTORY_BYTES = 2 * 1024 * 1024;
 const SOURCES = ["workspace", "ocr", "clipboard", "launcher"];
 const validTarget = (target) => target === "en" || target === "zh-CN";
-const clip = (value) =>
-  typeof value === "string" && value.length > HISTORY_TEXT
-    ? value.slice(0, HISTORY_TEXT)
-    : typeof value === "string"
-      ? value
-      : "";
 
 function providerUrl(endpoint) {
   const url = new URL(endpoint);
@@ -60,17 +54,23 @@ export function createTranslator(lifetime) {
   const cacheFile = path.join(lifetime.dataDir, "translation-cache.json");
   const historyFile = path.join(lifetime.dataDir, "history.json");
   const preferencesFile = path.join(lifetime.dataDir, "workspace.json");
+  const dictionaryHistoryFile = path.join(lifetime.dataDir, "dictionary-history.json");
   let config;
   const cache = new Map();
   const tasks = new Map();
   const history = [];
+  let dictionaryHistory = [];
+  let dictionaryWrites = Promise.resolve();
+  let dictionaryHistoryError;
   // History stores translation text on the user's machine; the workspace can
   // turn it off, so the preference must survive restarts with the history.
   const preferences = { autoLookup: true, historyEnabled: true };
   let writes = Promise.resolve();
+  let historyWrites = Promise.resolve();
   let stopping = false;
 
   async function atomicJson(file, value) {
+    const serialized = JSON.stringify(value);
     const temporary = file + "." + randomUUID() + ".tmp";
     const operation = writes
       .catch(() => {})
@@ -79,7 +79,7 @@ export function createTranslator(lifetime) {
         let handle;
         try {
           handle = await fs.open(temporary, "wx", 0o600);
-          await handle.writeFile(JSON.stringify(value));
+          await handle.writeFile(serialized);
           await handle.sync();
           await handle.close();
           handle = undefined;
@@ -93,12 +93,13 @@ export function createTranslator(lifetime) {
     return operation;
   }
   async function initialize() {
+    let configurationError;
     try {
       if ((await fs.stat(configFile)).size > 32 * 1024) throw new Error("oversized");
       config = configuration(JSON.parse(await fs.readFile(configFile, "utf8")));
     } catch (error) {
       if (error.code !== "ENOENT")
-        throw new Error(
+        configurationError = new Error(
           "Stored translation configuration is invalid; open configuration to replace it",
         );
     }
@@ -142,14 +143,20 @@ export function createTranslator(lifetime) {
               typeof row.at === "string" &&
               validTarget(row.target) &&
               typeof row.text === "string" &&
-              typeof row.translatedText === "string"
+              typeof row.translatedText === "string" &&
+              row.text.length <= 20_000 &&
+              row.translatedText.length <= MAX_OUTPUT
             )
               history.push({
                 id: row.id,
                 at: row.at,
                 target: row.target,
-                text: clip(row.text),
-                translatedText: clip(row.translatedText),
+                text: row.text,
+                translatedText: row.translatedText,
+                incomplete:
+                  row.incomplete === true ||
+                  (stored.version !== 2 &&
+                    (row.text.length >= HISTORY_TEXT || row.translatedText.length >= HISTORY_TEXT)),
                 model: typeof row.model === "string" ? row.model : "",
                 cached: row.cached === true,
                 source: SOURCES.includes(row.source) ? row.source : "workspace",
@@ -158,6 +165,28 @@ export function createTranslator(lifetime) {
     } catch {
       /* A damaged history file must never block translation. */
     }
+    try {
+      if ((await fs.stat(dictionaryHistoryFile)).size <= 128 * 1024) {
+        const stored = JSON.parse(await fs.readFile(dictionaryHistoryFile, "utf8"));
+        if (stored?.version !== 1 || !Array.isArray(stored.entries))
+          throw new Error("Invalid history");
+        dictionaryHistory = stored.entries
+          .slice(0, 100)
+          .filter(
+            (row) =>
+              row &&
+              typeof row.query === "string" &&
+              row.query.length <= 512 &&
+              row.query.trim() &&
+              typeof row.at === "string",
+          );
+        if (dictionaryHistory.length !== stored.entries.length) throw new Error("Invalid history");
+      } else throw new Error("Oversized history");
+    } catch (error) {
+      if (error.code !== "ENOENT")
+        dictionaryHistoryError = new Error("Dictionary history is unavailable");
+    }
+    if (configurationError) throw configurationError;
   }
   const ready = initialize();
   void ready.catch(() => {});
@@ -172,53 +201,108 @@ export function createTranslator(lifetime) {
     entries: history.map((row) => ({ ...row })),
     enabled: preferences.historyEnabled,
   });
-  // History is a convenience: it holds at most HISTORY_LIMIT entries, dedupes
-  // the same source text and target, and never blocks a translation on disk.
-  function remember(input, model, target, translatedText, cached) {
-    if (!preferences.historyEnabled || typeof translatedText !== "string" || !translatedText)
-      return;
-    const text = clip(input.text);
-    const duplicate = history.findIndex((row) => row.text === text && row.target === target);
-    if (duplicate >= 0) history.splice(duplicate, 1);
-    history.unshift({
-      id: randomUUID(),
-      at: new Date().toISOString(),
-      target,
-      text,
-      translatedText: clip(translatedText),
-      model: typeof model === "string" ? model : "",
-      cached,
-      source: SOURCES.includes(input.source) ? input.source : "workspace",
-    });
-    while (history.length > HISTORY_LIMIT) history.pop();
-    while (
-      history.length > 1 &&
-      Buffer.byteLength(JSON.stringify({ version: 1, entries: history })) > HISTORY_BYTES
-    )
-      history.pop();
-    void atomicJson(historyFile, { version: 1, entries: history }).catch(() => {});
+  const dictionarySnapshot = () => ({
+    kind: "dictionary-history",
+    entries: dictionaryHistory.map((entry) => ({ ...entry })),
+  });
+  function updateDictionaryHistory(update) {
+    const operation = dictionaryWrites
+      .catch(() => {})
+      .then(async () => {
+        await ready.catch(() => {});
+        if (dictionaryHistoryError) throw dictionaryHistoryError;
+        const next = update(dictionaryHistory);
+        await atomicJson(dictionaryHistoryFile, { version: 1, entries: next });
+        dictionaryHistory = next;
+        return dictionarySnapshot();
+      });
+    dictionaryWrites = operation.then(() => {});
+    void dictionaryWrites.catch(() => {});
+    return operation;
+  }
+  function rememberDictionary(query) {
+    if (typeof query !== "string" || !query.trim() || query.length > 512)
+      throw new Error("Invalid dictionary query");
+    const value = query.trim();
+    const key = value.normalize("NFKC").toLowerCase();
+    return updateDictionaryHistory((entries) =>
+      [
+        { query: value, at: new Date().toISOString() },
+        ...entries.filter((entry) => entry.query.normalize("NFKC").toLowerCase() !== key),
+      ].slice(0, 100),
+    );
+  }
+  async function listDictionaryHistory() {
+    await ready.catch(() => {});
+    await dictionaryWrites.catch(() => {});
+    if (dictionaryHistoryError) throw dictionaryHistoryError;
+    return dictionarySnapshot();
+  }
+  function deleteDictionaryHistory(query) {
+    if (typeof query !== "string" || query.length > 512)
+      throw new Error("Invalid dictionary query");
+    return updateDictionaryHistory((entries) => entries.filter((entry) => entry.query !== query));
+  }
+  // Reuse the existing atomic writer, but commit the in-memory view only after
+  // durable success. History mutations share one queue, including translations.
+  function updateHistory(update) {
+    const operation = historyWrites
+      .catch(() => {})
+      .then(async () => {
+        await ready.catch(() => {});
+        const next = update(history.map((row) => ({ ...row })));
+        await atomicJson(historyFile, { version: 2, entries: next });
+        history.splice(0, history.length, ...next);
+        return historySnapshot();
+      });
+    historyWrites = operation.then(() => {});
+    return operation;
+  }
+  async function remember(input, model, target, translatedText, cached) {
+    if (!preferences.historyEnabled || !translatedText) return true;
+    try {
+      await updateHistory((entries) => {
+        if (!preferences.historyEnabled) return entries;
+        const next = [
+          {
+            id: randomUUID(),
+            at: new Date().toISOString(),
+            target,
+            text: input.text,
+            translatedText,
+            model: typeof model === "string" ? model : "",
+            cached,
+            source: SOURCES.includes(input.source) ? input.source : "workspace",
+            incomplete: false,
+          },
+          ...entries.filter((row) => row.text !== input.text || row.target !== target),
+        ].slice(0, HISTORY_LIMIT);
+        while (
+          next.length > 1 &&
+          Buffer.byteLength(JSON.stringify({ version: 2, entries: next })) > HISTORY_BYTES
+        )
+          next.pop();
+        if (Buffer.byteLength(JSON.stringify({ version: 2, entries: next })) > HISTORY_BYTES)
+          throw new Error("Translation history storage limit exceeded");
+        return next;
+      });
+      return true;
+    } catch {
+      // Returning the translation remains useful even if history could not save.
+      return false;
+    }
   }
   async function listHistory() {
     await ready.catch(() => {});
+    await historyWrites.catch(() => {});
     return historySnapshot();
   }
-  async function deleteHistory(id) {
-    await ready.catch(() => {});
-    if (typeof id !== "string" || !id) throw new Error("Invalid history entry ID");
-    const index = history.findIndex((row) => row.id === id);
-    if (index >= 0) {
-      history.splice(index, 1);
-      // A failed rewrite leaves the entry alive on disk until the next write;
-      // the in-memory list already reflects what the user asked for.
-      await atomicJson(historyFile, { version: 1, entries: history }).catch(() => {});
-    }
-    return historySnapshot();
+  function deleteHistory(id) {
+    if (typeof id !== "string" || !id) return Promise.reject(new Error("Invalid history entry ID"));
+    return updateHistory((entries) => entries.filter((row) => row.id !== id));
   }
-  async function clearHistory() {
-    await ready.catch(() => {});
-    history.length = 0;
-    await atomicJson(historyFile, { version: 1, entries: history }).catch(() => {});
-    return historySnapshot();
+  function clearHistory() {
+    return updateHistory(() => []);
   }
   async function setPreferences(input) {
     if (input.autoLookup !== undefined && typeof input.autoLookup !== "boolean")
@@ -271,7 +355,7 @@ export function createTranslator(lifetime) {
       .digest("hex");
     if (cache.has(cacheKey)) {
       const hit = cache.get(cacheKey);
-      remember(input, snapshot.model, target, hit, true);
+      const historySaved = await remember(input, snapshot.model, target, hit, true);
       return {
         kind: "translation",
         requestId,
@@ -279,6 +363,7 @@ export function createTranslator(lifetime) {
         target,
         translatedText: hit,
         cached: true,
+        historySaved,
       };
     }
     const controller = new AbortController();
@@ -419,7 +504,7 @@ export function createTranslator(lifetime) {
         cacheSaved = false;
       }
       context.emit("translation-chunk", { requestId, text: "", done: true });
-      remember(input, snapshot.model, target, translatedText, false);
+      const historySaved = await remember(input, snapshot.model, target, translatedText, false);
       return {
         kind: "translation",
         requestId,
@@ -428,6 +513,7 @@ export function createTranslator(lifetime) {
         translatedText,
         cached: false,
         cacheSaved,
+        historySaved,
       };
     } catch (error) {
       if (signal.aborted)
@@ -465,15 +551,23 @@ export function createTranslator(lifetime) {
     listHistory,
     deleteHistory,
     clearHistory,
+    rememberDictionary,
+    listDictionaryHistory,
+    deleteDictionaryHistory,
+    clearDictionaryHistory: () => updateDictionaryHistory(() => []),
     setPreferences,
     getPreferences,
     async prepareStop() {
+      await dictionaryWrites.catch(() => {});
+      await historyWrites.catch(() => {});
       await writes.catch(() => {});
       return { ok: true };
     },
     async stop() {
       stopping = true;
       for (const task of tasks.values()) task.abort();
+      await dictionaryWrites.catch(() => {});
+      await historyWrites.catch(() => {});
       await writes.catch(() => {});
     },
   };

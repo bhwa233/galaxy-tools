@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ArrowLeft,
   Database,
   LayoutList,
   Keyboard,
@@ -9,6 +8,7 @@ import {
   Maximize2,
   Minus,
   Package,
+  Store,
   Settings,
   Stethoscope,
   X,
@@ -48,6 +48,7 @@ import {
 } from "./api";
 import type { AppConfig, AppConfigPatch } from "./types";
 import { CommandSettings } from "./CommandSettings";
+import { SettingsFooter, SettingsFooterHost } from "./SettingsFooter";
 
 const pages = [
   "general",
@@ -55,6 +56,7 @@ const pages = [
   "tray",
   "entries",
   "plugins",
+  "marketplace",
   "backup",
   "diagnostics",
 ] as const;
@@ -72,6 +74,7 @@ const icons = {
   tray: PanelBottom,
   entries: LayoutList,
   plugins: Package,
+  marketplace: Store,
   backup: Database,
   diagnostics: Stethoscope,
 };
@@ -266,124 +269,123 @@ export function SettingsWindow() {
             );
           })}
         </nav>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-6">
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription className="flex items-center justify-between gap-3">
-                <span>{error}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => (config ? change({}) : setRetry((value) => value + 1))}
-                >
-                  {t("launcher.retry")}
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-          {!config ? (
-            <p role="status" className="flex gap-2">
-              <Spinner />
-              {t("pluginConfig.loading")}
-            </p>
-          ) : (
-            <>
-              {page === "general" && (
-                <>
-                  <h2 className="text-lg font-semibold">{t("settingsEditor.pages.general")}</h2>
-                  <SettingsPanel
-                    presentation="content"
-                    initialGroup="app"
+        <SettingsFooterHost>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-6">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription className="flex items-center justify-between gap-3">
+                  <span>{error}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (config ? change({}) : setRetry((value) => value + 1))}
+                  >
+                    {t("launcher.retry")}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {!config ? (
+              <p role="status" className="flex gap-2">
+                <Spinner />
+                {t("pluginConfig.loading")}
+              </p>
+            ) : (
+              <>
+                {page === "general" && (
+                  <>
+                    <h2 className="text-lg font-semibold">{t("settingsEditor.pages.general")}</h2>
+                    <SettingsPanel
+                      presentation="content"
+                      initialGroup="app"
+                      config={config}
+                      onChange={change}
+                      onClose={() => {}}
+                      onMigrateDataDir={() => {}}
+                    />
+                  </>
+                )}
+                {(page === "plugins" || page === "marketplace") && (
+                  <PluginManagementDialog
+                    key={page}
+                    embedded
+                    open
+                    mode={page === "plugins" ? "configuration" : "market"}
+                    onNavigate={navigate}
+                    pluginId={target.pluginId}
+                    initialTab={target.tab}
+                    onOpenChange={() => {}}
+                  />
+                )}
+                {(page === "shortcuts" || page === "tray") && (
+                  <CommandSettings
+                    key={page + (target.pluginId ?? "")}
+                    kind={page}
                     config={config}
                     onChange={change}
-                    onClose={() => {}}
-                    onMigrateDataDir={() => {}}
+                    onSaved={setConfig}
+                    warnings={state?.warnings}
+                    pluginId={target.pluginId}
                   />
-                  <p role="status" className="text-xs text-muted-foreground">
-                    {saving ? t("launcher.preferences.saving") : t("settingsEditor.autoSave")}
-                  </p>
-                </>
-              )}
-              {page === "plugins" && (
-                <PluginManagementDialog
-                  embedded
-                  open
-                  pluginId={target.pluginId}
-                  initialTab={target.tab}
-                  onOpenChange={() => {}}
-                />
-              )}
-              {(page === "shortcuts" || page === "tray") && (
-                <CommandSettings
-                  key={page + (target.pluginId ?? "")}
-                  kind={page}
-                  config={config}
-                  onChange={change}
-                  onSaved={setConfig}
-                  warnings={state?.warnings}
-                  pluginId={target.pluginId}
-                />
-              )}
-              {page === "entries" && (
-                <LauncherPreferencesDialog
-                  embedded
-                  open
-                  onOpenChange={() => {}}
-                  entries={state?.preferences ?? []}
-                  ready={!!state?.pluginsReady}
-                  learning={state?.learning}
-                  onLearningUpdate={async (input) => {
-                    const next = await updateLauncherLearning(input);
-                    setState(next);
-                    return next;
-                  }}
-                  onMutate={async (input) => {
-                    const next = await updateLauncherPreference(input);
-                    setState(next);
-                    return next;
-                  }}
-                />
-              )}
-              {page === "backup" && (
-                <>
-                  <div className="flex flex-wrap items-center gap-3 rounded-lg border p-4">
-                    <div className="min-w-0 flex-1">
-                      <h2 className="text-sm font-medium">{t("settings.dataDir")}</h2>
-                      <p className="break-all text-xs text-muted-foreground">{config.dataDir}</p>
+                )}
+                {page === "entries" && (
+                  <LauncherPreferencesDialog
+                    embedded
+                    open
+                    onOpenChange={() => {}}
+                    entries={state?.preferences ?? []}
+                    ready={!!state?.pluginsReady}
+                    learning={state?.learning}
+                    onLearningUpdate={async (input) => {
+                      const next = await updateLauncherLearning(input);
+                      setState(next);
+                      return next;
+                    }}
+                    onMutate={async (input) => {
+                      const next = await updateLauncherPreference(input);
+                      setState(next);
+                      return next;
+                    }}
+                  />
+                )}
+                {page === "backup" && (
+                  <>
+                    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-4">
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-sm font-medium">{t("settings.dataDir")}</h2>
+                        <p className="break-all text-xs text-muted-foreground">{config.dataDir}</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        disabled={migrating}
+                        onClick={() => {
+                          void chooseMigration();
+                        }}
+                      >
+                        {t("settings.selectFolder")}
+                      </Button>
                     </div>
-                    <Button
-                      variant="outline"
-                      disabled={migrating}
-                      onClick={() => {
-                        void chooseMigration();
-                      }}
-                    >
-                      {t("settings.selectFolder")}
-                    </Button>
-                  </div>
-                  <BackupDialog embedded open onOpenChange={() => {}} />
-                </>
-              )}
-              {page === "diagnostics" && (
-                <DiagnosticsDialog embedded open onOpenChange={() => {}} />
-              )}
-              {page !== "general" && (
-                <Button
-                  className="self-start"
-                  variant="ghost"
-                  size="sm"
-                  disabled={migrating}
-                  onClick={() => {
-                    void navigate({ page: "general" });
-                  }}
-                >
-                  <ArrowLeft />
-                  {t("settingsEditor.backGeneral")}
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+                    <BackupDialog embedded open onOpenChange={() => {}} />
+                  </>
+                )}
+                {page === "diagnostics" && (
+                  <DiagnosticsDialog embedded open onOpenChange={() => {}} />
+                )}
+                {(page === "general" || page === "tray") && (
+                  <SettingsFooter
+                    status={
+                      saving
+                        ? t("launcher.preferences.saving")
+                        : Object.keys(hostPending.current).length
+                          ? t("settingsEditor.unsaved")
+                          : t("settingsEditor.saved")
+                    }
+                  />
+                )}
+              </>
+            )}
+          </div>
+        </SettingsFooterHost>
       </div>
       <AlertDialog
         open={!!migrationTarget}

@@ -9,3 +9,8 @@
 示例验证 context/theme、命令激活、私有存储和保存确认：修改文本后直接关闭页面或者停用插件，`onPrepareStop` 会先写入私有存储。关闭页面不会停用插件，再次执行命令可恢复内容。
 
 页面没有 `ipcRenderer`、Node 或任意 IPC 通道。其他能力只能经宿主代理调用，同时具备清单声明和用户授权；未实现的代理能力明确拒绝。
+
+宿主 API 1.3 起，示例在 `package.json` 声明 `ui.icon`、`ui.windows.main`，以及
+`open` 命令的 `window`、`launcher.role`。原生标题为 Hello Web，图标来自包内
+`assets/icon.png` / `icon.ico`；HTML 标题不会覆盖原生标题。
+宿主从声明发现入口，无需向启动器增加插件 ID 或页面分支。

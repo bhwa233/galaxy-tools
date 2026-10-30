@@ -5,6 +5,9 @@ const identifier = z.string().min(1).max(512);
 /** Document I/O belongs to the notes client; window ownership stays in main. */
 export function createNotesCommands(data: NotesDataClient, changed: () => void) {
   return {
+    notes_history: (args: Record<string, unknown>) => data.history(identifier.parse(args.id)),
+    notes_revision: (args: Record<string, unknown>) =>
+      data.revision(identifier.parse(args.id), z.uuid().parse(args.versionId)),
     notes_list: () => data.list(),
     notes_get: (args: Record<string, unknown>) => data.get(identifier.parse(args.id)),
     categories_list: () => data.categories(),

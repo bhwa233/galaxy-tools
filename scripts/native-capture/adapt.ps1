@@ -1,10 +1,13 @@
 [CmdletBinding()]
-param([string]$OutputRoot = (Join-Path $PSScriptRoot '../../local-build/spark233/native-capture'))
+param(
+    [string]$OutputRoot = (Join-Path $PSScriptRoot '../../local-build/spark233/native-capture'),
+    [string]$SourceRoot
+)
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Get-Command node -ErrorAction Stop | Out-Null
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
-$sources = Join-Path $OutputRoot 'sources'
+$sources = if ($SourceRoot) { [IO.Path]::GetFullPath($SourceRoot) } else { Join-Path $OutputRoot 'sources' }
 $adapted = Join-Path $OutputRoot 'adapted'
 New-Item -ItemType Directory -Force $adapted | Out-Null
 $lock = Get-Content (Join-Path $PSScriptRoot 'sources.lock.json') -Raw | ConvertFrom-Json

@@ -64,6 +64,7 @@ export function useNoteSession({
   initialConfig = undefined,
 }: import("./notePresentation").MainWindowProps = {}) {
   const { t } = useTranslation();
+  const [historyNoteId, setHistoryNoteId] = useState<string>();
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
   const [externalFiles, setExternalFiles] = useState<ExternalFile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -974,6 +975,13 @@ export function useNoteSession({
     const note = noteMenuTarget;
     if (!note) return;
 
+    if (action === "history") {
+      setNoteMenuClosing(true);
+      void (async () => {
+        if (await saveCurrentNote(true)) setHistoryNoteId(note.id);
+      })().catch((error) => showToast(getErrorMessage(error)));
+      return;
+    }
     if (action === "desktop") {
       setNoteMenuClosing(true);
       void (async () => {
@@ -1420,6 +1428,13 @@ export function useNoteSession({
     noteMenuClosing,
     noteMenuPosition,
     noteMenuMode,
+    historyNoteId,
+    setHistoryNoteId,
+    onRevisionRestored: (note: Note) => {
+      if (selectedIdRef.current === note.id) applyNote(note);
+      replaceNoteMetadata(note);
+      void refreshNotes();
+    },
     noteContextMenuItems,
     handleNoteMenuAction,
     setNoteMenuMode,

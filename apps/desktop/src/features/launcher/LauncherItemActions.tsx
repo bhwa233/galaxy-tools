@@ -72,7 +72,7 @@ export function LauncherItemActions({
   ];
   return actions.map((action) =>
     presentation === "menu" ? (
-      <ContextMenuItem key={action.id} disabled={action.disabled} onSelect={action.run}>
+      <ContextMenuItem key={action.id} disabled={action.disabled} onClick={action.run}>
         {"icon" in action ? action.icon : null}
         {action.title}
       </ContextMenuItem>

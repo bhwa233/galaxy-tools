@@ -1,4 +1,4 @@
-import { BackgroundLayer } from "../../components/BackgroundLayer";
+import { NoteHistoryDialog } from "./NoteHistoryDialog";
 import { CategoryMenu } from "./CategoryMenu";
 import { EditorPane } from "./EditorPane";
 import { NoteDocumentMenu } from "./NoteDocumentMenu";
@@ -9,6 +9,9 @@ import { useNoteSession } from "./useNoteSession";
 import type { MainWindowProps } from "./notePresentation";
 export function MainWindow(props: MainWindowProps = {}) {
   const {
+    historyNoteId,
+    setHistoryNoteId,
+    onRevisionRestored,
     settingsConfig,
     isMacOS,
     handleTitleBarMouseDown,
@@ -139,15 +142,12 @@ export function MainWindow(props: MainWindowProps = {}) {
     switchCategoryMenuPanel,
   } = useNoteSession(props);
   return (
-    <div className="w-full h-screen flex flex-col">
-      <div className="relative noise-bg bg-cloud overflow-hidden flex flex-col flex-1">
-        <BackgroundLayer config={settingsConfig} />
+    <div className="flex h-screen w-full flex-col bg-background font-body text-foreground">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <NoteTitleBar
           {...{
             isMacOS,
             handleTitleBarMouseDown,
-            title,
-            selectedNote,
             t,
             handleOpenNotepad,
             handleOpenSettings,
@@ -210,14 +210,14 @@ export function MainWindow(props: MainWindowProps = {}) {
 
           {!sidebarCollapsed && (
             <div
-              className={`w-1 shrink-0 cursor-col-resize group relative ${isResizingSidebar ? "bg-bamboo/30" : "hover:bg-bamboo/20"} transition-colors`}
+              className={`w-1 shrink-0 cursor-col-resize group relative ${isResizingSidebar ? "bg-primary/30" : "hover:bg-primary/20"} transition-colors`}
               onMouseDown={(e) => {
                 e.preventDefault();
                 setIsResizingSidebar(true);
               }}
             >
               <div
-                className={`absolute inset-y-0 -left-1 -right-1 ${isResizingSidebar ? "" : "group-hover:bg-bamboo/5"}`}
+                className={`absolute inset-y-0 -left-1 -right-1 ${isResizingSidebar ? "" : "group-hover:bg-primary/5"}`}
               />
             </div>
           )}
@@ -311,6 +311,15 @@ export function MainWindow(props: MainWindowProps = {}) {
         }}
       />
 
+      {historyNoteId && (
+        <NoteHistoryDialog
+          key={historyNoteId}
+          noteId={historyNoteId}
+          onClose={() => setHistoryNoteId(undefined)}
+          beforeRestore={() => saveCurrentNote(true)}
+          onRestored={onRevisionRestored}
+        />
+      )}
       <CategoryMenu
         {...{
           categoryMenu,

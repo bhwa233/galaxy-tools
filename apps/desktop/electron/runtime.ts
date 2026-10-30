@@ -1,3 +1,4 @@
+import { BackupScheduler } from "./backup-scheduler.js";
 import {
   app,
   BrowserWindow,
@@ -65,6 +66,7 @@ export interface RuntimeContext {
   readonly backupRecoveryDir: typeof backupRecoveryDir;
   backupRecoveryPending: typeof backupRecoveryPending;
   readonly backupSelections: typeof backupSelections;
+  readonly backupScheduler: typeof backupScheduler;
   backupService: typeof backupService;
   capsules: typeof capsules;
   readonly changed: typeof changed;
@@ -77,6 +79,13 @@ export interface RuntimeContext {
   readonly contextRevisionForCaller: typeof contextRevisionForCaller;
   readonly crashedWindows: typeof crashedWindows;
   readonly createWindow: typeof createWindow;
+  readonly refreshWindowPresentations: typeof refreshWindowPresentations;
+  readonly flushPluginWindowStates: typeof flushPluginWindowStates;
+  readonly getPluginIcon: typeof getPluginIcon;
+  readonly queuePluginWindowActivation: typeof queuePluginWindowActivation;
+  readonly takePluginWindowActivation: typeof takePluginWindowActivation;
+  readonly pluginWindowInfo: typeof pluginWindowInfo;
+  readonly openPluginWindow: typeof openPluginWindow;
   readonly deliverLauncherQueryUpdate: typeof deliverLauncherQueryUpdate;
   readonly devUrl: typeof devUrl;
   diagnostics: typeof diagnostics;
@@ -173,7 +182,6 @@ export interface RuntimeContext {
   readonly showLauncher: typeof showLauncher;
   readonly openLauncherWindow: typeof openLauncherWindow;
   readonly showMain: typeof showMain;
-  readonly showOfficialWorkspace: typeof showOfficialWorkspace;
   startupFile: typeof startupFile;
   readonly syncMcp: typeof syncMcp;
   readonly TEXT_FILE: typeof TEXT_FILE;
@@ -188,7 +196,6 @@ export interface RuntimeContext {
   notesStartupClient: typeof notesStartupClient;
   readonly restoreNotesLayout: typeof restoreNotesLayout;
   readonly bindOfficialRenderer: typeof bindOfficialRenderer;
-  readonly showClipboardWorkspace: typeof showClipboardWorkspace;
   readonly toMcpNote: typeof toMcpNote;
   readonly translationSettingsFile: typeof translationSettingsFile;
 }
@@ -213,6 +220,9 @@ const runtimeContext: RuntimeContext = {
   },
   get backupSelections(): typeof backupSelections {
     return backupSelections;
+  },
+  get backupScheduler(): typeof backupScheduler {
+    return backupScheduler;
   },
   get backupService(): typeof backupService {
     return backupService;
@@ -258,6 +268,27 @@ const runtimeContext: RuntimeContext = {
   },
   get createWindow(): typeof createWindow {
     return createWindow;
+  },
+  get refreshWindowPresentations(): typeof refreshWindowPresentations {
+    return refreshWindowPresentations;
+  },
+  get flushPluginWindowStates(): typeof flushPluginWindowStates {
+    return flushPluginWindowStates;
+  },
+  get getPluginIcon(): typeof getPluginIcon {
+    return getPluginIcon;
+  },
+  get queuePluginWindowActivation(): typeof queuePluginWindowActivation {
+    return queuePluginWindowActivation;
+  },
+  get takePluginWindowActivation(): typeof takePluginWindowActivation {
+    return takePluginWindowActivation;
+  },
+  get pluginWindowInfo(): typeof pluginWindowInfo {
+    return pluginWindowInfo;
+  },
+  get openPluginWindow(): typeof openPluginWindow {
+    return openPluginWindow;
   },
   get deliverLauncherQueryUpdate(): typeof deliverLauncherQueryUpdate {
     return deliverLauncherQueryUpdate;
@@ -631,9 +662,6 @@ const runtimeContext: RuntimeContext = {
   get showMain(): typeof showMain {
     return showMain;
   },
-  get showOfficialWorkspace(): typeof showOfficialWorkspace {
-    return showOfficialWorkspace;
-  },
   get startupFile(): typeof startupFile {
     return startupFile;
   },
@@ -688,9 +716,6 @@ const runtimeContext: RuntimeContext = {
   get bindOfficialRenderer(): typeof bindOfficialRenderer {
     return bindOfficialRenderer;
   },
-  get showClipboardWorkspace(): typeof showClipboardWorkspace {
-    return showClipboardWorkspace;
-  },
   get toMcpNote(): typeof toMcpNote {
     return toMcpNote;
   },
@@ -723,10 +748,16 @@ const {
   requestLauncher,
   preloadLauncher,
   activateHostCommand,
-  showOfficialWorkspace,
-  showClipboardWorkspace,
 } = createLauncherRuntime(runtimeContext);
 const {
+  flushPluginWindowStates,
+  refreshWindowPresentations,
+  getPluginIcon,
+  getHostIcon,
+  queuePluginWindowActivation,
+  takePluginWindowActivation,
+  pluginWindowInfo,
+  openPluginWindow,
   labelOf,
   remember,
   safeBounds,
@@ -835,7 +866,8 @@ const fileGrants = new WeakMap<BrowserWindow, FileGrants>();
 const applicationEntries = new ApplicationEntryAdmissions();
 const windows = new Map<string, BrowserWindow>();
 export interface Layout extends CapsuleEntry {
-  hostPage?: "settings";
+  windowProfile?: string;
+  hostPage?: "settings" | "launcher";
   settingsTarget?: { page: string; pluginId?: string; tab?: string };
   everOpened?: boolean;
   label: string;
@@ -868,6 +900,7 @@ let notesMaintenanceClient: NotesDataClient | undefined;
 let notesRecoveryPending = false;
 let pendingNotesMigration: { directory: string; copiedRoot?: string } | undefined;
 let backupService: PluginBackupService | undefined;
+let backupScheduler: BackupScheduler | undefined;
 const backupSelections = new BackupSelections();
 let maintenance = false;
 let backupRecoveryPending = false;
@@ -918,6 +951,7 @@ const ui = (chinese: string, english: string): string =>
   hostConfig?.value.locale.startsWith("en") ? english : chinese;
 const getPluginTheme = (): PluginTheme => ({
   version: "1.0.0",
+  accent: hostConfig.value.accentColor ?? "green",
   preference: hostConfig.value.theme,
   effective:
     hostConfig.value.theme === "system"
@@ -930,6 +964,11 @@ function publishPluginTheme(): void {
   for (const listener of pluginThemeListeners) listener();
 }
 nativeTheme.on("updated", publishPluginTheme);
+nativeTheme.on("updated", () => {
+  if (!hostConfig) return;
+  refreshWindowPresentations();
+  refreshTray();
+});
 const createOfficialRuntime: NonNullable<DesktopPluginHostOptions["createOfficialRuntime"]> =
   createOfficialRuntimeFactory(runtimeContext);
 let tray: TrayController;
@@ -968,7 +1007,10 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   windows: () => (backupRecoveryPending ? [] : windows.values()),
   prepare,
   remember,
-  persist: () => (backupRecoveryPending ? Promise.resolve() : persistLayout()),
+  persist: async () => {
+    flushPluginWindowStates();
+    if (!backupRecoveryPending) await persistLayout();
+  },
   shutdownPlugins: async () => {
     await pluginHost?.shutdown();
     // Once all plugins have stopped, cleanup failures cannot reopen the app.
@@ -992,11 +1034,12 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
     app.quit();
   },
   onError: async (error) => {
+    preparedWindows.clear();
     if (!(error instanceof AppError) || !["pluginSaveRefused", "saveFailed"].includes(error.code)) {
       reportError(error);
       return;
     }
-    const choice = await dialog.showMessageBox({
+    const options: Electron.MessageBoxOptions = {
       type: "warning",
       title: "spark233",
       message: ui(
@@ -1011,12 +1054,38 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
       defaultId: 0,
       cancelId: 0,
       noLink: true,
-    });
+    };
+    const candidates = [...windows.values()].filter(
+      (win) => !win.isDestroyed() && ready.has(win.id),
+    );
+    const parent =
+      candidates.find((win) => win.isFocused()) ??
+      candidates.find((win) => win.isVisible()) ??
+      candidates[0];
+    if (parent) {
+      nativeDialogDepth.set(parent.id, (nativeDialogDepth.get(parent.id) ?? 0) + 1);
+      if (parent.isMinimized()) parent.restore();
+      if (!parent.isVisible()) parent.show();
+      parent.focus();
+    }
+    let choice: Electron.MessageBoxReturnValue;
+    try {
+      choice = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
+    } finally {
+      if (parent) {
+        const depth = (nativeDialogDepth.get(parent.id) ?? 1) - 1;
+        if (depth) nativeDialogDepth.set(parent.id, depth);
+        else nativeDialogDepth.delete(parent.id);
+      }
+    }
     if (choice.response !== 1) return;
     try {
       await pluginHost?.manager.forceTerminateProcesses();
       stopFullscreen();
       mcpServer?.stop();
+      backupScheduler?.stop();
       hostShortcuts.dispose();
       exiting = true;
       app.exit(0);
@@ -1140,6 +1209,7 @@ app.on("before-quit", (event) => {
   }
 });
 app.on("will-quit", () => {
+  backupScheduler?.stop();
   hostShortcuts.dispose();
   stopFullscreen();
   capsules?.dispose();
@@ -1198,6 +1268,7 @@ export function startDesktopHost(): void {
         getContextRevision: contextRevisionForCaller,
         getAvailabilityRevision: () => launcherAvailabilityRevision,
         getLocale: () => hostConfig.value.locale,
+        getPluginIcon,
       });
       capsules = new Capsules({
         here,
@@ -1341,6 +1412,7 @@ export function startDesktopHost(): void {
           developmentBundledUpdates:
             !app.isPackaged && !!devUrl && process.env.SPARK233_DEV_PLUGINS === "1",
           createOfficialRuntime,
+          getPluginIcon,
           resolveDataDirectory: (id) =>
             id === "spark233.notes" ? hostConfig.value.dataDir : undefined,
           onBackendHostCall: async (call, { owner, signal }) => {
@@ -1412,6 +1484,7 @@ export function startDesktopHost(): void {
                 emit("plugin-package-task-changed", task, win);
           },
           onChange: () => {
+            refreshWindowPresentations();
             launcher?.pluginsChanged();
             emit("plugins-changed");
             refreshTray();
@@ -1450,6 +1523,13 @@ export function startDesktopHost(): void {
           );
         }
         await pluginHost.initialize();
+        backupScheduler = new BackupScheduler(
+          hostConfigDir,
+          (directory) => backupService!.create(directory),
+          () => !maintenance && !hostShutdown.isQuitting && !!pluginHost && !notesRecoveryPending,
+          configDir,
+        );
+        backupScheduler.start();
       } catch (error) {
         if (error instanceof AppError && error.code === "backupRecoveryRequired") throw error;
         pluginHostStartupError = String(error);
@@ -1464,6 +1544,15 @@ export function startDesktopHost(): void {
       capsules.setEnabled(notesActive);
       tray = new TrayController({
         icon: path.join(here, "assets", process.platform === "win32" ? "icon.ico" : "32x32.png"),
+        getIcon: () => getHostIcon("tray") ?? path.join(here, "assets/tray-light.png"),
+        ...(process.platform === "win32"
+          ? {
+              themeIcons: {
+                dark: path.join(here, "assets/tray-light.png"),
+                light: path.join(here, "assets/tray-dark.png"),
+              },
+            }
+          : {}),
         title: "spark233",
         getMenu: globalMenu,
         onClick: requestLauncher,

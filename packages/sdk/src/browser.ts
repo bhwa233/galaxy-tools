@@ -143,7 +143,7 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
                 waiting.delete(finish);
                 if (!waiting.size) queryWaiters.delete(id);
                 controller.signal.removeEventListener("abort", finish);
-                resolve();
+                resolve(undefined);
               };
               const timer = setTimeout(finish, 250);
               waiting.add(finish);

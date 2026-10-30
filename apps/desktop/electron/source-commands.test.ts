@@ -39,10 +39,20 @@ async function fixture(
       id: pluginId,
       displayName: "Owned source actions",
       api: "^1.2.0",
-      host: "^1.2.0",
+      host: ">=1.3.0 <2",
       platforms: [process.platform],
       architectures: [process.arch],
       entry: "index.html",
+      // One inert page satisfies the real commands' window references. This
+      // fixture exercises manager/controller authority, not a business renderer.
+      ui: {
+        theme: "^1.0.0",
+        windows: Object.fromEntries(
+          (options.commands ?? []).flatMap((command) =>
+            typeof command.window === "string" ? [[command.window, { entry: "index.html" }]] : [],
+          ),
+        ),
+      },
       commands: options.commands ?? [
         { id: "common", title: "Common" },
         { id: "legacy", title: "Legacy", inputs: ["text"] },
@@ -118,7 +128,7 @@ async function fixture(
       stagingRoot: path.join(root, "staging"),
       cacheRoot: path.join(root, "cache"),
     },
-    environment: defaultHostEnvironment("1.2.0"),
+    environment: defaultHostEnvironment("1.3.0"),
     createRuntime: async () => {
       factories++;
       factoryStarted.resolve();
@@ -198,6 +208,70 @@ async function fixture(
 const caller = "owned-caller",
   pluginId = "fixture.source";
 describe("source application command authority", () => {
+  it("offers dictionary lookup with the typed text without querying the provider", async () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.resolve("../../packages/official/translation/package.json"), "utf8"),
+    );
+    const f = await fixture({
+      pluginId: "spark233.translation",
+      commands: manifest.spark233.commands.filter((command: { id: string }) =>
+        ["workspace", "lookup", "search", "translate"].includes(command.id),
+      ),
+      modes: manifest.spark233.modes,
+    });
+    f.setContext({ kind: "text", text: "old selection" });
+    const page = await f.controller.query({ query: "hello", sessionId: "lookup" }, caller);
+    const item = page.items.find((candidate) => candidate.commandId === "lookup");
+    expect(item).toBeDefined();
+    expect(page.groups?.some((group) => group.pluginId === "spark233.translation")).toBe(false);
+    expect(f.queries).toEqual([]);
+    await f.controller.execute(
+      { id: item!.id, pluginId: item!.pluginId, commandId: "lookup" },
+      caller,
+    );
+    expect(f.activations.at(-1)).toMatchObject({ context: { kind: "text", text: "hello" } });
+    const empty = await f.controller.query({ query: "", sessionId: "empty-lookup" }, caller);
+    const emptyItem = empty.items.find((candidate) => candidate.commandId === "lookup");
+    expect(emptyItem).toBeDefined();
+    await f.controller.execute(
+      { id: emptyItem!.id, pluginId: emptyItem!.pluginId, commandId: "lookup" },
+      caller,
+    );
+    expect(f.activations.at(-1)?.context).toBeUndefined();
+  });
+
+  it("hands the launcher query to file search instead of a previous selection", async () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.resolve("../../packages/official/search/package.json"), "utf8"),
+    );
+    const f = await fixture({
+      pluginId: "spark233.search",
+      commands: manifest.spark233.commands.filter((command: { id: string }) =>
+        ["workspace", "open-search", "search", "content"].includes(command.id),
+      ),
+      modes: manifest.spark233.modes,
+    });
+    f.setContext({ kind: "text", text: "old selection" });
+    const page = await f.controller.query({ query: "report", sessionId: "search" }, caller);
+    const item = page.items.find((candidate) => candidate.commandId === "open-search");
+    expect(item).toBeDefined();
+    expect(page.items.some((candidate) => candidate.commandId === "search")).toBe(false);
+    await f.controller.execute(
+      { id: item!.id, pluginId: item!.pluginId, commandId: "open-search" },
+      caller,
+    );
+    expect(f.activations.at(-1)).toMatchObject({ context: { kind: "text", text: "report" } });
+
+    const empty = await f.controller.query({ query: "", sessionId: "empty" }, caller);
+    const emptyItem = empty.items.find((candidate) => candidate.commandId === "open-search");
+    expect(emptyItem).toBeDefined();
+    await f.controller.execute(
+      { id: emptyItem!.id, pluginId: emptyItem!.pluginId, commandId: "open-search" },
+      caller,
+    );
+    expect(f.activations.at(-1)?.context).toBeUndefined();
+  });
+
   it("returns local matches immediately and starts only the latest debounced provider", async () => {
     const f = await fixture({
       commands: [
@@ -224,7 +298,13 @@ describe("source application command authority", () => {
       pluginId: "spark233.translation",
       commands: [
         { id: "other", title: "Other text action", inputs: ["text"], match: "text" },
-        { id: "translate", title: "AI 翻译", inputs: ["text"], match: "text" },
+        {
+          id: "translate",
+          title: "AI 翻译",
+          inputs: ["text"],
+          match: "text",
+          launcher: { role: "hidden", withInput: true, preferSentence: true },
+        },
       ],
       modes: [],
     });
@@ -263,9 +343,15 @@ describe("source application command authority", () => {
     const notes = await fixture({
       pluginId: "spark233.notes",
       commands: [
-        { id: "open", title: "Manage notes" },
-        { id: "new", title: "New note" },
-        { id: "search", title: "Search notes", mode: "notes", search: "mode" },
+        { id: "open", title: "Manage notes", launcher: { role: "entry" } },
+        { id: "new", title: "New note", launcher: { role: "action" } },
+        {
+          id: "search",
+          title: "Search notes",
+          mode: "notes",
+          search: "mode",
+          launcher: { role: "keyword-only" },
+        },
       ],
       modes: [{ id: "notes", title: "Notes" }],
     });
@@ -285,9 +371,9 @@ describe("source application command authority", () => {
     const clipboard = await fixture({
       pluginId: "spark233.clipboard",
       commands: [
-        { id: "history", title: "Clipboard history" },
-        { id: "quick", title: "Quick clipboard" },
-        { id: "pause", title: "Pause recording" },
+        { id: "history", title: "Clipboard history", launcher: { role: "entry" } },
+        { id: "quick", title: "Quick clipboard", launcher: { role: "hidden" } },
+        { id: "pause", title: "Pause recording", launcher: { role: "hidden" } },
       ],
       modes: [],
     });
@@ -304,7 +390,7 @@ describe("source application command authority", () => {
       clipboard.manager.activate("spark233.clipboard", { commandId: "pause" }),
     ).resolves.toEqual({ ok: true });
   });
-  it("requests at most five dictionary suggestions in modes and ordinary search, including empty input", async () => {
+  it("keeps legacy dictionary mode requests within the provider limit", async () => {
     // Opening the mode used to send 60 even before typing; the dictionary
     // rejects anything above 30 before handling its empty-query hint.
     const dictionary = await fixture({
@@ -327,15 +413,6 @@ describe("source application command authority", () => {
       expect(parameters.limit).toBeGreaterThanOrEqual(1);
       expect(parameters.limit).toBeLessThanOrEqual(5);
     }
-    const previousQueries = dictionary.queries.length;
-    await dictionary.controller.query({ query: "hello", sessionId: "ordinary-dictionary" }, caller);
-    await vi.waitFor(() => {
-      expect(dictionary.queries.length).toBeGreaterThan(previousQueries);
-      const parameters = dictionary.queries.at(-1)?.parameters as { query: string; limit: number };
-      expect(parameters.query).toBe("hello");
-      expect(parameters.limit).toBeGreaterThanOrEqual(1);
-      expect(parameters.limit).toBeLessThanOrEqual(5);
-    });
   });
 
   it("gates discovery, aliases, pins, modes and provider actions using the current host source", async () => {

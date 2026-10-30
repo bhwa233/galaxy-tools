@@ -1,3 +1,5 @@
+import { showToast } from "../../components/Toast";
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { translationAction } from "./api";
 import type { TranslationHistory, TranslationHistoryEntry, TranslationPreferences } from "./types";
@@ -22,17 +24,20 @@ export interface TranslationHistoryState {
 }
 
 export function useTranslationHistory(): TranslationHistoryState {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<TranslationHistoryEntry[]>([]);
   const [enabled, setEnabledState] = useState(true);
   const [error, setError] = useState<string>();
   const mounted = useRef(true);
+  const generation = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
-  const adopt = useCallback((value: unknown) => {
+  const adopt = useCallback((value: unknown, request: number) => {
+    if (request !== generation.current) return;
     if (!value || typeof value !== "object") return;
     const result = value as TranslationHistory;
     if (result.kind !== "translation-history" || !mounted.current) return;
@@ -41,30 +46,36 @@ export function useTranslationHistory(): TranslationHistoryState {
     setError(undefined);
   }, []);
   const refresh = useCallback(async () => {
+    const request = ++generation.current;
     try {
-      adopt(await translationAction({ action: "history_list" }));
+      adopt(await translationAction({ action: "history_list" }), request);
     } catch (value) {
       if (mounted.current) setError(errorText(value));
     }
   }, [adopt]);
   const remove = useCallback(
     async (id: string) => {
+      const request = ++generation.current;
       try {
-        adopt(await translationAction({ action: "history_delete", id }));
+        adopt(await translationAction({ action: "history_delete", id }), request);
+        if (mounted.current) showToast(t("notifications.deleted"), "success");
       } catch (value) {
-        if (mounted.current) setError(errorText(value));
+        if (mounted.current) showToast(errorText(value));
       }
     },
-    [adopt],
+    [adopt, t],
   );
   const clear = useCallback(async () => {
+    const request = ++generation.current;
     try {
-      adopt(await translationAction({ action: "history_clear" }));
+      adopt(await translationAction({ action: "history_clear" }), request);
+      if (mounted.current) showToast(t("notifications.cleared"), "success");
     } catch (value) {
-      if (mounted.current) setError(errorText(value));
+      if (mounted.current) showToast(errorText(value));
     }
-  }, [adopt]);
+  }, [adopt, t]);
   const setEnabled = useCallback(async (next: boolean) => {
+    const request = ++generation.current;
     try {
       // Turning history off keeps existing entries; only new translations stop
       // being recorded. The response carries the stored preference, not a list.
@@ -72,7 +83,12 @@ export function useTranslationHistory(): TranslationHistoryState {
         action: "preferences_set",
         historyEnabled: next,
       })) as TranslationPreferences;
-      if (!mounted.current || value?.kind !== "translation-preferences") return;
+      if (
+        !mounted.current ||
+        request !== generation.current ||
+        value?.kind !== "translation-preferences"
+      )
+        return;
       setEnabledState(value.historyEnabled);
       setError(undefined);
     } catch (value) {

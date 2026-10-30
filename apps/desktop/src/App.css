@@ -3,6 +3,8 @@
 @import "shadcn/tailwind.css";
 @import "@spark233/ui/theme.css";
 @import "@spark233/ui/semantic.css";
+/* Plugin Vite roots live outside this directory; scan shared pages explicitly. */
+@source ".";
 @source "../../../packages/ui/src";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -215,22 +217,25 @@ body {
   scrollbar-width: none;
 }
 
-textarea,
-input,
-select,
-[contenteditable="true"],
-[contenteditable="plaintext-only"] {
-  resize: none;
-  outline: none;
-  border: none;
-  background: transparent;
-  -webkit-user-select: text;
-  user-select: text;
-  cursor: text;
-}
-textarea::placeholder,
-input::placeholder {
-  color: var(--color-ink-ghost);
+/* Editor defaults belong below component utilities in the cascade. */
+@layer base {
+  textarea,
+  input,
+  select,
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"] {
+    resize: none;
+    outline: none;
+    border: none;
+    background: transparent;
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: text;
+  }
+  textarea::placeholder,
+  input::placeholder {
+    color: var(--color-ink-ghost);
+  }
 }
 
 .markdown-selectable,
@@ -530,8 +535,9 @@ li.task-flash {
 .popup-menu[data-hover-suppressed] button.text-red-400:hover {
   color: rgb(248 113 113) !important;
 }
-.popup-menu[data-hover-suppressed] button.text-ink-soft:hover {
-  color: var(--color-ink-soft) !important;
+.popup-menu[data-hover-suppressed] button.text-ink-soft:hover,
+.popup-menu[data-hover-suppressed] button.text-foreground:hover {
+  color: var(--foreground) !important;
 }
 
 /* Save status crossfade */
@@ -547,48 +553,11 @@ li.task-flash {
   animation: status-fade 0.25s ease-out forwards;
 }
 
-/* Toast notifications */
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateX(20px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
+/* Toast is rendered by the shared shadcn Base UI primitive. */
+[data-slot="toast-viewport"] {
+  -webkit-app-region: no-drag;
 }
-@keyframes toast-out {
-  from {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(20px) scale(0.96);
-  }
-}
-.toast-entry {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  max-width: 340px;
-  min-width: 200px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--color-paper-warm) 85%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid color-mix(in srgb, var(--color-paper-deep) 60%, transparent);
-  box-shadow:
-    0 4px 16px var(--color-shadow-deep),
-    0 1px 3px var(--color-shadow);
-}
-.toast-enter {
-  animation: toast-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-.toast-exit {
-  animation: toast-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+[data-slot="toast"][data-limited] {
   pointer-events: none;
 }
 

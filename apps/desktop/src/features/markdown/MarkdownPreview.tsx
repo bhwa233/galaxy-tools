@@ -1,3 +1,5 @@
+import { writeText } from "../../platform/desktop";
+import { showToast } from "../../components/Toast";
 import { createContext, useContext, useState, useCallback, useMemo } from "react";
 import type { InputHTMLAttributes } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,14 +22,12 @@ import type { ImageDisplayMode } from "../settings/types";
 
 function CodeBlock({ children, language }: { children: React.ReactNode; language?: string }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
     const text = extractText(children);
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    void writeText(text)
+      .then(() => showToast(t("notifications.copied"), "success"))
+      .catch(() => showToast(t("notifications.copyFailed")));
   }, [children]);
 
   return (
@@ -49,9 +49,7 @@ function CodeBlock({ children, language }: { children: React.ReactNode; language
         onClick={handleCopy}
         className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-mono bg-paper-deep/30 text-ink-ghost opacity-0 group-hover:opacity-100 hover:bg-paper-deep/50 hover:text-ink-soft transition-all cursor-pointer"
       >
-        {copied
-          ? t("markdown.copied", { defaultValue: "已复制" })
-          : t("markdown.copy", { defaultValue: "复制" })}
+        {t("markdown.copy", { defaultValue: "复制" })}
       </button>
     </div>
   );

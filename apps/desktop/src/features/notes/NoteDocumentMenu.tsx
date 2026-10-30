@@ -1,3 +1,5 @@
+import { ChevronLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { memo } from "react";
 import { POPUP_VIEWPORT_MARGIN } from "../../components/popupPosition";
 import { showToast } from "../../components/Toast";
@@ -41,7 +43,7 @@ export const NoteDocumentMenu = memo(function NoteDocumentMenu({
     noteMenuTarget && (
       <div
         ref={noteMenuRef}
-        className={`popup-menu fixed z-[9999] min-w-[168px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-x-hidden overflow-y-auto select-none ${noteMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
+        className={`popup-menu fixed z-[9999] min-w-[168px] p-1 bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 rounded-lg overflow-x-hidden overflow-y-auto select-none ${noteMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
         style={{
           left: noteMenuPosition?.x ?? noteMenu.x,
           top: noteMenuPosition?.y ?? noteMenu.y,
@@ -52,41 +54,34 @@ export const NoteDocumentMenu = memo(function NoteDocumentMenu({
       >
         {noteMenuMode === "main" ? (
           <div key="main" className="animate-menu-slide-right">
-            {noteContextMenuItems.map((item, index) => (
-              <button
+            {noteContextMenuItems.map((item) => (
+              <Button
+                variant="ghost"
+                size="sm"
                 key={item.action}
                 data-note-action={item.action}
                 onClick={() => handleNoteMenuAction(item.action)}
-                className={`w-full flex items-center justify-between px-3 py-1.5 text-[12px] font-body transition-colors cursor-pointer ${
+                className={`w-full justify-start px-2 text-sm transition-colors cursor-pointer ${
                   item.tone === "danger"
-                    ? "text-red-400 hover:bg-danger-bg hover:text-red-500"
-                    : "text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo"
-                } ${index > 0 ? "border-t border-paper-deep/20" : ""}`}
+                    ? "text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    : "text-foreground hover:bg-accent hover:text-accent-foreground"
+                }`}
               >
                 <span>{item.label}</span>
-              </button>
+              </Button>
             ))}
           </div>
         ) : noteMenuMode === "reminder" ? (
           <div key="reminder" className="animate-menu-slide-left">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setNoteMenuMode("main")}
-              className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-body text-ink-ghost hover:bg-paper-warm transition-colors cursor-pointer border-b border-paper-deep/20"
+              className="w-full justify-start gap-1.5 px-2 text-sm text-muted-foreground hover:bg-muted transition-colors cursor-pointer border-b border-border"
             >
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
+              <ChevronLeft className="size-3.5" />
               <span>{t("common.back", { defaultValue: "返回" })}</span>
-            </button>
+            </Button>
             <ReminderPicker
               noteId={noteMenuTarget.id}
               scopeItems={reminderItems.filter((item) => item.noteId === noteMenuTarget.id)}
@@ -96,38 +91,33 @@ export const NoteDocumentMenu = memo(function NoteDocumentMenu({
           </div>
         ) : (
           <div key="move" className="animate-menu-slide-left">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setNoteMenuMode("main")}
-              className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-body text-ink-ghost hover:bg-paper-warm transition-colors cursor-pointer border-b border-paper-deep/20"
+              className="w-full justify-start gap-1.5 px-2 text-sm text-muted-foreground hover:bg-muted transition-colors cursor-pointer border-b border-border"
             >
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
+              <ChevronLeft className="size-3.5" />
               <span>{t("common.back", { defaultValue: "返回" })}</span>
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => void handleMoveNote(noteMenuTarget.id, "")}
-              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+              className="w-full justify-start text-left px-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
             >
               {t("main.category.uncategorized", { defaultValue: "未分类" })}
-            </button>
+            </Button>
             {categories.map((cat) => (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 key={cat}
                 onClick={() => void handleMoveNote(noteMenuTarget.id, cat)}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+                className="w-full justify-start text-left px-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
               >
                 {cat}
-              </button>
+              </Button>
             ))}
           </div>
         )}

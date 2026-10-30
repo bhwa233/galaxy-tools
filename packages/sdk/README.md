@@ -157,3 +157,41 @@ optimistically change checkbox state when activation fails or is still pending.
 The seven official plugin packages include tray declarations. Existing installs
 can explicitly update them from the newer bundled packages in plugin management;
 the host does not silently replace installed plugin data or modify user profiles.
+
+## Plugin presentation (host API 1.3)
+
+New declarations require `spark233.host: ">=1.3.0 <2"` or a narrower compatible
+range. Older manifests without them remain valid. SDK npm and host API versions
+are independent.
+
+| Field                                | Contract                                                                                                                                                                                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ui.icon`                            | `{ png, ico?, monochrome? }`, relative package paths. PNG serves UI/native windows; ICO serves Windows Shell. Set `monochrome: true` for symbolic icons that follow the UI primary color; other icons retain their original colors. |
+| `ui.windows.<profile>`               | Own HTML `entry`, localized `title`, icon override, `size`, `minSize`, `resizable`, `maximizable`, `taskbar`, `reuse`, `presentation`.                                                                                              |
+| `commands[].window`                  | A profile declared by this plugin. The generic Web runtime opens its entry on activation.                                                                                                                                           |
+| `commands[].launcher.role`           | `entry` (at most one), `action`, `keyword-only`, `hidden`. Internal commands can only be hidden. Omitted declarations retain generic legacy behavior.                                                                               |
+| `commands[].launcher.input`          | `query` uses current launcher text; `context` prefers captured context.                                                                                                                                                             |
+| `commands[].launcher.withInput`      | Keeps an entry alongside applicable actions when input is present.                                                                                                                                                                  |
+| `commands[].launcher.preferSentence` | Ranks an applicable action for sentence input, without executing it.                                                                                                                                                                |
+| `commands[].progress`                | `{ title, cancelCommand, translations? }`; cancellation stays visible until the original action settles. The cancel command must be public and belong to this plugin.                                                               |
+
+See `examples/plugins/hello-web/package.json`: no launcher source registration
+is required. `reuse` defaults to singleton; `document` uses activation
+`parameters.documentId` when supplied, otherwise a new document identity.
+`presentation` defaults to standard. Titles fall back to the localized plugin
+name; window icons inherit `ui.icon`. Dimensions are constrained to the display.
+Existing official window geometry takes priority. `legacyLabels` migrates old
+official window labels.
+
+HTML/icon paths are confined to the package, including symlink resolution.
+Icons are signature checked, limited to 1 MiB and PNG 1024 pixels per side.
+Ship resources in the package's `files` list. Declarations never grant arbitrary
+BrowserWindow options, AppUserModelIDs, permissions or lifecycle overrides.
+The host assigns stable plugin AppIDs and protects native titles from HTML.
+
+Public defaults belong in the manifest; private static navigation/filter
+defaults belong in the plugin's `config/` directory. History, credentials and
+user preferences remain in private runtime stores and are never bundled.
+Official renderers have their own `renderer/main.tsx`, shared shell and desktop
+bridge. Generic Web plugins keep the restricted browser SDK and save protocol;
+they do not gain access to the official desktop bridge.

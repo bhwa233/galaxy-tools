@@ -57,7 +57,26 @@ export default defineConfig(async () => ({
     },
     // rehype-katex still declares KaTeX 0.16. Both its renderer and our CSS must
     // resolve to the directly pinned KaTeX version (0.18+ renamed CSS classes).
-    dedupe: ["katex"],
+    dedupe: ["react", "react-dom", "katex"],
+  },
+  // Shared UI lives outside the desktop root. Discover Base UI controls before
+  // rendering so lazy feature imports cannot reload a live React tree.
+  optimizeDeps: {
+    include: [
+      "@base-ui/react/button",
+      "@base-ui/react/input",
+      "@base-ui/react/use-render",
+      "@base-ui/react/merge-props",
+      "@base-ui/react/dialog",
+      "@base-ui/react/alert-dialog",
+      "@base-ui/react/context-menu",
+      "@base-ui/react/menu",
+      "@base-ui/react/checkbox",
+      "@base-ui/react/separator",
+      "@base-ui/react/toast",
+      "@base-ui/react/toggle",
+      "@base-ui/react/toggle-group",
+    ],
   },
   clearScreen: false,
   build: {

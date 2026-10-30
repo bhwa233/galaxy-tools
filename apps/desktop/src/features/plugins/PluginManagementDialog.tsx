@@ -1,9 +1,11 @@
+import { showToast } from "../../components/Toast";
 import { PluginIcon } from "./PluginIcon";
 import { PluginShortcuts } from "./PluginShortcuts";
 import { SearchServicePanel } from "../search/SearchServicePanel";
 import { PluginConfiguration } from "./PluginConfiguration";
 import { ApplicationsDialog } from "../applications/ApplicationsDialog";
 import { prepareHostWindow } from "../windows/hostPreparation";
+import { openSettingsWindow, type SettingsTarget } from "../settings/api";
 import { SlidingButtonGroup } from "@/components/SlidingButtonGroup";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -98,6 +100,8 @@ const capabilityLabels: Record<PluginSummary["capabilities"][number], string> = 
 };
 
 export interface PluginManagementDialogProps {
+  mode?: "configuration" | "market";
+  onNavigate?: (target: SettingsTarget) => Promise<void>;
   pluginId?: string;
   initialTab?: string;
   embedded?: boolean;
@@ -113,17 +117,23 @@ export function PluginManagementDialog({
   embedded = false,
   pluginId,
   initialTab = "config",
+  mode = "market",
+  onNavigate = openSettingsWindow,
 }: PluginManagementDialogProps) {
   const { t, i18n } = useTranslation();
   const [selectedPlugin, setSelectedPlugin] = useState<string | undefined>(pluginId);
   const [pluginFilter, setPluginFilter] = useState("");
-  const [detailTab, setDetailTab] = useState(initialTab);
+  const [detailTab, setDetailTab] = useState(initialTab === "info" ? "config" : initialTab);
+  const [marketTab, setMarketTab] = useState<"discover" | "installed" | "tasks">(
+    pluginId ? "installed" : "discover",
+  );
   useEffect(() => {
     if (pluginId) {
       setSelectedPlugin(pluginId);
-      setDetailTab(initialTab);
+      setDetailTab(initialTab === "info" ? "config" : initialTab);
+      if (mode === "market") setMarketTab("installed");
     }
-  }, [pluginId, initialTab]);
+  }, [pluginId, initialTab, mode]);
   const navigatePlugin = async (id: string) => {
     try {
       await prepareHostWindow();
@@ -196,10 +206,9 @@ export function PluginManagementDialog({
       if (active.current && current === request.current) {
         setState({ ...snapshot, tasks: mergeTasks(snapshot.tasks ?? []) });
         setSelectedPlugin((current) =>
-          current &&
-          (current === "__manage" || snapshot.plugins.some((plugin) => plugin.pluginId === current))
+          current && snapshot.plugins.some((plugin) => plugin.pluginId === current)
             ? current
-            : (snapshot.plugins[0]?.pluginId ?? "__manage"),
+            : snapshot.plugins[0]?.pluginId,
         );
       }
     } catch (value) {
@@ -262,6 +271,7 @@ export function PluginManagementDialog({
     if (preparations.current.has(key)) return;
     preparations.current.add(key);
     setPreparing([...preparations.current]);
+    setMarketTab("tasks");
     setError(undefined);
     try {
       // Cancellation resolves undefined; it is a normal task terminal state.
@@ -338,7 +348,11 @@ export function PluginManagementDialog({
     </div>
   );
 
-  const run = async (label: string, action: () => Promise<unknown>): Promise<boolean> => {
+  const run = async (
+    label: string,
+    action: () => Promise<unknown>,
+    success?: string,
+  ): Promise<boolean> => {
     if (operating.current) return false;
     try {
       await prepareHostWindow();
@@ -350,6 +364,7 @@ export function PluginManagementDialog({
     setError(undefined);
     try {
       await action();
+      if (active.current && success) showToast(success, "success");
       await refresh();
       return true;
     } catch (value) {
@@ -394,6 +409,14 @@ export function PluginManagementDialog({
                   ? t("plugins.status.released", { defaultValue: "已停止" })
                   : t("plugins.status.enabled", { defaultValue: "已启用" });
 
+  const visiblePlugins = state?.plugins.filter((plugin) =>
+    `${plugin.displayName} ${plugin.pluginId}`
+      .toLocaleLowerCase()
+      .includes(pluginFilter.trim().toLocaleLowerCase()),
+  );
+  const updateIssues = state?.updateIssues ?? [];
+  const unpublishedUpdates = updateIssues.filter((issue) => issue.reason === "notPublished");
+  const failedUpdateChecks = updateIssues.filter((issue) => issue.reason === "failed");
   return (
     <>
       <Dialog
@@ -405,61 +428,88 @@ export function PluginManagementDialog({
       >
         <DialogContent className="flex max-h-[88vh] flex-col sm:max-w-3xl">
           <DialogHeader className="pr-7">
-            <DialogTitle>{t("plugins.title", { defaultValue: "插件管理" })}</DialogTitle>
+            <DialogTitle>
+              {mode === "configuration" ? t("pluginConfig.title") : t("plugins.title")}
+            </DialogTitle>
             <DialogDescription>
-              {t("plugins.description", {
-                defaultValue: "导入插件后确认安装；更新只提示，由你决定何时安装。",
-              })}
+              {mode === "configuration"
+                ? t("pluginConfig.description")
+                : t("plugins.description", {
+                    defaultValue: "导入插件后确认安装；更新只提示，由你决定何时安装。",
+                  })}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex min-h-0 flex-1 gap-6 overflow-hidden">
-            <nav
-              aria-label={t("pluginConfig.installed")}
-              className="flex w-48 shrink-0 flex-col gap-2 overflow-y-auto border-r pr-4"
-            >
-              <Input
-                aria-label={t("pluginConfig.findPlugin")}
-                placeholder={t("pluginConfig.findPlugin")}
-                value={pluginFilter}
-                onChange={(event) => setPluginFilter(event.target.value)}
+          {mode === "market" && (
+            <div className="flex shrink-0 flex-wrap items-center gap-3">
+              <SlidingButtonGroup
+                value={marketTab}
+                options={(["discover", "installed", "tasks"] as const).map((value) => ({
+                  value,
+                  label: t(`pluginMarket.tabs.${value}`),
+                }))}
+                onChange={setMarketTab}
+                className="min-w-72"
               />
-              {state?.plugins
-                .filter((plugin) =>
-                  `${plugin.displayName} ${plugin.pluginId}`
-                    .toLocaleLowerCase()
-                    .includes(pluginFilter.toLocaleLowerCase()),
-                )
-                .map((plugin) => (
-                  <Button
-                    key={plugin.pluginId}
-                    variant={selectedPlugin === plugin.pluginId ? "secondary" : "ghost"}
-                    className="h-auto justify-start whitespace-normal py-3 text-left"
-                    onClick={() => {
-                      void navigatePlugin(plugin.pluginId);
-                    }}
-                  >
-                    <PluginIcon
-                      pluginId={plugin.pluginId}
-                      className="size-5 shrink-0 text-primary"
-                    />
-                    <span className="min-w-0 truncate">
-                      {plugin.displayName}
-                      <span className="block text-xs text-muted-foreground">
-                        {statusLabel(plugin)}
-                      </span>
-                    </span>
-                  </Button>
-                ))}
-              <Button
-                variant="outline"
-                className="mt-auto"
-                onClick={() => {
-                  void navigatePlugin("__manage");
-                }}
+              {marketTab !== "tasks" && (
+                <Input
+                  className="ml-auto w-56"
+                  value={pluginFilter}
+                  aria-label={t("pluginConfig.findPlugin")}
+                  placeholder={t("pluginConfig.findPlugin")}
+                  onChange={(event) => setPluginFilter(event.target.value)}
+                />
+              )}
+            </div>
+          )}
+          <div className="flex min-h-0 flex-1 gap-6 overflow-hidden">
+            {mode === "configuration" && (
+              <nav
+                aria-label={t("pluginConfig.installed")}
+                className="flex min-h-0 min-w-0 w-48 shrink-0 flex-col gap-2 border-r pr-4"
               >
-                {t("pluginConfig.installAndTasks")}
-              </Button>
-            </nav>
+                <Input
+                  className="shrink-0"
+                  aria-label={t("pluginConfig.findPlugin")}
+                  placeholder={t("pluginConfig.findPlugin")}
+                  value={pluginFilter}
+                  onChange={(event) => setPluginFilter(event.target.value)}
+                />
+                <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto">
+                  {visiblePlugins?.map((plugin) => (
+                    <Button
+                      key={plugin.pluginId}
+                      variant={selectedPlugin === plugin.pluginId ? "secondary" : "ghost"}
+                      className="h-auto w-full min-w-0 justify-start whitespace-normal py-3 text-left"
+                      onClick={() => {
+                        void navigatePlugin(plugin.pluginId);
+                      }}
+                    >
+                      <PluginIcon
+                        icon={plugin.icon}
+                        monochrome={plugin.iconMonochrome}
+                        className="size-5 shrink-0 text-primary"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate" title={plugin.displayName}>
+                          {plugin.displayName}
+                        </span>
+                        <span
+                          className="block truncate text-xs text-muted-foreground"
+                          title={statusLabel(plugin)}
+                        >
+                          {statusLabel(plugin)}
+                        </span>
+                      </span>
+                    </Button>
+                  ))}
+                  {visiblePlugins?.length === 0 && (
+                    <p className="px-2 py-3 text-xs text-muted-foreground">
+                      {t("commandSettings.noPlugins")}
+                    </p>
+                  )}
+                </div>
+              </nav>
+            )}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-1 *:shrink-0">
               {(error || state?.error) && (
                 <Alert variant="destructive">
@@ -500,8 +550,11 @@ export function PluginManagementDialog({
                 </Alert>
               )}
 
-              <div hidden={selectedPlugin !== "__manage"} className="flex flex-col gap-4">
-                {tasks.length > 0 && (
+              <div
+                hidden={mode !== "market" || marketTab === "installed"}
+                className="flex flex-col gap-4"
+              >
+                {marketTab === "tasks" && tasks.length > 0 && (
                   <section className="flex flex-col gap-3" aria-label={t("plugins.tasks.title")}>
                     <h3 className="text-sm font-medium">{t("plugins.tasks.title")}</h3>
                     {tasks.map((task) => {
@@ -618,179 +671,197 @@ export function PluginManagementDialog({
                   </section>
                 )}
 
-                {!!state?.catalog.length && (
+                {marketTab === "tasks" && !tasks.length && !state?.pending.length && (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {t("pluginMarket.noTasks")}
+                  </p>
+                )}
+                {marketTab === "discover" && !!state?.catalog.length && (
                   <Card size="sm">
                     <CardHeader>
                       <CardTitle>{t("plugins.catalog.title")}</CardTitle>
                       <CardDescription>{t("plugins.catalog.description")}</CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-3">
-                      {state.catalog.map((item) => (
-                        <div
-                          key={item.pluginId}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
-                        >
-                          <div className="flex min-w-0 flex-col gap-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium">{item.displayName}</span>
-                              <Badge variant="outline">{item.version}</Badge>
-                            </div>
-                            <span className="break-all text-xs text-muted-foreground">
-                              {item.packageName}
-                            </span>
-                            {item.installedVersion && (
-                              <span className="text-xs text-muted-foreground">
-                                {t("plugins.catalog.currentVersion", {
-                                  version: item.installedVersion,
-                                })}
-                              </span>
-                            )}
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={
-                              disabled ||
-                              preparing.includes(`bundled:${item.pluginId}`) ||
-                              !item.canPrepare
-                            }
-                            onClick={() => {
-                              void prepare(`bundled:${item.pluginId}`, () =>
-                                prepareBundledPlugin(item.pluginId),
-                              );
-                            }}
+                      {state.catalog
+                        .filter((item) =>
+                          `${item.displayName} ${item.packageName}`
+                            .toLocaleLowerCase()
+                            .includes(pluginFilter.trim().toLocaleLowerCase()),
+                        )
+                        .map((item) => (
+                          <div
+                            key={item.pluginId}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
                           >
-                            {item.pending
-                              ? t("plugins.pending")
-                              : item.canPrepare
-                                ? t("plugins.catalog.prepare")
-                                : t("plugins.catalog.installed")}
-                          </Button>
-                        </div>
-                      ))}
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <PluginIcon
+                                  icon={item.icon}
+                                  monochrome={item.iconMonochrome}
+                                  className="size-5 shrink-0"
+                                />
+                                <span className="text-sm font-medium">{item.displayName}</span>
+                                <Badge variant="outline">{item.version}</Badge>
+                              </div>
+                              <span className="break-all text-xs text-muted-foreground">
+                                {item.packageName}
+                              </span>
+                              {item.installedVersion && (
+                                <span className="text-xs text-muted-foreground">
+                                  {t("plugins.catalog.currentVersion", {
+                                    version: item.installedVersion,
+                                  })}
+                                </span>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={
+                                disabled ||
+                                preparing.includes(`bundled:${item.pluginId}`) ||
+                                !item.canPrepare
+                              }
+                              onClick={() => {
+                                void prepare(`bundled:${item.pluginId}`, () =>
+                                  prepareBundledPlugin(item.pluginId),
+                                );
+                              }}
+                            >
+                              {item.pending
+                                ? t("plugins.pending")
+                                : item.canPrepare
+                                  ? t("plugins.catalog.prepare")
+                                  : t("plugins.catalog.installed")}
+                            </Button>
+                          </div>
+                        ))}
                     </CardContent>
                   </Card>
                 )}
 
-                <Card size="sm">
-                  <CardHeader>
-                    <CardTitle>{t("plugins.add.title", { defaultValue: "添加插件" })}</CardTitle>
-                    <CardDescription>
-                      {t("plugins.add.description", {
-                        defaultValue:
-                          "支持本地 .tgz、预构建开发目录和 npm 包。只有符合 spark233 清单的插件才能安装。",
-                      })}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-4">
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        disabled={disabled || preparing.includes("import")}
-                        onClick={() => {
-                          void prepare("import", importPluginPackage);
+                {marketTab === "discover" && (
+                  <Card size="sm">
+                    <CardHeader>
+                      <CardTitle>{t("plugins.add.title", { defaultValue: "添加插件" })}</CardTitle>
+                      <CardDescription>
+                        {t("plugins.add.description", {
+                          defaultValue:
+                            "支持本地 .tgz、预构建开发目录和 npm 包。只有符合 spark233 清单的插件才能安装。",
+                        })}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          disabled={disabled || preparing.includes("import")}
+                          onClick={() => {
+                            void prepare("import", importPluginPackage);
+                          }}
+                        >
+                          <DownloadIcon data-icon="inline-start" />
+                          {t("plugins.import", { defaultValue: "导入本地 .tgz" })}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={disabled || preparing.includes("directory")}
+                          onClick={() => {
+                            void prepare("directory", importPluginDirectory);
+                          }}
+                        >
+                          <FolderOpenIcon data-icon="inline-start" />
+                          {t("plugins.importDirectory")}
+                        </Button>
+                      </div>
+                      <form
+                        id="spark233-plugin-source"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void prepare(registryPreparationKey, () =>
+                            prepareRegistryPlugin({
+                              name: name.trim(),
+                              ...(registry.trim() ? { registry: registry.trim() } : {}),
+                              ...(channel.trim() ? { channel: channel.trim() } : {}),
+                            }),
+                          );
                         }}
                       >
-                        <DownloadIcon data-icon="inline-start" />
-                        {t("plugins.import", { defaultValue: "导入本地 .tgz" })}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        disabled={disabled || preparing.includes("directory")}
-                        onClick={() => {
-                          void prepare("directory", importPluginDirectory);
-                        }}
-                      >
-                        <FolderOpenIcon data-icon="inline-start" />
-                        {t("plugins.importDirectory")}
-                      </Button>
-                    </div>
-                    <form
-                      id="spark233-plugin-source"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void prepare(registryPreparationKey, () =>
-                          prepareRegistryPlugin({
-                            name: name.trim(),
-                            ...(registry.trim() ? { registry: registry.trim() } : {}),
-                            ...(channel.trim() ? { channel: channel.trim() } : {}),
-                          }),
-                        );
-                      }}
-                    >
-                      <FieldGroup className="gap-3">
-                        <Field data-disabled={disabled}>
-                          <FieldLabel htmlFor="plugin-package-name">
-                            {t("plugins.packageName", { defaultValue: "npm 包名" })}
-                          </FieldLabel>
-                          <Input
-                            id="plugin-package-name"
-                            autoComplete="off"
-                            placeholder="@scope/plugin-name"
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                            required
-                            maxLength={214}
-                            disabled={disabled}
-                          />
-                        </Field>
-                        <FieldGroup className="gap-3 sm:flex-row">
+                        <FieldGroup className="gap-3">
                           <Field data-disabled={disabled}>
-                            <FieldLabel htmlFor="plugin-registry">
-                              {t("plugins.registry", { defaultValue: "Registry（可选）" })}
+                            <FieldLabel htmlFor="plugin-package-name">
+                              {t("plugins.packageName", { defaultValue: "npm 包名" })}
                             </FieldLabel>
                             <Input
-                              id="plugin-registry"
-                              type="url"
-                              placeholder="https://registry.npmjs.org/"
-                              value={registry}
-                              onChange={(event) => setRegistry(event.target.value)}
-                              maxLength={2048}
+                              id="plugin-package-name"
+                              autoComplete="off"
+                              placeholder="@scope/plugin-name"
+                              value={name}
+                              onChange={(event) => setName(event.target.value)}
+                              required
+                              maxLength={214}
                               disabled={disabled}
                             />
-                            <FieldDescription>
-                              {t("plugins.registryHint", {
-                                defaultValue: "留空使用 npm 官方源，其他源需 HTTPS。",
-                              })}
-                            </FieldDescription>
                           </Field>
-                          <Field data-disabled={disabled}>
-                            <FieldLabel htmlFor="plugin-channel">
-                              {t("plugins.channel", { defaultValue: "更新通道（可选）" })}
-                            </FieldLabel>
-                            <Input
-                              id="plugin-channel"
-                              placeholder="latest"
-                              value={channel}
-                              onChange={(event) => setChannel(event.target.value)}
-                              maxLength={128}
-                              disabled={disabled}
-                            />
-                            <FieldDescription>
-                              {t("plugins.channelHint", {
-                                defaultValue: "留空使用 latest 稳定通道。",
-                              })}
-                            </FieldDescription>
-                          </Field>
+                          <FieldGroup className="gap-3 sm:flex-row">
+                            <Field data-disabled={disabled}>
+                              <FieldLabel htmlFor="plugin-registry">
+                                {t("plugins.registry", { defaultValue: "Registry（可选）" })}
+                              </FieldLabel>
+                              <Input
+                                id="plugin-registry"
+                                type="url"
+                                placeholder="https://registry.npmjs.org/"
+                                value={registry}
+                                onChange={(event) => setRegistry(event.target.value)}
+                                maxLength={2048}
+                                disabled={disabled}
+                              />
+                              <FieldDescription>
+                                {t("plugins.registryHint", {
+                                  defaultValue: "留空使用 npm 官方源，其他源需 HTTPS。",
+                                })}
+                              </FieldDescription>
+                            </Field>
+                            <Field data-disabled={disabled}>
+                              <FieldLabel htmlFor="plugin-channel">
+                                {t("plugins.channel", { defaultValue: "更新通道（可选）" })}
+                              </FieldLabel>
+                              <Input
+                                id="plugin-channel"
+                                placeholder="latest"
+                                value={channel}
+                                onChange={(event) => setChannel(event.target.value)}
+                                maxLength={128}
+                                disabled={disabled}
+                              />
+                              <FieldDescription>
+                                {t("plugins.channelHint", {
+                                  defaultValue: "留空使用 latest 稳定通道。",
+                                })}
+                              </FieldDescription>
+                            </Field>
+                          </FieldGroup>
                         </FieldGroup>
-                      </FieldGroup>
-                    </form>
-                  </CardContent>
-                  <CardFooter>
-                    <Button
-                      form="spark233-plugin-source"
-                      type="submit"
-                      size="sm"
-                      disabled={
-                        disabled || preparing.includes(registryPreparationKey) || !name.trim()
-                      }
-                    >
-                      {t("plugins.prepare", { defaultValue: "准备安装预览" })}
-                    </Button>
-                  </CardFooter>
-                </Card>
+                      </form>
+                    </CardContent>
+                    <CardFooter>
+                      <Button
+                        form="spark233-plugin-source"
+                        type="submit"
+                        size="sm"
+                        disabled={
+                          disabled || preparing.includes(registryPreparationKey) || !name.trim()
+                        }
+                      >
+                        {t("plugins.prepare", { defaultValue: "准备安装预览" })}
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                )}
 
-                {!!state?.pending.length && (
+                {marketTab === "tasks" && !!state?.pending.length && (
                   <section
                     className="flex flex-col gap-3"
                     aria-label={t("plugins.pending", { defaultValue: "待确认安装" })}
@@ -946,6 +1017,12 @@ export function PluginManagementDialog({
                                     preview.requiresNativeTrust &&
                                       trust[preview.previewId] === true,
                                   ),
+                                t(
+                                  preview.currentVersion
+                                    ? "notifications.updated"
+                                    : "notifications.installed",
+                                  { name: preview.metadata.spark233.displayName },
+                                ),
                               );
                             }}
                           >
@@ -987,37 +1064,81 @@ export function PluginManagementDialog({
                 )}
               </div>
               <section
+                hidden={mode === "market" && marketTab !== "installed"}
                 className="flex flex-col gap-3"
                 aria-label={t("plugins.installed", { defaultValue: "已安装插件" })}
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div
+                  hidden={mode === "configuration"}
+                  className="flex flex-wrap items-center justify-between gap-2"
+                >
                   <h3 className="text-sm font-medium">
                     {t("plugins.installed", { defaultValue: "已安装插件" })}
                   </h3>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={disabled || state?.checking}
-                    onClick={() => {
-                      void run(
-                        t("plugins.checking", { defaultValue: "正在检查插件更新" }),
-                        checkPluginUpdates,
-                      );
-                    }}
-                  >
-                    {state?.checking ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <RefreshCwIcon data-icon="inline-start" />
-                    )}
-                    {t("plugins.checkUpdates", { defaultValue: "检查更新" })}
-                  </Button>
+                  {mode === "market" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={disabled || state?.checking}
+                      onClick={() => {
+                        void run(
+                          t("plugins.checking", { defaultValue: "正在检查插件更新" }),
+                          checkPluginUpdates,
+                        );
+                      }}
+                    >
+                      {state?.checking ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <RefreshCwIcon data-icon="inline-start" />
+                      )}
+                      {t("plugins.checkUpdates", { defaultValue: "检查更新" })}
+                    </Button>
+                  )}
                 </div>
-                {state?.lastChecked && (
+                {mode === "market" && state?.lastChecked && (
                   <p className="text-xs text-muted-foreground">
                     {t("plugins.lastChecked", { defaultValue: "上次检查" })}:
                     {new Date(state.lastChecked).toLocaleString(i18n.resolvedLanguage)}
                   </p>
+                )}
+                {mode === "market" && updateIssues.length > 0 && (
+                  <Alert role="status">
+                    <AlertTitle>{t("plugins.updateStatus.title")}</AlertTitle>
+                    <AlertDescription className="flex flex-col gap-2">
+                      {unpublishedUpdates.length > 0 && (
+                        <p>
+                          {t("plugins.updateStatus.notPublished", {
+                            count: unpublishedUpdates.length,
+                          })}
+                        </p>
+                      )}
+                      {failedUpdateChecks.length > 0 && <p>{t("plugins.updateStatus.failed")}</p>}
+                      <details>
+                        <summary className="cursor-pointer">{t("plugins.errorDetails")}</summary>
+                        <ul className="mt-2 max-h-40 space-y-2 overflow-y-auto text-xs">
+                          {updateIssues.map((issue, index) => (
+                            <li
+                              key={`${issue.pluginId ?? "check"}:${issue.reason}:${index}`}
+                              className="break-words"
+                            >
+                              <span>
+                                {state?.plugins.find((plugin) => plugin.pluginId === issue.pluginId)
+                                  ?.displayName ??
+                                  issue.pluginId ??
+                                  t("plugins.updateStatus.check")}
+                              </span>
+                              {issue.message && (
+                                <pre className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+                                  {issue.message}
+                                </pre>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </AlertDescription>
+                  </Alert>
                 )}
                 {!state && !error && (
                   <Empty>
@@ -1048,8 +1169,22 @@ export function PluginManagementDialog({
                     </EmptyHeader>
                   </Empty>
                 )}
+                {mode === "market" && !!state?.plugins.length && !visiblePlugins?.length && (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    {t("commandSettings.noPlugins")}
+                  </p>
+                )}
                 {state?.plugins
-                  .filter((plugin) => plugin.pluginId === selectedPlugin)
+                  .filter((plugin) =>
+                    mode === "configuration"
+                      ? plugin.pluginId === selectedPlugin
+                      : visiblePlugins?.includes(plugin),
+                  )
+                  .sort((a, b) =>
+                    mode === "market"
+                      ? Number(b.pluginId === pluginId) - Number(a.pluginId === pluginId)
+                      : 0,
+                  )
                   .map((plugin) => {
                     const update = state.updates.find((item) => item.pluginId === plugin.pluginId);
                     const notesKey = `${plugin.pluginId}@${plugin.version}`;
@@ -1060,7 +1195,8 @@ export function PluginManagementDialog({
                         <CardHeader>
                           <CardTitle className="flex flex-wrap items-center gap-2">
                             <PluginIcon
-                              pluginId={plugin.pluginId}
+                              icon={plugin.icon}
+                              monochrome={plugin.iconMonochrome}
                               className="size-5 shrink-0 text-primary"
                             />
                             {plugin.displayName}
@@ -1081,29 +1217,34 @@ export function PluginManagementDialog({
                           </CardDescription>
                         </CardHeader>
                         <CardContent className="flex min-w-0 flex-col gap-5">
-                          <SlidingButtonGroup
-                            value={detailTab}
-                            options={["config", "functions", "matching", "info"].map((value) => ({
-                              value,
-                              label: t(`pluginConfig.tabs.${value}`, { defaultValue: value }),
-                            }))}
-                            onChange={setDetailTab}
-                          />
-                          <div hidden={detailTab !== "config"} className="min-w-0">
-                            <PluginConfiguration
-                              key={`${plugin.pluginId}@${plugin.version}`}
-                              pluginId={plugin.pluginId}
+                          {mode === "configuration" && (
+                            <SlidingButtonGroup
+                              value={detailTab}
+                              options={["config", "functions", "matching"].map((value) => ({
+                                value,
+                                label: t(`pluginConfig.tabs.${value}`, { defaultValue: value }),
+                              }))}
+                              onChange={setDetailTab}
                             />
-                            {plugin.pluginId === "spark233.applications" && (
-                              <ApplicationsDialog
-                                key={plugin.version}
-                                embedded
-                                open
-                                onOpenChange={() => {}}
+                          )}
+                          {mode === "configuration" && (
+                            <div hidden={detailTab !== "config"} className="min-w-0">
+                              <PluginConfiguration
+                                key={`${plugin.pluginId}@${plugin.version}`}
+                                footerVisible={detailTab === "config"}
+                                pluginId={plugin.pluginId}
                               />
-                            )}
-                          </div>
-                          {detailTab === "matching" && (
+                              {plugin.pluginId === "spark233.applications" && (
+                                <ApplicationsDialog
+                                  key={plugin.version}
+                                  embedded
+                                  open
+                                  onOpenChange={() => {}}
+                                />
+                              )}
+                            </div>
+                          )}
+                          {mode === "configuration" && detailTab === "matching" && (
                             <div className="flex flex-col gap-4">
                               {plugin.commands
                                 .filter(
@@ -1132,18 +1273,21 @@ export function PluginManagementDialog({
                                 ))}
                             </div>
                           )}
-                          <div hidden={detailTab !== "functions"}>
-                            {!!plugin.commands.length && (
-                              <PluginShortcuts
-                                key={`${plugin.pluginId}@${plugin.version}`}
-                                plugin={plugin}
-                              />
-                            )}
-                          </div>
-                          {detailTab === "functions" &&
+                          {mode === "configuration" && (
+                            <div hidden={detailTab !== "functions"}>
+                              {!!plugin.commands.length && (
+                                <PluginShortcuts
+                                  key={`${plugin.pluginId}@${plugin.version}`}
+                                  plugin={plugin}
+                                />
+                              )}
+                            </div>
+                          )}
+                          {mode === "configuration" &&
+                            detailTab === "functions" &&
                             plugin.pluginId === "spark233.search" &&
-                            plugin.enabled && <SearchServicePanel />}
-                          {detailTab === "functions" && (
+                            plugin.enabled && <SearchServicePanel settingsFooter />}
+                          {mode === "configuration" && detailTab === "functions" && (
                             <div className="flex flex-wrap gap-2">
                               {plugin.commands.map((command) => (
                                 <Button
@@ -1163,7 +1307,7 @@ export function PluginManagementDialog({
                               ))}
                             </div>
                           )}
-                          <div hidden={detailTab !== "info"} className="flex flex-col gap-3">
+                          <div hidden={mode !== "market"} className="flex flex-col gap-3">
                             <details
                               className="min-w-0 text-sm"
                               onToggle={(event) => {
@@ -1251,95 +1395,97 @@ export function PluginManagementDialog({
                                 </AlertDescription>
                               </Alert>
                             )}
-                            {!!plugin.commands.length && (
-                              <div
-                                className="flex flex-wrap gap-2"
-                                aria-label={t("plugins.commands", { defaultValue: "可用命令" })}
-                              >
-                                {plugin.commands.map((command) => (
-                                  <Button
-                                    key={command.id}
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={
-                                      disabled ||
-                                      !plugin.enabled ||
-                                      !!plugin.lastError ||
-                                      activating.includes(plugin.pluginId)
-                                    }
-                                    onClick={() => {
-                                      void launch(plugin.pluginId, command.id);
-                                    }}
-                                  >
-                                    {command.title}
-                                  </Button>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         </CardContent>
                         <CardFooter className="flex-wrap gap-2">
                           <Button
                             size="sm"
-                            disabled={
-                              disabled ||
-                              !plugin.enabled ||
-                              !!plugin.lastError ||
-                              activating.includes(plugin.pluginId) ||
-                              !plugin.commands.length
-                            }
-                            onClick={() => {
-                              void launch(plugin.pluginId);
-                            }}
-                          >
-                            {t("plugins.open", { defaultValue: "打开" })}
-                          </Button>
-                          <Button
-                            size="sm"
                             variant="outline"
-                            disabled={disabled}
                             onClick={() => {
-                              void run(
-                                t("plugins.switching", { defaultValue: "正在更改插件状态" }),
-                                () =>
-                                  setPluginEnabled(
-                                    plugin.pluginId,
-                                    !!plugin.lastError || !plugin.enabled,
-                                  ),
-                              );
+                              void onNavigate({
+                                page: mode === "configuration" ? "marketplace" : "plugins",
+                                pluginId: plugin.pluginId,
+                                tab: "config",
+                              }).catch((value) => setError(errorText(value)));
                             }}
                           >
-                            {plugin.lastError
-                              ? t("launcher.retry", { defaultValue: "重试" })
-                              : plugin.enabled
-                                ? t("plugins.disable", { defaultValue: "停用" })
-                                : t("plugins.enable", { defaultValue: "启用" })}
+                            {mode === "configuration"
+                              ? t("pluginMarket.managePlugin")
+                              : t("pluginMarket.configurePlugin")}
                           </Button>
-                          {update && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={disabled || preparing.includes(`update:${plugin.pluginId}`)}
-                              onClick={() => {
-                                void prepare(`update:${plugin.pluginId}`, () =>
-                                  preparePluginUpdate(plugin.pluginId),
-                                );
-                              }}
-                            >
-                              {t("plugins.prepareUpdate", { defaultValue: "准备更新" })}
-                            </Button>
+                          {mode === "market" && (
+                            <>
+                              <Button
+                                size="sm"
+                                disabled={
+                                  disabled ||
+                                  !plugin.enabled ||
+                                  !!plugin.lastError ||
+                                  activating.includes(plugin.pluginId) ||
+                                  !plugin.commands.length
+                                }
+                                onClick={() => {
+                                  void launch(plugin.pluginId);
+                                }}
+                              >
+                                {t("plugins.open", { defaultValue: "打开" })}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={disabled}
+                                onClick={() => {
+                                  void run(
+                                    t("plugins.switching", { defaultValue: "正在更改插件状态" }),
+                                    () =>
+                                      setPluginEnabled(
+                                        plugin.pluginId,
+                                        !!plugin.lastError || !plugin.enabled,
+                                      ),
+                                    t(
+                                      !!plugin.lastError || !plugin.enabled
+                                        ? "notifications.enabled"
+                                        : "notifications.disabled",
+                                      { name: plugin.displayName },
+                                    ),
+                                  );
+                                }}
+                              >
+                                {plugin.lastError
+                                  ? t("launcher.retry", { defaultValue: "重试" })
+                                  : plugin.enabled
+                                    ? t("plugins.disable", { defaultValue: "停用" })
+                                    : t("plugins.enable", { defaultValue: "启用" })}
+                              </Button>
+                              {update && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={
+                                    disabled || preparing.includes(`update:${plugin.pluginId}`)
+                                  }
+                                  onClick={() => {
+                                    void prepare(`update:${plugin.pluginId}`, () =>
+                                      preparePluginUpdate(plugin.pluginId),
+                                    );
+                                  }}
+                                >
+                                  {t("plugins.prepareUpdate", { defaultValue: "准备更新" })}
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={disabled}
+                                onClick={() => {
+                                  setDeleteData(false);
+                                  setRemoving(plugin);
+                                }}
+                              >
+                                {t("plugins.uninstall", { defaultValue: "卸载" })}
+                              </Button>
+                            </>
                           )}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={disabled}
-                            onClick={() => {
-                              setDeleteData(false);
-                              setRemoving(plugin);
-                            }}
-                          >
-                            {t("plugins.uninstall", { defaultValue: "卸载" })}
-                          </Button>
                         </CardFooter>
                       </Card>
                     );
@@ -1401,8 +1547,10 @@ export function PluginManagementDialog({
               onClick={(event) => {
                 event.preventDefault();
                 if (removing)
-                  void run(t("plugins.uninstalling", { defaultValue: "正在卸载插件" }), () =>
-                    uninstallPlugin(removing.pluginId, deleteData),
+                  void run(
+                    t("plugins.uninstalling", { defaultValue: "正在卸载插件" }),
+                    () => uninstallPlugin(removing.pluginId, deleteData),
+                    t("notifications.uninstalled", { name: removing.displayName }),
                   ).then((ok) => {
                     if (ok) setRemoving(undefined);
                   });

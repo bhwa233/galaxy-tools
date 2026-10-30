@@ -1,3 +1,5 @@
+import { showToast } from "../../components/Toast";
+import uiConfiguration from "../../../../../packages/official/clipboard/config/ui.json";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -25,6 +27,8 @@ import {
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { openSettingsWindow } from "../settings/api";
+import { WorkspaceTitleBar } from "../windows/WorkspaceTitleBar";
+import { usePluginWindow } from "../windows/PluginWindowContext";
 import type { ClipboardEntry, ClipboardKind, ClipboardPage, ClipboardRequest } from "./types";
 
 export interface ClipboardWorkspaceProps {
@@ -38,14 +42,7 @@ interface Detail extends ClipboardEntry {
   invalidFiles: string[];
   previewError?: string;
 }
-const kinds: Array<{ id?: ClipboardKind; label: string }> = [
-  { label: "全部" },
-  { id: "text", label: "文字" },
-  { id: "html", label: "HTML" },
-  { id: "rtf", label: "RTF" },
-  { id: "image", label: "图片" },
-  { id: "files", label: "文件" },
-];
+const kinds = uiConfiguration.filters as Array<{ id?: ClipboardKind; label: string }>;
 
 export function ClipboardWorkspace({
   request,
@@ -54,6 +51,8 @@ export function ClipboardWorkspace({
   revision = 0,
 }: ClipboardWorkspaceProps) {
   const { t } = useTranslation("clipboard");
+  const { t: notificationText } = useTranslation();
+  const windowInfo = usePluginWindow();
   const errorText = useCallback(
     (value: unknown) => {
       const message =
@@ -74,7 +73,6 @@ export function ClipboardWorkspace({
   const [detail, setDetail] = useState<Detail>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [version, setVersion] = useState(0);
 
   const loadGeneration = useRef(0);
@@ -149,24 +147,34 @@ export function ClipboardWorkspace({
     async (command: ClipboardRequest) => {
       setBusy(true);
       setError("");
-      setNotice("");
       try {
         await request(command);
         setVersion((previous) => previous + 1);
         if (command.action === "paste") {
-          setNotice(t("已向之前的目标应用发送粘贴按键"));
           onClose?.();
         }
         if (compact && command.action === "copy") onClose?.();
+        else if (command.action === "copy" || command.action === "emoji.copy")
+          showToast(notificationText("notifications.copied"), "success");
+        else if (
+          command.action === "history.remove" ||
+          command.action === "draft.remove" ||
+          command.action === "emoji.remove"
+        )
+          showToast(notificationText("notifications.deleted"), "success");
+        else if (command.action === "draft.save")
+          showToast(notificationText("notifications.saved"), "success");
+        if (command.action === "cleanup.confirm")
+          showToast(notificationText("notifications.cleared"), "success");
         return true;
       } catch (failure) {
-        setError(errorText(failure));
+        showToast(errorText(failure));
         return false;
       } finally {
         setBusy(false);
       }
     },
-    [request, compact, onClose, errorText],
+    [request, compact, onClose, errorText, notificationText],
   );
   const copy = (id: string, action: "copy" | "paste", mode: "original" | "text" = "original") =>
     perform({ action, id, mode });
@@ -176,12 +184,12 @@ export function ClipboardWorkspace({
   };
   const entryMenu = (entry: ClipboardEntry) => (
     <ContextMenuContent aria-label={t("条目操作")} onKeyDown={(event) => event.stopPropagation()}>
-      <ContextMenuItem disabled={busy} onSelect={() => void copy(entry.id, "copy")}>
+      <ContextMenuItem disabled={busy} onClick={() => void copy(entry.id, "copy")}>
         <Copy />
         {t("复制原格式")}
       </ContextMenuItem>
       {(entry.kind === "html" || entry.kind === "rtf") && (
-        <ContextMenuItem disabled={busy} onSelect={() => void copy(entry.id, "copy", "text")}>
+        <ContextMenuItem disabled={busy} onClick={() => void copy(entry.id, "copy", "text")}>
           <FileText />
           {t("纯文本复制")}
         </ContextMenuItem>
@@ -189,15 +197,13 @@ export function ClipboardWorkspace({
       <ContextMenuSeparator />
       <ContextMenuItem
         disabled={busy}
-        onSelect={() =>
-          void perform({ action: "favorite", id: entry.id, enabled: !entry.favorite })
-        }
+        onClick={() => void perform({ action: "favorite", id: entry.id, enabled: !entry.favorite })}
       >
         <Star className={entry.favorite ? "fill-current text-primary" : undefined} />
         {entry.favorite ? t("取消收藏") : t("收藏")}
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem variant="destructive" disabled={busy} onSelect={() => removeEntry(entry.id)}>
+      <ContextMenuItem variant="destructive" disabled={busy} onClick={() => removeEntry(entry.id)}>
         <Trash2 />
         {t("删除条目")}
       </ContextMenuItem>
@@ -248,6 +254,52 @@ export function ClipboardWorkspace({
     }
   };
 
+  const headerActions = (
+    <>
+      {!compact && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => void perform({ action: "open-quick" })}
+        >
+          <AppWindow data-icon="inline-start" />
+          {t("快捷剪贴板")}
+        </Button>
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={busy || !page}
+        onClick={() =>
+          void perform({ action: "settings", patch: { paused: !page?.settings.paused } })
+        }
+      >
+        {page?.settings.paused ? <Play /> : <Pause />}
+        {page?.settings.paused ? t("恢复记录") : t("暂停记录")}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t("剪贴板设置")}
+        onClick={() => {
+          void openSettingsWindow({
+            page: "plugins",
+            pluginId: "spark233.clipboard",
+            tab: "config",
+          }).catch((value) => setError(errorText(value)));
+        }}
+      >
+        <Settings />
+      </Button>
+      {compact && onClose && (
+        <Button variant="ghost" size="icon-sm" aria-label={t("关闭工作区")} onClick={onClose}>
+          <X />
+        </Button>
+      )}
+    </>
+  );
+
   return (
     <section
       className="flex h-full min-h-0 flex-col bg-background text-foreground"
@@ -255,58 +307,23 @@ export function ClipboardWorkspace({
       tabIndex={-1}
       aria-label={t("剪贴板工作区")}
     >
-      <header className="electron-title-drag flex flex-wrap items-center gap-2 border-b p-3">
-        <strong className="mr-auto">{compact ? t("快捷剪贴板") : t("剪贴板历史")}</strong>
-        {!compact && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => void perform({ action: "open-quick" })}
-          >
-            <AppWindow data-icon="inline-start" />
-            {t("快捷剪贴板")}
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy || !page}
-          onClick={() =>
-            void perform({ action: "settings", patch: { paused: !page?.settings.paused } })
-          }
+      {compact ? (
+        <header className="electron-title-drag flex flex-wrap items-center gap-2 border-b p-3">
+          <strong className="mr-auto">{windowInfo?.title ?? t("快捷剪贴板")}</strong>
+          {headerActions}
+        </header>
+      ) : (
+        <WorkspaceTitleBar
+          title={t("剪贴板历史")}
+          onClose={onClose}
+          onError={(value) => setError(errorText(value))}
         >
-          {page?.settings.paused ? <Play /> : <Pause />}
-          {page?.settings.paused ? t("恢复记录") : t("暂停记录")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={t("剪贴板设置")}
-          onClick={() => {
-            void openSettingsWindow({
-              page: "plugins",
-              pluginId: "spark233.clipboard",
-              tab: "config",
-            }).catch((value) => setError(errorText(value)));
-          }}
-        >
-          <Settings />
-        </Button>
-        {onClose && (
-          <Button variant="ghost" size="icon-sm" aria-label={t("关闭工作区")} onClick={onClose}>
-            <X />
-          </Button>
-        )}
-      </header>
+          {headerActions}
+        </WorkspaceTitleBar>
+      )}
       {error && (
         <p role="alert" className="border-b px-3 py-2 text-sm text-destructive">
           {error}
-        </p>
-      )}
-      {notice && (
-        <p role="status" className="px-3 py-1 text-sm text-muted-foreground">
-          {notice}
         </p>
       )}
       {page?.nativeStatus && !page.nativeStatus.running && (
@@ -363,43 +380,45 @@ export function ClipboardWorkspace({
           )}
           {page?.entries.map((entry, index) => (
             <ContextMenu key={entry.id}>
-              <ContextMenuTrigger asChild>
-                <button
-                  data-clipboard-select
-                  className={`block w-full min-w-0 border-b px-3 py-2 text-left ${selected === entry.id ? "bg-accent" : "hover:bg-muted/50"}`}
-                  onContextMenu={() => setSelected(entry.id)}
-                  onClick={() => setSelected(entry.id)}
-                  onDoubleClick={() => void copy(entry.id, "copy")}
-                >
-                  <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                    {compact && index < 9 && (
-                      <Badge variant="outline">
-                        {page.settings.quickKeys === "function" ? "F" : ""}
-                        {index + 1}
-                      </Badge>
-                    )}
-                    {entry.pinned && <Pin className="size-3" />}
-                    {entry.favorite && <Star className="size-3 fill-current" />}
-                    <span>{t(`kind.${entry.kind}`)}</span>
-                    <span className="ml-auto">×{entry.copies}</span>
-                  </div>
-                  {entry.thumbnailDataUrl && (
-                    <img
-                      src={entry.thumbnailDataUrl}
-                      alt={t("图片缩略图")}
-                      className="max-h-24 max-w-40 object-contain"
-                    />
-                  )}
-                  <p
-                    className="line-clamp-2 whitespace-pre-wrap break-words text-sm"
-                    title={entry.preview}
+              <ContextMenuTrigger
+                render={
+                  <button
+                    data-clipboard-select
+                    className={`block w-full min-w-0 border-b px-3 py-2 text-left ${selected === entry.id ? "bg-accent" : "hover:bg-muted/50"}`}
+                    onContextMenu={() => setSelected(entry.id)}
+                    onClick={() => setSelected(entry.id)}
+                    onDoubleClick={() => void copy(entry.id, "copy")}
                   >
-                    {entry.kind === "files" && entry.files.length
-                      ? entry.files.map((file) => file.split(/[/\\]/).pop() || file).join("\n")
-                      : entry.preview || t(entry.kind === "image" ? "图片" : "剪贴板内容")}
-                  </p>
-                </button>
-              </ContextMenuTrigger>
+                    <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      {compact && index < 9 && (
+                        <Badge variant="outline">
+                          {page.settings.quickKeys === "function" ? "F" : ""}
+                          {index + 1}
+                        </Badge>
+                      )}
+                      {entry.pinned && <Pin className="size-3" />}
+                      {entry.favorite && <Star className="size-3 fill-current" />}
+                      <span>{t(`kind.${entry.kind}`)}</span>
+                      <span className="ml-auto">×{entry.copies}</span>
+                    </div>
+                    {entry.thumbnailDataUrl && (
+                      <img
+                        src={entry.thumbnailDataUrl}
+                        alt={t("图片缩略图")}
+                        className="max-h-24 max-w-40 object-contain"
+                      />
+                    )}
+                    <p
+                      className="line-clamp-2 whitespace-pre-wrap break-words text-sm"
+                      title={entry.preview}
+                    >
+                      {entry.kind === "files" && entry.files.length
+                        ? entry.files.map((file) => file.split(/[/\\]/).pop() || file).join("\n")
+                        : entry.preview || t(entry.kind === "image" ? "图片" : "剪贴板内容")}
+                    </p>
+                  </button>
+                }
+              />
               {entryMenu(entry)}
             </ContextMenu>
           ))}
@@ -408,103 +427,108 @@ export function ClipboardWorkspace({
           <div className="flex min-h-0 min-w-0 flex-col" aria-label={t("条目详情")}>
             {detail && detail.id === selected ? (
               <ContextMenu>
-                <ContextMenuTrigger asChild className="select-text">
-                  <div
-                    className="flex min-h-0 flex-1 flex-col outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
-                    tabIndex={0}
-                  >
-                    <section
-                      className="flex min-h-0 flex-1 flex-col gap-3 p-4"
-                      aria-label={t("内容预览")}
+                <ContextMenuTrigger
+                  className="select-text"
+                  render={
+                    <div
+                      className="flex min-h-0 flex-1 flex-col outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+                      tabIndex={0}
                     >
-                      <div className="flex shrink-0 items-center justify-between gap-3 text-xs text-muted-foreground">
-                        <h3 className="font-medium">{t("内容预览")}</h3>
-                        <span>{t("右键查看操作")}</span>
-                      </div>
-                      <div className="min-h-0 flex-1 overflow-auto">
-                        {detail.previewError && (
-                          <p role="status" className="mb-3 text-sm text-muted-foreground">
-                            {t("缩略图不可用，原始图片仍可复制或导出")}
-                          </p>
-                        )}
-                        {detail.kind === "image" && detail.imageDataUrl && (
-                          <div className="flex h-full min-h-40 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/20 p-3">
-                            <img
-                              src={detail.imageDataUrl}
-                              alt={t("剪贴板图片预览")}
-                              className="max-h-full max-w-full rounded object-contain"
-                            />
-                          </div>
-                        )}
-                        {!!detail.files.length && (
-                          <div className="space-y-2">
-                            {detail.files.map((filename) => (
-                              <div
-                                key={filename}
-                                className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/10 p-3"
-                              >
-                                <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-                                <div className="min-w-0 space-y-1">
-                                  <p className="break-words text-sm font-medium">
-                                    {filename.split(/[/\\]/).pop() || filename}
-                                  </p>
-                                  <p className="break-all text-xs text-muted-foreground">
-                                    {filename}
-                                  </p>
-                                  {detail.invalidFiles.includes(filename) && (
-                                    <p className="text-xs text-destructive">
-                                      {t("（引用已失效）")}
+                      <section
+                        className="flex min-h-0 flex-1 flex-col gap-3 p-4"
+                        aria-label={t("内容预览")}
+                      >
+                        <div className="flex shrink-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+                          <h3 className="font-medium">{t("内容预览")}</h3>
+                          <span>{t("右键查看操作")}</span>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-auto">
+                          {detail.previewError && (
+                            <p role="status" className="mb-3 text-sm text-muted-foreground">
+                              {t("缩略图不可用，原始图片仍可复制或导出")}
+                            </p>
+                          )}
+                          {detail.kind === "image" && detail.imageDataUrl && (
+                            <div className="flex h-full min-h-40 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/20 p-3">
+                              <img
+                                src={detail.imageDataUrl}
+                                alt={t("剪贴板图片预览")}
+                                className="max-h-full max-w-full rounded object-contain"
+                              />
+                            </div>
+                          )}
+                          {!!detail.files.length && (
+                            <div className="space-y-2">
+                              {detail.files.map((filename) => (
+                                <div
+                                  key={filename}
+                                  className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/10 p-3"
+                                >
+                                  <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                                  <div className="min-w-0 space-y-1">
+                                    <p className="break-words text-sm font-medium">
+                                      {filename.split(/[/\\]/).pop() || filename}
                                     </p>
-                                  )}
+                                    <p className="break-all text-xs text-muted-foreground">
+                                      {filename}
+                                    </p>
+                                    {detail.invalidFiles.includes(filename) && (
+                                      <p className="text-xs text-destructive">
+                                        {t("（引用已失效）")}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {detail.kind !== "image" && detail.kind !== "files" && (
-                          <div className="rounded-lg border border-border/60 bg-muted/10 p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
-                            {detail.text || t("剪贴板内容")}
-                          </div>
-                        )}
-                        {detail.textTruncated && (
-                          <p role="status" className="mt-3 text-xs text-muted-foreground">
-                            {t("内容较大，仅预览前 256 Ki 字符。原始复制保持完整。")}
-                          </p>
-                        )}
-                      </div>
-                    </section>
-                    <section
-                      className="shrink-0 space-y-3 border-t px-4 py-3"
-                      aria-label={t("条目信息")}
-                    >
-                      <h3 className="text-xs font-medium text-muted-foreground">{t("条目信息")}</h3>
-                      <dl className="grid max-h-36 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 overflow-auto text-xs">
-                        <dt className="text-muted-foreground">{t("来源应用")}</dt>
-                        <dd className="truncate" title={detail.source}>
-                          {detail.sourceTitle ||
-                            detail.source.split(/[/\\]/).pop() ||
-                            t("未知应用")}
-                        </dd>
-                        <dt className="text-muted-foreground">{t("记录时间")}</dt>
-                        <dd>
-                          <time dateTime={new Date(detail.createdAt).toISOString()}>
-                            {new Date(detail.createdAt).toLocaleString()}
-                          </time>
-                        </dd>
-                        <dt className="text-muted-foreground">{t("内容格式")}</dt>
-                        <dd className="truncate" title={detail.formats.join(" · ")}>
-                          {t(`kind.${detail.kind}`)}
-                        </dd>
-                        {detail.note && (
-                          <>
-                            <dt className="text-muted-foreground">{t("备注")}</dt>
-                            <dd className="whitespace-pre-wrap break-words">{detail.note}</dd>
-                          </>
-                        )}
-                      </dl>
-                    </section>
-                  </div>
-                </ContextMenuTrigger>
+                              ))}
+                            </div>
+                          )}
+                          {detail.kind !== "image" && detail.kind !== "files" && (
+                            <div className="rounded-lg border border-border/60 bg-muted/10 p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
+                              {detail.text || t("剪贴板内容")}
+                            </div>
+                          )}
+                          {detail.textTruncated && (
+                            <p role="status" className="mt-3 text-xs text-muted-foreground">
+                              {t("内容较大，仅预览前 256 Ki 字符。原始复制保持完整。")}
+                            </p>
+                          )}
+                        </div>
+                      </section>
+                      <section
+                        className="shrink-0 space-y-3 border-t px-4 py-3"
+                        aria-label={t("条目信息")}
+                      >
+                        <h3 className="text-xs font-medium text-muted-foreground">
+                          {t("条目信息")}
+                        </h3>
+                        <dl className="grid max-h-36 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 overflow-auto text-xs">
+                          <dt className="text-muted-foreground">{t("来源应用")}</dt>
+                          <dd className="truncate" title={detail.source}>
+                            {detail.sourceTitle ||
+                              detail.source.split(/[/\\]/).pop() ||
+                              t("未知应用")}
+                          </dd>
+                          <dt className="text-muted-foreground">{t("记录时间")}</dt>
+                          <dd>
+                            <time dateTime={new Date(detail.createdAt).toISOString()}>
+                              {new Date(detail.createdAt).toLocaleString()}
+                            </time>
+                          </dd>
+                          <dt className="text-muted-foreground">{t("内容格式")}</dt>
+                          <dd className="truncate" title={detail.formats.join(" · ")}>
+                            {t(`kind.${detail.kind}`)}
+                          </dd>
+                          {detail.note && (
+                            <>
+                              <dt className="text-muted-foreground">{t("备注")}</dt>
+                              <dd className="whitespace-pre-wrap break-words">{detail.note}</dd>
+                            </>
+                          )}
+                        </dl>
+                      </section>
+                    </div>
+                  }
+                />
                 {entryMenu(detail)}
               </ContextMenu>
             ) : (

@@ -22,7 +22,6 @@ export interface DictionaryPaneProps {
   onToggleAutoLookup: () => void;
   onCopyEntry: (content: string) => void;
   onSaveEntry: (content: string) => void;
-  onClose: () => void;
 }
 
 export function DictionaryPane({
@@ -41,7 +40,6 @@ export function DictionaryPane({
   onToggleAutoLookup,
   onCopyEntry,
   onSaveEntry,
-  onClose,
 }: DictionaryPaneProps) {
   const { t } = useTranslation();
   const text = entry
@@ -56,10 +54,7 @@ export function DictionaryPane({
     : "";
   return (
     <aside
-      className={cn(
-        "flex min-h-0 flex-col gap-2 overflow-hidden rounded-lg border bg-card p-3",
-        className,
-      )}
+      className={cn("flex min-h-0 flex-col gap-3 overflow-hidden p-3", className)}
       aria-label={t("translation.dictionary", { defaultValue: "离线词典" })}
     >
       <div className="flex items-center gap-2">
@@ -76,9 +71,6 @@ export function DictionaryPane({
           {autoLookup
             ? t("translation.autoLookupOn", { defaultValue: "选中即查：开" })
             : t("translation.autoLookupOff", { defaultValue: "选中即查：关" })}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          {t("translation.dictionaryCollapse", { defaultValue: "收起" })}
         </Button>
       </div>
       <form
@@ -102,54 +94,9 @@ export function DictionaryPane({
           {t("translation.lookup", { defaultValue: "查词" })}
         </Button>
       </form>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {entry ? (
-          <article className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <h3 className="text-lg font-medium">{entry.entry.word}</h3>
-              {entry.entry.phonetic && (
-                <span className="text-sm text-muted-foreground">/{entry.entry.phonetic}/</span>
-              )}
-              <Badge variant="secondary">
-                {t("translation.offline", { defaultValue: "离线" })}
-              </Badge>
-            </div>
-            <p className="text-sm whitespace-pre-wrap">{entry.entry.translation}</p>
-            {entry.entry.definition && (
-              <p className="text-sm whitespace-pre-wrap text-muted-foreground">
-                {entry.entry.definition}
-              </p>
-            )}
-            {entry.entry.exchange && (
-              <p className="text-xs break-words text-muted-foreground">
-                {t("translation.inflections", { defaultValue: "词形变化" })}：{entry.entry.exchange}
-              </p>
-            )}
-            {entry.entry.tags && (
-              <p className="text-xs text-muted-foreground">{entry.entry.tags}</p>
-            )}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={exporting}
-                onClick={() => onCopyEntry(text)}
-              >
-                {t("markdown.copy", { defaultValue: "复制" })}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={exporting || !notesAvailable}
-                title={!notesAvailable ? unavailableTargetReason : undefined}
-                onClick={() => onSaveEntry(text)}
-              >
-                {t("ocr.saveNote", { defaultValue: "保存便签" })}
-              </Button>
-            </div>
-          </article>
-        ) : items.length ? (
-          <div className="flex flex-col">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row">
+        {!!items.length && (
+          <div className="flex max-h-48 shrink-0 flex-col overflow-y-auto border-b pb-2 sm:max-h-none sm:w-64 sm:border-r sm:border-b-0 sm:pr-3 sm:pb-0">
             {items.map((item) => (
               <Button
                 key={item.id}
@@ -167,15 +114,64 @@ export function DictionaryPane({
               </Button>
             ))}
           </div>
-        ) : (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            {searching
-              ? t("translation.searching", { defaultValue: "正在查词…" })
-              : query.trim()
-                ? t("translation.noEntry", { defaultValue: "没有匹配的词条" })
-                : t("translation.localEmpty", { defaultValue: "输入单词开始查词" })}
-          </p>
         )}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          {entry ? (
+            <article className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h3 className="text-lg font-medium">{entry.entry.word}</h3>
+                {entry.entry.phonetic && (
+                  <span className="text-sm text-muted-foreground">/{entry.entry.phonetic}/</span>
+                )}
+                <Badge variant="secondary">
+                  {t("translation.offline", { defaultValue: "离线" })}
+                </Badge>
+              </div>
+              <p className="text-sm whitespace-pre-wrap">{entry.entry.translation}</p>
+              {entry.entry.definition && (
+                <p className="text-sm whitespace-pre-wrap text-muted-foreground">
+                  {entry.entry.definition}
+                </p>
+              )}
+              {entry.entry.exchange && (
+                <p className="text-xs break-words text-muted-foreground">
+                  {t("translation.inflections", { defaultValue: "词形变化" })}：
+                  {entry.entry.exchange}
+                </p>
+              )}
+              {entry.entry.tags && (
+                <p className="text-xs text-muted-foreground">{entry.entry.tags}</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={exporting}
+                  onClick={() => onCopyEntry(text)}
+                >
+                  {t("markdown.copy", { defaultValue: "复制" })}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={exporting || !notesAvailable}
+                  title={!notesAvailable ? unavailableTargetReason : undefined}
+                  onClick={() => onSaveEntry(text)}
+                >
+                  {t("ocr.saveNote", { defaultValue: "保存便签" })}
+                </Button>
+              </div>
+            </article>
+          ) : !items.length ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {searching
+                ? t("translation.searching", { defaultValue: "正在查词…" })
+                : query.trim()
+                  ? t("translation.noEntry", { defaultValue: "没有匹配的词条" })
+                  : t("translation.localEmpty", { defaultValue: "输入单词开始查词" })}
+            </p>
+          ) : null}
+        </div>
       </div>
     </aside>
   );

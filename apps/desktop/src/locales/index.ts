@@ -4,6 +4,25 @@ import { DEFAULT_LOCALE, resolveAppLocale, SUPPORTED_LOCALES } from "./locale-wh
 import { resources } from "./resources";
 
 let initPromise: Promise<typeof i18n> | null = null;
+let currentResources = resources;
+
+if (import.meta.hot) {
+  import.meta.hot.accept("./resources", async (updated) => {
+    if (!updated || !("resources" in updated)) return;
+    currentResources = updated.resources as typeof resources;
+    if (initPromise) await initPromise;
+    if (!i18n.isInitialized) return;
+    for (const [locale, namespaces] of Object.entries(currentResources)) {
+      for (const [namespace, bundle] of Object.entries(namespaces)) {
+        i18n.removeResourceBundle(locale, namespace);
+        i18n.addResourceBundle(locale, namespace, bundle);
+      }
+    }
+    // React's translation hooks subscribe to language changes. Reapply the
+    // current language after replacing bundles, keeping mounted editors intact.
+    await i18n.changeLanguage(i18n.resolvedLanguage ?? i18n.language);
+  });
+}
 
 function browserLocale(): string | undefined {
   if (typeof navigator === "undefined") {
@@ -18,7 +37,7 @@ export function initializeI18n(preferredLocale?: string | null) {
     initPromise = i18n
       .use(initReactI18next)
       .init({
-        resources,
+        resources: currentResources,
         lng: resolveAppLocale(preferredLocale, browserLocale()),
         fallbackLng: DEFAULT_LOCALE,
         supportedLngs: [...SUPPORTED_LOCALES],

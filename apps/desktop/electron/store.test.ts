@@ -91,6 +91,32 @@ describe("Electron persistence boundary", () => {
     expect(reopened.get(id).category).toBe("");
     expect(reopened.list().filter((note) => note.id === id)).toHaveLength(1);
   });
+  // Version restore must retain the newer body and every image still referenced
+  // by an older version. Optimistic restoration must reject intervening saves.
+  test("restores versions without losing current text or historical attachments", () => {
+    const { root, store } = fixture();
+    const first = store.save({ title: "原稿", content: "原文", category: "" });
+    const image = store.saveImage(first.id, Buffer.from("owned image"), "png");
+    store.save({ ...first, content: "![图片](" + image + ")" }, first.id);
+    store.save({ ...first, content: "新稿" }, first.id);
+    const history = store.history(first.id),
+      version = history.entries[0];
+    expect(store.cleanImages(first.id, "新稿")).toEqual([]);
+    const restored = store.restoreRevision(first.id, version.versionId, history.currentRevision);
+    expect(restored.content).toContain(image);
+    expect(store.revision(first.id, store.history(first.id).entries[0].versionId).content).toBe(
+      "新稿",
+    );
+    expect(() =>
+      store.restoreRevision(first.id, version.versionId, history.currentRevision),
+    ).toThrow("便签已被修改");
+    expect(store.get(first.id).content).toContain(image);
+    store.migrate(path.join(root, "moved"));
+    expect(store.revision(first.id, store.history(first.id).entries[0].versionId).content).toBe(
+      "新稿",
+    );
+  });
+
   test("backs up corrupt metadata and rebuilds from real Markdown without overwriting content", () => {
     const { store } = fixture();
     atomicWrite(path.join(store.dataDir, "notes", "legacy_标题.md"), "# 保留正文\n中文");

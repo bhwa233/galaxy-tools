@@ -1,6 +1,7 @@
 export type ViewMode = "edit" | "split";
 
 export type ThemeOption = "light" | "dark" | "system";
+export type { ThemeAccent } from "@spark233/sdk";
 
 export type TileColorMode = "system" | "custom";
 export type BackgroundFit = "cover" | "contain" | "repeat";
@@ -21,6 +22,7 @@ export interface AppConfig {
   tileColor: string;
   tileColorMode: TileColorMode;
   theme: ThemeOption;
+  accentColor?: import("@spark233/sdk").ThemeAccent;
   fontSize: number;
   surfaceFontSize: number;
   tabIndentSize: number;
@@ -64,6 +66,7 @@ export type SettingsPage =
   | "tray"
   | "entries"
   | "plugins"
+  | "marketplace"
   | "backup"
   | "diagnostics";
 export interface SettingsTarget {

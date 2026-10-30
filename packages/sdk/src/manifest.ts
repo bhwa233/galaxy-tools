@@ -1,7 +1,7 @@
 /* eslint-disable no-control-regex -- Package paths must reject control characters. */
 import { z } from "zod";
 
-export const HOST_API_VERSION = "1.2.0";
+export const HOST_API_VERSION = "1.3.0";
 export const THEME_API_VERSION = "1.0.0";
 
 // Reuse Zod already present in the toolchain for one shared runtime/type schema;
@@ -70,10 +70,69 @@ const translatedCommand = z.strictObject({
   title: label,
   description: z.string().max(500).optional(),
 });
+const rasterIconSchema = z.strictObject({
+  png: packagePath.refine((value) => /\.png$/i.test(value)),
+  ico: packagePath.refine((value) => /\.ico$/i.test(value)).optional(),
+});
+export const pluginIconSchema = rasterIconSchema.extend({
+  monochrome: z.boolean().optional(),
+  themes: z
+    .partialRecord(
+      z.enum(["green", "blue", "purple", "orange", "rose"]),
+      z.strictObject({ light: rasterIconSchema, dark: rasterIconSchema }),
+    )
+    .optional(),
+});
+const windowSizeSchema = z.strictObject({
+  width: z.number().int().min(160).max(8192),
+  height: z.number().int().min(60).max(8192),
+});
+export const pluginWindowSchema = z.strictObject({
+  entry: packagePath.refine((value) => /\.html$/i.test(value)),
+  title: label.optional(),
+  translations: z
+    .strictObject({
+      "zh-CN": z.strictObject({ title: label }).optional(),
+      "en-US": z.strictObject({ title: label }).optional(),
+    })
+    .optional(),
+  icon: pluginIconSchema.optional(),
+  size: windowSizeSchema.optional(),
+  minSize: windowSizeSchema.optional(),
+  resizable: z.boolean().optional(),
+  maximizable: z.boolean().optional(),
+  taskbar: z.boolean().optional(),
+  reuse: z.enum(["singleton", "document"]).optional(),
+  presentation: z.enum(["standard", "compact"]).optional(),
+  legacyLabels: z.array(localId).max(8).optional(),
+});
+export type PluginWindow = z.infer<typeof pluginWindowSchema>;
+export type PluginIcon = z.infer<typeof pluginIconSchema>;
+export const launcherPresentationSchema = z.strictObject({
+  role: z.enum(["entry", "action", "keyword-only", "hidden"]),
+  /** Hidden commands can still be offered for a matching explicit input. */
+  withInput: z.boolean().optional(),
+  input: z.enum(["query", "context"]).optional(),
+  preferSentence: z.boolean().optional(),
+});
 const commandSchema = z.strictObject({
   id: localId,
   internal: z.boolean().default(false),
   title: label,
+  launcher: launcherPresentationSchema.optional(),
+  window: localId.optional(),
+  progress: z
+    .strictObject({
+      title: label,
+      cancelCommand: localId,
+      translations: z
+        .strictObject({
+          "zh-CN": z.strictObject({ title: label }).optional(),
+          "en-US": z.strictObject({ title: label }).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   description: z.string().max(500).optional(),
   keywords: z.array(z.string().min(1).max(80)).max(32).default([]),
   aliases: z.array(z.string().min(1).max(80)).max(32).default([]),
@@ -169,7 +228,13 @@ export const pluginManifestSchema = z
     dependencies: z.record(localId, range).default({}),
     optionalDependencies: z.record(localId, range).default({}),
     dataVersion: z.number().int().nonnegative().safe().default(0),
-    ui: z.strictObject({ theme: range }).optional(),
+    ui: z
+      .strictObject({
+        theme: range,
+        icon: pluginIconSchema.optional(),
+        windows: z.record(localId, pluginWindowSchema).optional(),
+      })
+      .optional(),
   })
   .superRefine((manifest, context) => {
     const issue = (message: string) => context.addIssue({ code: "custom", message });
@@ -197,6 +262,17 @@ export const pluginManifestSchema = z
         issue("Tray item must reference this plugin's public command: " + item.commandId);
     }
     for (const command of manifest.commands) {
+      if (command.window && !Object.hasOwn(manifest.ui?.windows ?? {}, command.window))
+        issue(`Unknown command window: ${command.window}`);
+      if (
+        command.progress &&
+        !manifest.commands.some(
+          (value) => value.id === command.progress!.cancelCommand && !value.internal,
+        )
+      )
+        issue(`Unknown progress cancellation command: ${command.progress.cancelCommand}`);
+      if (command.internal && command.launcher && command.launcher.role !== "hidden")
+        issue(`Internal command cannot be a launcher entry: ${command.id}`);
       if (command.mode && !manifest.modes.some((mode) => mode.id === command.mode))
         issue(`Unknown command mode: ${command.mode}`);
       for (const dependency of command.requiresPlugins ?? [])
@@ -205,6 +281,16 @@ export const pluginManifestSchema = z
           !Object.hasOwn(manifest.optionalDependencies, dependency)
         )
           issue(`Command dependency must be declared by the plugin: ${dependency}`);
+    }
+    if (manifest.commands.filter((command) => command.launcher?.role === "entry").length > 1)
+      issue("A plugin can declare at most one launcher entry");
+    for (const window of Object.values(manifest.ui?.windows ?? {})) {
+      if (
+        window.size &&
+        window.minSize &&
+        (window.size.width < window.minSize.width || window.size.height < window.minSize.height)
+      )
+        issue("Window size cannot be smaller than its minimum size");
     }
     if (
       Object.hasOwn(manifest.dependencies, manifest.id) ||
@@ -250,9 +336,32 @@ export function localizePluginManifest(manifest: PluginManifest, locale: string)
   return {
     ...manifest,
     ...manifest.translations?.[language],
+    ...(manifest.ui
+      ? {
+          ui: {
+            ...manifest.ui,
+            ...(manifest.ui.windows
+              ? {
+                  windows: Object.fromEntries(
+                    Object.entries(manifest.ui.windows).map(([id, window]) => [
+                      id,
+                      {
+                        ...window,
+                        ...window.translations?.[language],
+                      },
+                    ]),
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
     commands: manifest.commands.map((command) => ({
       ...command,
       ...command.translations?.[language],
+      ...(command.progress
+        ? { progress: { ...command.progress, ...command.progress.translations?.[language] } }
+        : {}),
     })),
     modes: manifest.modes.map((mode) => ({ ...mode, ...mode.translations?.[language] })),
     ...(manifest.tray

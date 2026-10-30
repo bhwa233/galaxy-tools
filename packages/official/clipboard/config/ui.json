@@ -1,0 +1,27 @@
+{
+  "filters": [
+    {
+      "label": "全部"
+    },
+    {
+      "id": "text",
+      "label": "文字"
+    },
+    {
+      "id": "html",
+      "label": "HTML"
+    },
+    {
+      "id": "rtf",
+      "label": "RTF"
+    },
+    {
+      "id": "image",
+      "label": "图片"
+    },
+    {
+      "id": "files",
+      "label": "文件"
+    }
+  ]
+}

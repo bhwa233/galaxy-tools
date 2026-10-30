@@ -2,7 +2,7 @@
 /* oxlint-disable */
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 // node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
 	const numericValues = Object.values(entries).filter((v) => typeof v === "number");
@@ -999,7 +999,7 @@ var guid = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-
 /** Returns a regex for validating an RFC 9562/4122 UUID.
 *
 * @param version Optionally specify a version 1-8. If no version is specified, all versions are supported. */
-var uuid = (version) => {
+var uuid$1 = (version) => {
 	if (!version) return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
 	return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
 };
@@ -1535,8 +1535,8 @@ var $ZodUUID = /*@__PURE__*/ $constructor("$ZodUUID", (inst, def) => {
 			v8: 8
 		}[def.version];
 		if (v === void 0) throw new Error(`Invalid UUID version: "${def.version}"`);
-		def.pattern ?? (def.pattern = uuid(v));
-	} else def.pattern ?? (def.pattern = uuid());
+		def.pattern ?? (def.pattern = uuid$1(v));
+	} else def.pattern ?? (def.pattern = uuid$1());
 	$ZodStringFormat.init(inst, def);
 });
 var $ZodEmail = /*@__PURE__*/ $constructor("$ZodEmail", (inst, def) => {
@@ -5042,6 +5042,9 @@ var ZodUUID = /*@__PURE__*/ $constructor("ZodUUID", (inst, def) => {
 	$ZodUUID.init(inst, def);
 	ZodStringFormat.init(inst, def);
 });
+function uuid(params) {
+	return /* @__PURE__ */ _uuid(ZodUUID, params);
+}
 var ZodURL = /*@__PURE__*/ $constructor("ZodURL", (inst, def) => {
 	$ZodURL.init(inst, def);
 	ZodStringFormat.init(inst, def);
@@ -5679,6 +5682,13 @@ var configPatchSchema = strictObject({
 		"light",
 		"dark"
 	]).optional(),
+	accentColor: _enum([
+		"green",
+		"blue",
+		"purple",
+		"orange",
+		"rose"
+	]).optional(),
 	fontSize: number().min(8).max(30).optional(),
 	surfaceFontSize: number().min(8).max(30).optional(),
 	tabIndentSize: number().int().min(1).max(8).optional(),
@@ -5882,6 +5892,7 @@ function defaultConfig(dataDir) {
 		tileColor: "#f6f3ec",
 		tileColorMode: "system",
 		theme: "system",
+		accentColor: "green",
 		fontSize: 14,
 		surfaceFontSize: 14,
 		tabIndentSize: 2,
@@ -6097,10 +6108,86 @@ var NoteStore = class {
 			content: fs.readFileSync(this.notePath(meta), "utf8")
 		};
 	}
+	revisionRoot(id) {
+		return confined(this.dataDir, ".history", component(id));
+	}
+	revisionIndex(id) {
+		const file = confined(this.revisionRoot(id), "index.json");
+		return fs.existsSync(file) ? array(object({
+			versionId: uuid(),
+			savedAt: string(),
+			title: string(),
+			bytes: number().nonnegative()
+		})).max(1e4).parse(readJson(file)) : [];
+	}
+	fingerprint(note) {
+		return createHash("sha256").update(JSON.stringify([
+			note.title,
+			note.content,
+			note.category,
+			note.editorMode
+		])).digest("hex");
+	}
+	history(id) {
+		const current = this.get(id);
+		return {
+			entries: this.revisionIndex(id),
+			currentRevision: this.fingerprint(current)
+		};
+	}
+	revision(id, versionId) {
+		this.get(id);
+		if (!this.revisionIndex(id).some((entry) => entry.versionId === versionId)) throw new AppError("noteNotFound", "找不到此历史版本");
+		return request(object({
+			title: string(),
+			content: string(),
+			category: string(),
+			editorMode: _enum(["text", "markdown"]).optional()
+		}).parse(readJson(confined(this.revisionRoot(id), uuid().parse(versionId) + ".json"))));
+	}
+	restoreRevision(id, versionId, expectedRevision) {
+		const current = this.get(id);
+		if (this.fingerprint(current) !== expectedRevision) throw new AppError("noteChanged", "便签已被修改，请重新查看后恢复");
+		return this.save({
+			...this.revision(id, versionId),
+			category: current.category
+		}, id);
+	}
+	rememberRevision(note) {
+		const entries = this.revisionIndex(note.id), versionId = randomUUID();
+		const { title, content, category, editorMode } = note;
+		const serialized = JSON.stringify({
+			title,
+			content,
+			category,
+			editorMode
+		});
+		atomicWrite(confined(this.revisionRoot(note.id), versionId + ".json"), serialized);
+		atomicWrite(confined(this.revisionRoot(note.id), "index.json"), JSON.stringify([{
+			versionId,
+			savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+			title,
+			bytes: Buffer.byteLength(serialized)
+		}, ...entries]));
+	}
+	trimRevisions(id) {
+		const entries = this.revisionIndex(id);
+		let bytes = 0;
+		const kept = entries.filter((entry, index) => {
+			bytes += entry.bytes;
+			return index === 0 || index < 30 && bytes <= 67108864;
+		});
+		atomicWrite(confined(this.revisionRoot(id), "index.json"), JSON.stringify(kept));
+		for (const entry of entries) if (!kept.some((item) => item.versionId === entry.versionId)) fs.rmSync(confined(this.revisionRoot(id), entry.versionId + ".json"), { force: true });
+	}
 	save(value, id) {
 		const req = request(value), notes = this.metadata(), old = id ? notes.find((note) => note.id === id) : void 0;
 		if (id && !old) throw new AppError("noteNotFound", "找不到便签", { noteId: id });
 		id ??= randomUUID();
+		if (old) {
+			const previous = this.get(id);
+			if (previous.content !== req.content || previous.title !== req.title || req.editorMode && previous.editorMode !== req.editorMode) this.rememberRevision(previous);
+		}
 		const now = (/* @__PURE__ */ new Date()).toISOString();
 		const meta = {
 			id,
@@ -6130,6 +6217,11 @@ var NoteStore = class {
 		if (old) {
 			const source = this.notePath(old);
 			if (source.toLowerCase() !== target.toLowerCase() && fs.existsSync(source)) fs.unlinkSync(source);
+		}
+		if (old) try {
+			this.trimRevisions(id);
+		} catch (error) {
+			console.error("note-history-retention", error);
 		}
 		const { preview: _, ...rest } = meta;
 		return {
@@ -6245,7 +6337,7 @@ var NoteStore = class {
 		const dir = confined(this.dataDir, "images", component(noteId));
 		if (!fs.existsSync(dir)) return [];
 		const removed = [];
-		for (const file of fs.readdirSync(dir)) if (!content.includes(`images/${noteId}/${file}`)) {
+		for (const file of fs.readdirSync(dir)) if (!content.includes(`images/${noteId}/${file}`) && !this.revisionIndex(noteId).some((entry) => this.revision(noteId, entry.versionId).content.includes(`images/${noteId}/${file}`))) {
 			fs.unlinkSync(confined(dir, file));
 			removed.push(file);
 		}
@@ -6263,6 +6355,7 @@ var NoteStore = class {
 		fs.mkdirSync(dest, { recursive: true });
 		for (const item of [
 			"notes",
+			".history",
 			"images",
 			"backgrounds",
 			"metadata.json",
@@ -6496,6 +6589,16 @@ var schemas = {
 	initialize: object({ locale: string().max(20).optional() }),
 	"note.list": object({ category: string().optional() }),
 	"note.get": object({ id }),
+	"note.history": object({ id }),
+	"note.revision": object({
+		id,
+		versionId: uuid()
+	}),
+	"note.restore": object({
+		id,
+		versionId: uuid(),
+		expectedRevision: string().length(64)
+	}),
 	"note.save": object({
 		request: save,
 		id: id.optional()
@@ -6642,6 +6745,9 @@ function notesBackend(lifetime) {
 				locale = request.locale ?? locale;
 				return { version: 1 };
 			case "note.list": return store.list().filter((note) => request.category === void 0 || note.category === request.category);
+			case "note.history": return store.history(request.id);
+			case "note.revision": return store.revision(request.id, request.versionId);
+			case "note.restore": return store.restoreRevision(request.id, request.versionId, request.expectedRevision);
 			case "note.get": return store.get(request.id);
 			case "note.save": return store.save(request.request, request.id);
 			case "note.append": {
@@ -6788,6 +6894,7 @@ function notesBackend(lifetime) {
 				"note.save",
 				"note.append",
 				"note.delete",
+				"note.restore",
 				"note.setEditorMode",
 				"note.move",
 				"note.createFromImage",

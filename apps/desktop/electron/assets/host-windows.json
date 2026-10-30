@@ -1,0 +1,190 @@
+{
+  "settings": {
+    "title": {
+      "zh-CN": "设置",
+      "en-US": "Settings"
+    },
+    "icon": {
+      "png": "settings/icon.png",
+      "ico": "settings/icon.ico",
+      "monochrome": true,
+      "themes": {
+        "green": {
+          "light": {
+            "png": "settings/theme-icons/green-light/icon.png",
+            "ico": "settings/theme-icons/green-light/icon.ico"
+          },
+          "dark": {
+            "png": "settings/theme-icons/green-dark/icon.png",
+            "ico": "settings/theme-icons/green-dark/icon.ico"
+          }
+        },
+        "blue": {
+          "light": {
+            "png": "settings/theme-icons/blue-light/icon.png",
+            "ico": "settings/theme-icons/blue-light/icon.ico"
+          },
+          "dark": {
+            "png": "settings/theme-icons/blue-dark/icon.png",
+            "ico": "settings/theme-icons/blue-dark/icon.ico"
+          }
+        },
+        "purple": {
+          "light": {
+            "png": "settings/theme-icons/purple-light/icon.png",
+            "ico": "settings/theme-icons/purple-light/icon.ico"
+          },
+          "dark": {
+            "png": "settings/theme-icons/purple-dark/icon.png",
+            "ico": "settings/theme-icons/purple-dark/icon.ico"
+          }
+        },
+        "orange": {
+          "light": {
+            "png": "settings/theme-icons/orange-light/icon.png",
+            "ico": "settings/theme-icons/orange-light/icon.ico"
+          },
+          "dark": {
+            "png": "settings/theme-icons/orange-dark/icon.png",
+            "ico": "settings/theme-icons/orange-dark/icon.ico"
+          }
+        },
+        "rose": {
+          "light": {
+            "png": "settings/theme-icons/rose-light/icon.png",
+            "ico": "settings/theme-icons/rose-light/icon.ico"
+          },
+          "dark": {
+            "png": "settings/theme-icons/rose-dark/icon.png",
+            "ico": "settings/theme-icons/rose-dark/icon.ico"
+          }
+        }
+      }
+    }
+  },
+  "launcher": {
+    "title": {
+      "zh-CN": "spark233",
+      "en-US": "spark233"
+    },
+    "icon": {
+      "png": "icon.png",
+      "ico": "icon.ico",
+      "monochrome": true,
+      "themes": {
+        "green": {
+          "light": {
+            "png": "theme-icons/green-light/icon.png",
+            "ico": "theme-icons/green-light/icon.ico"
+          },
+          "dark": {
+            "png": "theme-icons/green-dark/icon.png",
+            "ico": "theme-icons/green-dark/icon.ico"
+          }
+        },
+        "blue": {
+          "light": {
+            "png": "theme-icons/blue-light/icon.png",
+            "ico": "theme-icons/blue-light/icon.ico"
+          },
+          "dark": {
+            "png": "theme-icons/blue-dark/icon.png",
+            "ico": "theme-icons/blue-dark/icon.ico"
+          }
+        },
+        "purple": {
+          "light": {
+            "png": "theme-icons/purple-light/icon.png",
+            "ico": "theme-icons/purple-light/icon.ico"
+          },
+          "dark": {
+            "png": "theme-icons/purple-dark/icon.png",
+            "ico": "theme-icons/purple-dark/icon.ico"
+          }
+        },
+        "orange": {
+          "light": {
+            "png": "theme-icons/orange-light/icon.png",
+            "ico": "theme-icons/orange-light/icon.ico"
+          },
+          "dark": {
+            "png": "theme-icons/orange-dark/icon.png",
+            "ico": "theme-icons/orange-dark/icon.ico"
+          }
+        },
+        "rose": {
+          "light": {
+            "png": "theme-icons/rose-light/icon.png",
+            "ico": "theme-icons/rose-light/icon.ico"
+          },
+          "dark": {
+            "png": "theme-icons/rose-dark/icon.png",
+            "ico": "theme-icons/rose-dark/icon.ico"
+          }
+        }
+      }
+    }
+  },
+  "tray": {
+    "title": {
+      "zh-CN": "spark233",
+      "en-US": "spark233"
+    },
+    "icon": {
+      "png": "tray-light.png",
+      "monochrome": true,
+      "themes": {
+        "green": {
+          "light": {
+            "png": "theme-icons/green-light/tray-light.png",
+            "ico": "theme-icons/green-light/tray-light.ico"
+          },
+          "dark": {
+            "png": "theme-icons/green-dark/tray-light.png",
+            "ico": "theme-icons/green-dark/tray-light.ico"
+          }
+        },
+        "blue": {
+          "light": {
+            "png": "theme-icons/blue-light/tray-light.png",
+            "ico": "theme-icons/blue-light/tray-light.ico"
+          },
+          "dark": {
+            "png": "theme-icons/blue-dark/tray-light.png",
+            "ico": "theme-icons/blue-dark/tray-light.ico"
+          }
+        },
+        "purple": {
+          "light": {
+            "png": "theme-icons/purple-light/tray-light.png",
+            "ico": "theme-icons/purple-light/tray-light.ico"
+          },
+          "dark": {
+            "png": "theme-icons/purple-dark/tray-light.png",
+            "ico": "theme-icons/purple-dark/tray-light.ico"
+          }
+        },
+        "orange": {
+          "light": {
+            "png": "theme-icons/orange-light/tray-light.png",
+            "ico": "theme-icons/orange-light/tray-light.ico"
+          },
+          "dark": {
+            "png": "theme-icons/orange-dark/tray-light.png",
+            "ico": "theme-icons/orange-dark/tray-light.ico"
+          }
+        },
+        "rose": {
+          "light": {
+            "png": "theme-icons/rose-light/tray-light.png",
+            "ico": "theme-icons/rose-light/tray-light.ico"
+          },
+          "dark": {
+            "png": "theme-icons/rose-dark/tray-light.png",
+            "ico": "theme-icons/rose-dark/tray-light.ico"
+          }
+        }
+      }
+    }
+  }
+}

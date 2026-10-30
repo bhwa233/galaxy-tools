@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { memo } from "react";
 import { POPUP_VIEWPORT_MARGIN } from "../../components/popupPosition";
 import type { NoteSession } from "./useNoteSession";
@@ -34,7 +35,7 @@ export const CategoryMenu = memo(function CategoryMenu({
     categoryMenu && (
       <div
         ref={categoryMenuRef}
-        className={`popup-menu fixed z-[9999] min-w-[140px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-x-hidden overflow-y-auto select-none ${categoryMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
+        className={`popup-menu fixed z-[9999] min-w-[140px] p-1 bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 rounded-lg overflow-x-hidden overflow-y-auto select-none ${categoryMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
         data-hover-suppressed={categoryMenuHoverSuppressed ? "" : undefined}
         style={{
           left: categoryMenuPosition?.x ?? categoryMenu.x,
@@ -46,49 +47,57 @@ export const CategoryMenu = memo(function CategoryMenu({
       >
         {categoryMenuConfirmDelete ? (
           <div key="category-confirm" className="animate-menu-slide-left">
-            <div className="px-3 py-1.5 text-[11px] font-body text-ink-faint border-b border-paper-deep/20">
+            <div className="px-3 py-1.5 text-xs font-body text-muted-foreground border-b border-border">
               {t("main.category.confirmDelete", {
                 category: categoryMenu.category,
                 defaultValue: "确认删除「{{category}}」？",
               })}
             </div>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 void handleDeleteCategory(categoryMenu.category);
                 setCategoryMenuClosing(true);
               }}
-              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-red-400 hover:bg-danger-bg hover:text-red-500 transition-colors cursor-pointer outline-none"
+              className="w-full justify-start text-left px-2 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer outline-none"
             >
               {t("main.category.confirmDeleteAction", { defaultValue: "确认删除" })}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => switchCategoryMenuPanel(false)}
-              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer outline-none"
+              className="w-full justify-start text-left px-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer outline-none"
             >
               {t("common.cancel", { defaultValue: "取消" })}
-            </button>
+            </Button>
           </div>
         ) : (
           <div key="category-main" className="animate-menu-slide-right">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setCategoryMenuClosing(true);
                 setRenamingCategory(categoryMenu.category);
                 setRenameCategoryValue(categoryMenu.category);
               }}
-              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
+              className="w-full justify-start text-left px-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
             >
               {t("main.category.rename", { defaultValue: "重命名" })}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => switchCategoryMenuPanel(true)}
-              className="w-full text-left px-3 py-1.5 text-[12px] font-body text-red-400 hover:bg-danger-bg hover:text-red-500 transition-colors cursor-pointer border-t border-paper-deep/20 outline-none"
+              className="w-full justify-start text-left px-2 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer border-t border-border outline-none"
             >
               {t("main.category.delete", { defaultValue: "删除分类" })}
-            </button>
+            </Button>
           </div>
         )}
       </div>

@@ -60,6 +60,49 @@ function buildPlugins() {
     env: { ...process.env, ...devEnvironment, SPARK233_DEV_PLUGIN_BUILD: String(Date.now()) },
   });
 }
+function buildCapturePlugins() {
+  const toolchains = path.join(process.env.LOCALAPPDATA, "spark233", "toolchains");
+  const powershell = readdirSync(toolchains)
+    .filter((name) => /^powershell-7\./.test(name))
+    .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))[0];
+  if (!powershell) throw new Error("PowerShell 7 is required for native capture builds");
+  const buildRoot = path.join(projectRoot, "local-build/spark233/native-capture-p4");
+  execFileSync(
+    path.join(toolchains, powershell, "pwsh.exe"),
+    [
+      "-NoProfile",
+      "-File",
+      path.join(projectRoot, "scripts/native-capture/build.ps1"),
+      "-OutputRoot",
+      buildRoot,
+      "-WithOcr",
+    ],
+    { cwd: projectRoot, stdio: "inherit", windowsHide: true },
+  );
+  execFileSync(
+    path.join(toolchains, powershell, "pwsh.exe"),
+    [
+      "-NoProfile",
+      "-File",
+      path.join(projectRoot, "scripts/native-capture/prepare-vc-runtime.ps1"),
+    ],
+    { cwd: projectRoot, stdio: "inherit", windowsHide: true },
+  );
+  for (const plugin of ["screenshot", "ocr"])
+    execFileSync(
+      process.execPath,
+      [
+        path.join(projectRoot, `packages/official/${plugin}/build.mjs`),
+        "--native-build-dir",
+        path.join(buildRoot, "build"),
+      ],
+      {
+        cwd: projectRoot,
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+}
 const compiler = run(nativeCompiler ? compilerBin : process.execPath, [
   ...(nativeCompiler ? [] : [compilerBin]),
   "-p",
@@ -72,6 +115,7 @@ compiler.on("exit", async (code) => {
   try {
     // Installed notes carry their renderer; development uses the same seven
     // bundled package preparation as the production install path.
+    buildCapturePlugins();
     execFileSync(process.execPath, [viteBin, "build"], {
       stdio: "inherit",
       windowsHide: true,
@@ -149,47 +193,7 @@ compiler.on("exit", async (code) => {
     try {
       console.log("Rebuilding local plugins for development...");
       if (captureDirty) {
-        const toolchains = path.join(process.env.LOCALAPPDATA, "spark233", "toolchains");
-        const powershell = readdirSync(toolchains)
-          .filter((name) => /^powershell-7\./.test(name))
-          .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))[0];
-        if (!powershell) throw new Error("PowerShell 7 is required for native capture builds");
-        const buildRoot = path.join(projectRoot, "local-build/spark233/native-capture-p4");
-        execFileSync(
-          path.join(toolchains, powershell, "pwsh.exe"),
-          [
-            "-NoProfile",
-            "-File",
-            path.join(projectRoot, "scripts/native-capture/build.ps1"),
-            "-OutputRoot",
-            buildRoot,
-            "-OpenCVDirectory",
-            path.join(
-              projectRoot,
-              "local-build/spark233/native-capture/deps/opencv/x64/vc18/staticlib",
-            ),
-            "-OnnxRuntimeRoot",
-            path.join(
-              projectRoot,
-              "local-build/spark233/native-capture/deps/onnxruntime-win-x64-1.23.2",
-            ),
-          ],
-          { cwd: projectRoot, stdio: "inherit", windowsHide: true },
-        );
-        for (const plugin of ["screenshot", "ocr"])
-          execFileSync(
-            process.execPath,
-            [
-              path.join(projectRoot, `packages/official/${plugin}/build.mjs`),
-              "--native-build-dir",
-              path.join(buildRoot, "build"),
-            ],
-            {
-              cwd: projectRoot,
-              stdio: "inherit",
-              windowsHide: true,
-            },
-          );
+        buildCapturePlugins();
         captureDirty = false;
       }
       execFileSync(compilerCommand, [...compilerPrefix, "-p", "packages/sdk/tsconfig.json"], {
@@ -223,6 +227,7 @@ compiler.on("exit", async (code) => {
     "apps/desktop/electron",
     "native/applications",
     "native/capture",
+    "scripts/native-capture",
     "scripts/native-clipboard",
     "scripts/native-search",
     "scripts/native-applications",
@@ -238,7 +243,8 @@ compiler.on("exit", async (code) => {
         /\.test\.[cm]?[jt]sx?$/.test(file)
       )
         return;
-      if (relative === "native/capture") captureDirty = true;
+      if (relative === "native/capture" || relative === "scripts/native-capture")
+        captureDirty = true;
       schedule();
     });
     watcher.on("error", (error) => console.error("Development watcher failed", error));

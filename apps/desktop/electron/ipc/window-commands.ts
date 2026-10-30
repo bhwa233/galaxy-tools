@@ -85,6 +85,7 @@ export function createWindowCommands(
               ctx.isHostView(layout) &&
               layout.hostPage !== "settings" &&
               !layout.workspace &&
+              !layout.pluginId &&
               !layout.compact &&
               !ctx.hostConfig.value.closeToTray
             )
@@ -96,6 +97,7 @@ export function createWindowCommands(
             win.minimize();
             return;
           case "toggleMaximize":
+            if (!win.isMaximizable()) return;
             if (win.isMaximized()) win.unmaximize();
             else win.maximize();
             return;

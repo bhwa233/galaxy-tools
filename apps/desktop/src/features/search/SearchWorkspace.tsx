@@ -1,3 +1,12 @@
+import type { SearchConditions, SearchHistory, SavedSearch } from "../../../shared/search-history";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { showToast } from "../../components/Toast";
 import {
   ChevronDown,
   ChevronUp,
@@ -14,7 +23,6 @@ import {
   Presentation,
   Search,
   Settings,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
@@ -59,6 +67,8 @@ import type {
   SearchWorkspaceRow,
 } from "../../../shared/desktop-contract.js";
 import { invoke, writeText } from "../../platform/desktop";
+import { WorkspaceTitleBar } from "../windows/WorkspaceTitleBar";
+import uiConfiguration from "../../../../../packages/official/search/config/ui.json";
 import {
   categories,
   emptyPage,
@@ -75,7 +85,7 @@ import {
   type TypeLabelKey,
 } from "./workspace";
 
-const pageSize = 60;
+const pageSize = uiConfiguration.defaults.pageSize;
 const preferencePrefix = "search.workspace.";
 
 const typeIcons: Record<TypeLabelKey, LucideIcon> = {
@@ -117,34 +127,60 @@ function messageOf(value: unknown): string {
 
 export interface SearchWorkspaceProps {
   initialQuery?: string;
+  initialMode?: SearchMode;
   onClose: () => void;
 }
 
 /** Explorer-style result table. The window asks the plugin for its own pages so
  * the launcher session is never consumed by the workspace. */
-export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps) {
+export function SearchWorkspace({ initialQuery, initialMode, onClose }: SearchWorkspaceProps) {
   const { t, i18n } = useTranslation("search");
+  const { t: notificationText } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "zh-CN";
-  const [mode, setMode] = useState<SearchMode>(() =>
-    readPreference("mode", ["files", "content"] as const, "files"),
+  const [mode, setMode] = useState<SearchMode>(
+    () =>
+      initialMode ??
+      (initialQuery?.trim()
+        ? "files"
+        : readPreference(
+            "mode",
+            ["files", "content"] as const,
+            uiConfiguration.defaults.mode as SearchMode,
+          )),
   );
   const [category, setCategory] = useState<CategoryId>(() =>
     readPreference(
       "category",
       categories.map((entry) => entry.id),
-      "all",
+      uiConfiguration.defaults.category as CategoryId,
     ),
   );
   const [sortId, setSortId] = useState<string>(() =>
     readPreference(
       "sort",
       sortOptions.map((entry) => entry.id),
-      "relevance",
+      uiConfiguration.defaults.sort,
     ),
   );
   const sort = sortOptions.find((option) => option.id === sortId) ?? sortOptions[0]!;
   const [draft, setDraft] = useState(initialQuery ?? "");
   const [query, setQuery] = useState(() => (initialQuery ?? "").trim());
+  const [directory, setDirectory] = useState("");
+  const [history, setHistory] = useState<SearchHistory>({ recent: [], saved: [] });
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyGeneration = useRef(0);
+  useEffect(() => {
+    let active = true;
+    const request = ++historyGeneration.current;
+    void invoke("search_workspace", { action: "get" })
+      .then((value) => {
+        if (active && request === historyGeneration.current) setHistory(value);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
   const [rows, setRows] = useState<SearchWorkspaceRow[]>([]);
   const [page, setPage] = useState<SearchWorkspacePage>(emptyPage);
   const [status, setStatus] = useState<{ state: string; message?: string }>({ state: "ok" });
@@ -179,6 +215,7 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
       const value = await invoke("search_action", {
         action: "query",
         query,
+        ...(directory ? { directory } : {}),
         mode,
         category,
         ...(mode === "files" && sort.field ? { sort: sort.field, sortDesc: sort.desc } : {}),
@@ -186,12 +223,24 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
       });
       if (mine !== generation.current) return;
       applyResponse(value, true);
+      if (value?.searchStatus?.state === "ok" || !value?.searchStatus) {
+        const conditions = { query, mode, category, directory, sortId } as SearchConditions;
+        const request = ++historyGeneration.current;
+        void invoke("search_workspace", { action: "remember", conditions })
+          .then((next) => {
+            if (mine === generation.current && request === historyGeneration.current)
+              setHistory(next);
+          })
+          .catch((failure) => {
+            if (mine === generation.current) setError(messageOf(failure));
+          });
+      }
     } catch (failure) {
       if (mine === generation.current) setError(messageOf(failure));
     } finally {
       if (mine === generation.current) setBusy(undefined);
     }
-  }, [applyResponse, category, mode, query, sort.desc, sort.field]);
+  }, [applyResponse, category, directory, mode, query, sort.desc, sort.field, sortId]);
 
   const loadMore = useCallback(async () => {
     const cursor = page.cursor;
@@ -247,16 +296,18 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
     if (!selection) return;
     try {
       await invoke("search_action", { action, selection });
+      if (action === "copy-path") showToast(notificationText("notifications.copied"), "success");
     } catch (failure) {
-      setError(messageOf(failure));
+      showToast(messageOf(failure));
     }
   };
 
   const copyName = async (row: SearchWorkspaceRow) => {
     try {
       await writeText(row.searchHit?.name ?? row.title);
+      showToast(notificationText("notifications.copied"), "success");
     } catch (failure) {
-      setError(messageOf(failure));
+      showToast(messageOf(failure));
     }
   };
 
@@ -322,6 +373,39 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
     return "";
   })();
 
+  const conditions = (): SearchConditions =>
+    ({ query: draft.trim(), mode, category, directory, sortId }) as SearchConditions;
+  const restoreSearch = (entry: SavedSearch) => {
+    setDraft(entry.query);
+    setQuery(entry.query);
+    setMode(entry.mode);
+    setCategory(entry.category as CategoryId);
+    setSortId(entry.sortId);
+    setDirectory(entry.directory);
+    setHistoryOpen(false);
+  };
+  const changeHistory = async (action: "save" | "remove" | "clear", id?: string) => {
+    const request = ++historyGeneration.current;
+    try {
+      const next =
+        action === "save"
+          ? await invoke("search_workspace", { action, conditions: conditions() })
+          : action === "remove"
+            ? await invoke("search_workspace", { action, id: id! })
+            : await invoke("search_workspace", { action });
+      if (request === historyGeneration.current) setHistory(next);
+    } catch (failure) {
+      setError(messageOf(failure));
+    }
+  };
+  const pickDirectory = async () => {
+    try {
+      const value = await invoke("search_workspace", { action: "pick-directory" });
+      if (value.directory) setDirectory(value.directory);
+    } catch (failure) {
+      setError(messageOf(failure));
+    }
+  };
   const sortLabel = t(sort.label);
   const sortableHead = (field: SortField, label: string, className: string) => {
     const active = mode === "files" && sort.field === field;
@@ -349,8 +433,13 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
-      <div className="electron-title-drag flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <div className="relative shrink-0">
+      <WorkspaceTitleBar
+        title={t("workspaceTitle")}
+        onClose={onClose}
+        onError={(value) => setError(messageOf(value))}
+      />
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="relative min-w-0 w-72 shrink">
           <Search
             className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
@@ -361,11 +450,11 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
             value={draft}
             placeholder={placeholder}
             onChange={(event) => setDraft(event.target.value)}
-            className="h-8 w-72 pl-7 text-sm"
+            className="h-8 w-full pl-7 text-sm"
             aria-label={placeholder}
           />
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {(["files", "content"] as const).map((value) => (
             <Button
               key={value}
@@ -395,19 +484,98 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
           >
             <Settings className="size-4" aria-hidden="true" />
           </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            onClick={onClose}
-            title={t("workspaceClose")}
-            aria-label={t("workspaceClose")}
-          >
-            <X aria-hidden="true" />
-          </Button>
         </div>
       </div>
 
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+        <Button size="sm" variant="outline" onClick={() => void pickDirectory()}>
+          {t("queryDirectory")}
+        </Button>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={directory}>
+          {directory || t("defaultDirectory")}
+        </span>
+        {directory && (
+          <Button size="sm" variant="ghost" onClick={() => setDirectory("")}>
+            {t("resetDirectory")}
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={() => setHistoryOpen(true)}>
+          {t("recentSaved")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!draft.trim()}
+          onClick={() => void changeHistory("save")}
+        >
+          {t("saveQuery")}
+        </Button>
+      </div>
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("recentSaved")}</DialogTitle>
+            <DialogDescription>{t("historyHelp")}</DialogDescription>
+          </DialogHeader>
+          <div className="flex max-h-96 flex-col gap-3 overflow-auto">
+            <p className="text-sm font-medium">{t("savedQueries")}</p>
+            <ul className="flex flex-col gap-1">
+              {history.saved.map((entry) => (
+                <li key={entry.id} className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    className="min-w-0 flex-1 justify-start"
+                    onClick={() => restoreSearch(entry)}
+                  >
+                    <span className="flex min-w-0 flex-col items-start">
+                      <span className="truncate">{entry.name}</span>
+                      <span className="max-w-full truncate text-xs text-muted-foreground">
+                        {entry.mode === "files" ? t("workspaceFiles") : t("workspaceContent")} ·{" "}
+                        {entry.directory || t("defaultDirectory")}
+                      </span>
+                    </span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void changeHistory("remove", entry.id)}
+                  >
+                    {t("removeQuery")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <p className="text-sm font-medium">{t("recentQueries")}</p>
+            <ul className="flex flex-col gap-1">
+              {history.recent.map((entry) => (
+                <li key={entry.id} className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    className="min-w-0 flex-1 justify-start"
+                    onClick={() => restoreSearch(entry)}
+                  >
+                    <span className="truncate">{entry.query}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void changeHistory("remove", entry.id)}
+                  >
+                    {t("removeQuery")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <Button
+              variant="outline"
+              disabled={!history.recent.length}
+              onClick={() => void changeHistory("clear")}
+            >
+              {t("clearRecent")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {error && (
         <Alert variant="destructive" className="mx-3 mt-2">
           <AlertDescription>{error}</AlertDescription>
@@ -532,69 +700,71 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
                   const selected = row.id === selectedId;
                   return (
                     <ContextMenu key={row.id}>
-                      <ContextMenuTrigger asChild>
-                        <TableRow
-                          data-row-id={row.id}
-                          data-state={selected ? "selected" : undefined}
-                          onClick={() => setSelectedId(row.id)}
-                          onDoubleClick={() => void runRow("open", row)}
-                          className={
-                            selected
-                              ? "h-[34px] cursor-default bg-accent hover:bg-accent"
-                              : "h-[34px] cursor-default hover:bg-accent/50"
-                          }
-                        >
-                          <TableCell className="overflow-hidden">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <Icon
-                                className="size-4 shrink-0 text-muted-foreground"
-                                aria-hidden="true"
-                              />
-                              <span className="truncate text-[13px]">
-                                {highlightSegments(hit?.name ?? row.title, query).map(
-                                  ([text, matched], index) =>
-                                    matched ? (
-                                      <mark
-                                        key={index}
-                                        className="rounded-sm bg-primary/20 px-0.5 text-primary"
-                                      >
-                                        {text}
-                                      </mark>
-                                    ) : (
-                                      <span key={index}>{text}</span>
-                                    ),
-                                )}
+                      <ContextMenuTrigger
+                        render={
+                          <TableRow
+                            data-row-id={row.id}
+                            data-state={selected ? "selected" : undefined}
+                            onClick={() => setSelectedId(row.id)}
+                            onDoubleClick={() => void runRow("open", row)}
+                            className={
+                              selected
+                                ? "h-[34px] cursor-default bg-accent hover:bg-accent"
+                                : "h-[34px] cursor-default hover:bg-accent/50"
+                            }
+                          >
+                            <TableCell className="overflow-hidden">
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <Icon
+                                  className="size-4 shrink-0 text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                                <span className="truncate text-[13px]">
+                                  {highlightSegments(hit?.name ?? row.title, query).map(
+                                    ([text, matched], index) =>
+                                      matched ? (
+                                        <mark
+                                          key={index}
+                                          className="rounded-sm bg-primary/20 px-0.5 text-primary"
+                                        >
+                                          {text}
+                                        </mark>
+                                      ) : (
+                                        <span key={index}>{text}</span>
+                                      ),
+                                  )}
+                                </span>
                               </span>
-                            </span>
-                          </TableCell>
-                          <TableCell className="overflow-hidden">
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {parentDirectory(hit?.path)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {formatFileTime(hit?.modified, locale)}
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {t(typeKey)}
-                          </TableCell>
-                          <TableCell className="text-right text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                            {formatFileSize(hit?.size, hit?.directory ?? false)}
-                          </TableCell>
-                        </TableRow>
-                      </ContextMenuTrigger>
+                            </TableCell>
+                            <TableCell className="overflow-hidden">
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {parentDirectory(hit?.path)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                              {formatFileTime(hit?.modified, locale)}
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                              {t(typeKey)}
+                            </TableCell>
+                            <TableCell className="text-right text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                              {formatFileSize(hit?.size, hit?.directory ?? false)}
+                            </TableCell>
+                          </TableRow>
+                        }
+                      />
                       <ContextMenuContent>
-                        <ContextMenuItem onSelect={() => void runRow("open", row)}>
+                        <ContextMenuItem onClick={() => void runRow("open", row)}>
                           {t("openFile")}
                         </ContextMenuItem>
-                        <ContextMenuItem onSelect={() => void runRow("reveal", row)}>
+                        <ContextMenuItem onClick={() => void runRow("reveal", row)}>
                           {t("revealFile")}
                         </ContextMenuItem>
                         <ContextMenuSeparator />
-                        <ContextMenuItem onSelect={() => void runRow("copy-path", row)}>
+                        <ContextMenuItem onClick={() => void runRow("copy-path", row)}>
                           {t("copyPath")}
                         </ContextMenuItem>
-                        <ContextMenuItem onSelect={() => void copyName(row)}>
+                        <ContextMenuItem onClick={() => void copyName(row)}>
                           {t("copyName")}
                         </ContextMenuItem>
                       </ContextMenuContent>
@@ -619,18 +789,20 @@ export function SearchWorkspace({ initialQuery, onClose }: SearchWorkspaceProps)
           {selectedId && page.total > 0 ? ` · ${t("selectedCount", { count: 1 })}` : ""}
         </span>
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-6 gap-1 px-2 text-xs"
-              disabled={mode !== "files"}
-            >
-              {t("sortTitle")}: {sortLabel}
-              <ChevronDown className="size-3" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 gap-1 px-2 text-xs"
+                disabled={mode !== "files"}
+              >
+                {t("sortTitle")}: {sortLabel}
+                <ChevronDown className="size-3" aria-hidden="true" />
+              </Button>
+            }
+          />
           <DropdownMenuContent align="end">
             <DropdownMenuRadioGroup value={sort.id} onValueChange={chooseSort}>
               {sortOptions.map((option) => (

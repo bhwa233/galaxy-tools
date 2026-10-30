@@ -27,8 +27,9 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-After changing a plugin's UI source, `pnpm --filter @spark233/desktop exec vite build` refreshes the host
-renderer input without producing an installer. Build a complete single plugin:
+Each renderer plugin builds its own `renderer/main.tsx` from its declared entry.
+Changing plugin UI requires rebuilding that plugin; rebuilding the host renderer
+alone does not refresh plugin archives. Build a complete single plugin:
 
 ```powershell
 pnpm --filter @spark233/plugin-notes build
@@ -53,7 +54,7 @@ with the same relative layout. Electron-builder copies it to
 pinyin while the applications plugin is disabled or uninstalled. Single-plugin
 builds leave this host resource unchanged.
 
-Notes, clipboard, dictionary/translation and OCR archives carry their own
+Notes, clipboard, search, screenshot history, dictionary/translation and OCR archives carry their own
 versioned renderer code and font licenses. Their two large shared UI fonts use
 the stable host contract `spark233://shared/ui/v1/…`; the font bytes remain in the
 host distribution once. `renderer/spark233-shared-ui.json` records that v1
@@ -64,3 +65,10 @@ Use the assembled `.tgz` for local import, review and authorized publication. It
 includes generated renderer/native/data resources that are absent from a clean
 source folder. Bump the package version before distributing changed immutable
 code. Actual npm publication requires separate explicit authorization.
+
+`--renderer <directory>` accepts prebuilt input with one folder per plugin ID,
+such as `<directory>/spark233.search/index.html`; it no longer accepts a shared
+host renderer. Normal builds reject launcher/host-router imports in the Vite
+module graph and emit `renderer/spark233-renderer.json` with the owner identity.
+Icons/window defaults live in plugin manifests; private static UI defaults live
+under each plugin's `config/` directory.

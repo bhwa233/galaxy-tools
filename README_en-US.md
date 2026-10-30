@@ -6,9 +6,9 @@ Built with Electron 45, React 19, TypeScript, Vite and a pnpm workspace. Start w
 
 ## Development
 
-Use **Node.js 26.12.1 and pnpm 12.15.0**, pinned in `.node-version` and `package.json`. Electron's embedded Node runtime is managed separately.
+Use **Node.js 26.13.0 and pnpm 12.16.1**, pinned in `.node-version` and `package.json`. Electron's embedded Node runtime is managed separately.
 
-In Git Bash, source `scripts/use-toolchain.sh` to select an existing portable toolchain. In PowerShell, dot-source `scripts/use-toolchain.ps1`. Both affect only the current shell. See the [Chinese setup instructions](README.md#开发) for preparing pnpm with npm 12.
+Use nvm to install and select Node 26.13.0. In Git Bash, source `scripts/use-toolchain.sh`; in PowerShell, dot-source `scripts/use-toolchain.ps1`. These prefer nvm's Node; on Windows, `nvm use` changes its shared Node link. See the [Chinese setup instructions](README.md#开发) for preparing pnpm with npm 12.
 
 ```sh
 pnpm install --frozen-lockfile

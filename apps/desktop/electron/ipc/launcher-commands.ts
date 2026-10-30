@@ -27,6 +27,8 @@ export function createLauncherCommands(
     | "pluginImages"
     | "launcherContext"
     | "pluginFiles"
+    | "pluginWindowInfo"
+    | "takePluginWindowActivation"
   >,
 ) {
   async function run({
@@ -37,6 +39,8 @@ export function createLauncherCommands(
     grants,
     label,
   }: CommandInvocation): Promise<unknown> {
+    if (command === "plugin_window_info") return ctx.pluginWindowInfo(win);
+    if (command === "plugin_window_take_activation") return ctx.takePluginWindowActivation(win);
     if (command === "launcher_composition") {
       if (layout.label !== "launcher") throw new AppError("permissionDenied", "此窗口不是启动器");
       const input = z.strictObject({ active: z.boolean() }).parse(args);
@@ -188,6 +192,8 @@ export function createLauncherCommands(
     throw new AppError("invalidCommand", "Unsupported host command: " + command);
   }
   return {
+    plugin_window_info: run,
+    plugin_window_take_activation: run,
     launcher_cancel_query: run,
     launcher_complete_onboarding: run,
     launcher_composition: run,

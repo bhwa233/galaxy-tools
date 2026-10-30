@@ -22,12 +22,6 @@ import {
   type LauncherPreferenceTarget,
 } from "./launcher-preferences.js";
 import type { CommandPinyinMatcher } from "./launcher-command-matcher.js";
-import {
-  pluginActionCommands,
-  pluginEntryCommands,
-  pluginKeywordOnlyCommands,
-  pluginManagedCommands,
-} from "../shared/launcher-entries.js";
 
 const querySchema = z.strictObject({
   query: z.string().max(65536),
@@ -140,6 +134,7 @@ export interface LauncherOptions {
   getAvailabilityRevision?: () => number;
   getLocale?: () => string;
   getWarnings?: () => string[];
+  getPluginIcon?: (pluginId: string) => string | undefined;
   commandMatcher?: CommandPinyinMatcher;
   onQueryUpdate?: (callerId: string, result: LauncherQueryResult) => void;
   onPreferencesChanged?: () => void;
@@ -235,6 +230,18 @@ export class LauncherController {
           ]),
       ]),
       pluginsReady: !!manager,
+      pluginIcons: Object.fromEntries(
+        (manager?.list() ?? []).flatMap((record) => {
+          const icon = this.options.getPluginIcon?.(record.pluginId);
+          return icon ? [[record.pluginId, icon]] : [];
+        }),
+      ),
+      pluginIconMonochrome: Object.fromEntries(
+        allCommands.map(({ pluginId }) => [
+          pluginId,
+          this.manifest(pluginId).ui?.icon?.monochrome === true,
+        ]),
+      ),
       contextLabel: this.options.getContext?.(callerId)?.label,
       contextRevision: this.options.getContextRevision?.(callerId),
       warnings: this.options.getWarnings?.(),
@@ -258,7 +265,9 @@ export class LauncherController {
         description: command.description,
         keywords: [...command.keywords, ...command.aliases],
         enabled: true,
-        ...(command.mode ? { mode: `${pluginId}:${command.mode}` } : {}),
+        ...(command.launcher ? { launcher: command.launcher } : {}),
+        ...(command.progress ? { progress: command.progress } : {}),
+        ...(command.mode && !command.window ? { mode: `${pluginId}:${command.mode}` } : {}),
       })),
     };
   }
@@ -1098,7 +1107,12 @@ export class LauncherController {
             entry.pinned &&
             !entry.hidden &&
             (entry.target.kind !== "command" ||
-              !pluginManagedCommands[entry.target.pluginId]?.includes(entry.target.commandId)) &&
+              !commands.some(
+                ({ pluginId, command }) =>
+                  pluginId === entry.target.pluginId &&
+                  command.id === (entry.target.kind === "command" ? entry.target.commandId : "") &&
+                  command.launcher?.role === "hidden",
+              )) &&
             (entry.target.kind !== "command" ||
               this.commandSourceAllowed(entry.target.pluginId, entry.target.commandId, callerId)),
         )
@@ -1198,6 +1212,7 @@ export class LauncherController {
               this.providerContext(callerId, entry.pluginId, entry.command.id, enrichedContext) ??
               enrichedContext;
             const contextInput =
+              entry.command.launcher?.input !== "query" &&
               !!commandContext &&
               entry.command.inputs.includes(commandContext.kind) &&
               matches(commandContext);
@@ -1211,10 +1226,7 @@ export class LauncherController {
               ...entry,
               score: contextInput
                 ? Math.max(110, score)
-                : textInput &&
-                    sentenceInput &&
-                    entry.pluginId === "spark233.translation" &&
-                    entry.command.id === "translate"
+                : textInput && sentenceInput && entry.command.launcher?.preferSentence
                   ? Math.max(90, score)
                   : score || (textInput ? 10 : 0),
               textInput,
@@ -1243,12 +1255,8 @@ export class LauncherController {
             if (!entry.score) return false;
             const { pluginId, command } = entry;
             if (
-              pluginManagedCommands[pluginId]?.includes(command.id) &&
-              !(
-                pluginId === "spark233.translation" &&
-                command.id === "translate" &&
-                (entry.contextInput || entry.textInput)
-              )
+              command.launcher?.role === "hidden" &&
+              !(command.launcher.withInput && (entry.contextInput || entry.textInput))
             )
               return false;
             if (needle || inputContext) return true;
@@ -1257,13 +1265,7 @@ export class LauncherController {
             // A pinned keyword-only entry still shows; an unpinned one waits for
             // the user to type, so the empty launcher stays free of entries that
             // only re-enter the same search box.
-            if (pluginKeywordOnlyCommands[pluginId]?.includes(command.id)) return false;
-            return (
-              !Object.hasOwn(pluginEntryCommands, pluginId) ||
-              pluginEntryCommands[pluginId] === command.id ||
-              !!pluginActionCommands[pluginId]?.includes(command.id) ||
-              (pluginId === "spark233.notes" && command.id === "new")
-            );
+            return command.launcher?.role !== "keyword-only";
           })
           .sort((a, b) =>
             !needle && (!inputContext || inputContext.kind === "window")
@@ -1276,6 +1278,8 @@ export class LauncherController {
           .filter(
             (entry, index) =>
               index < (needle ? 40 : 40 + pinned.length) ||
+              (entry.pluginId === "spark233.search" && entry.command.id === "open-search") ||
+              (entry.pluginId === "spark233.translation" && entry.command.id === "lookup") ||
               (!needle &&
                 pinnedKeys.has(
                   launcherTargetKey(this.commandTarget(entry.pluginId, entry.command.id)!),
@@ -1362,6 +1366,7 @@ export class LauncherController {
     }
     for (const entry of commands.filter(
       ({ command, pluginId }) =>
+        command.launcher?.role !== "hidden" &&
         (needle ||
           (pluginId === "spark233.applications" &&
             command.id === "search" &&

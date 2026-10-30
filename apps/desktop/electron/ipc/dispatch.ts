@@ -40,6 +40,8 @@ export function createDispatch(ctx: RuntimeContext) {
       preparing &&
       (/^(notes_(create|update|set_editor_mode)|images_save|save_external_file)$/.test(command) ||
         (command === "clipboard_action" && args.action === "draft.save") ||
+        (command === "ocr_action" && args.action === "save") ||
+        (command === "backup_schedule" && args.action === "save") ||
         ["config_patch", "plugin_settings_save"].includes(command));
     const readOnly = [
       "desktop_ready",
@@ -54,6 +56,8 @@ export function createDispatch(ctx: RuntimeContext) {
       "diagnostics_unsubscribe",
       "backup_selection_release",
       "launcher_state",
+      "plugin_window_info",
+      "plugin_window_take_activation",
       "notes_get",
       "notes_list",
       "categories_list",
@@ -70,11 +74,15 @@ export function createDispatch(ctx: RuntimeContext) {
     if (
       (ctx.maintenance || ctx.hostShutdown.isQuitting) &&
       !readOnly.includes(command) &&
+      !(command === "backup_schedule" && args.action === "get") &&
       !windowRead &&
       !restoredSurface &&
       !preparationWrite
     )
-      throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
+      throw new AppError(
+        ctx.hostShutdown.isQuitting ? "hostStopping" : "maintenance",
+        ctx.hostShutdown.isQuitting ? "正在保存并退出，请稍后重试" : "正在备份或恢复，请稍后重试",
+      );
     if (
       ctx.notesScope &&
       ctx.notesScope.state !== "active" &&
@@ -92,6 +100,13 @@ export function createDispatch(ctx: RuntimeContext) {
         "pluginStopping",
         "The clipboard workspace has already acknowledged saving",
       );
+    if (
+      command === "ocr_action" &&
+      args.action === "save" &&
+      ctx.preparedWindows.has(win.id) &&
+      ctx.officialRenderers.get("spark233.ocr")?.scope.state !== "active"
+    )
+      throw new AppError("pluginStopping", "OCR workspace has already acknowledged saving");
     if (ctx.capsules.owns(win)) return ctx.capsules.handle(win, command, args);
     const label = ctx.labelOf(win),
       layout = ctx.layouts.get(label)!;
@@ -108,6 +123,8 @@ export function createDispatch(ctx: RuntimeContext) {
         "app_exec_path",
         "launcher_state",
         "launcher_take_workspace",
+        "plugin_window_info",
+        "plugin_window_take_activation",
         "launcher_return",
         "window_control",
         "text_action",
@@ -116,8 +133,9 @@ export function createDispatch(ctx: RuntimeContext) {
       const business: Record<string, string[]> = {
         "spark233.clipboard": ["clipboard_action", "clipboard_image_ocr"],
         "spark233.translation": ["translation_action", "translation_configure"],
-        "spark233.ocr": [],
-        "spark233.search": ["search_action"],
+        "spark233.ocr": ["ocr_action"],
+        "spark233.screenshot": ["screenshot_action"],
+        "spark233.search": ["search_action", "search_workspace"],
       };
       if (!common.includes(command) && !business[layout.pluginId]?.includes(command))
         throw new AppError("permissionDenied", "此插件工作区不能调用宿主管理接口");

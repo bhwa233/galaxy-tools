@@ -4,7 +4,8 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { create } from "tar";
 
 // Reuse the production tar reader's npm layout and integrity contract. Packages
@@ -59,14 +60,15 @@ const expectedIds = new Set(
     (name) => `spark233.${name}`,
   ),
 );
-const rendererPlugins = new Set([
-  "spark233.notes",
-  "spark233.clipboard",
-  "spark233.translation",
-  "spark233.ocr",
-  "spark233.screenshot",
-  "spark233.search",
-]);
+const rendererPlugins = new Set();
+for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const metadata = JSON.parse(
+    await fs.readFile(path.join(root, entry.name, "package.json"), "utf8"),
+  );
+  if (Object.keys(metadata.spark233?.ui?.windows ?? {}).length)
+    rendererPlugins.add(metadata.spark233.id);
+}
 const uiMetadata = JSON.parse(
   await fs.readFile(path.join(project, "packages/ui/package.json"), "utf8"),
 );
@@ -372,9 +374,55 @@ async function copyAllowlist(source, destination, metadata) {
     await fs.copyFile(path.join(source, filename), target);
   }
 }
-async function copyBusinessRenderer(packageRoot) {
-  const hostRenderer = path.resolve(project, buildOptions.renderer ?? "apps/desktop/dist"),
+async function copyBusinessRenderer(packageRoot, source, metadata) {
+  const hostRenderer = path.resolve(
+      project,
+      buildOptions.renderer
+        ? path.join(buildOptions.renderer, metadata.spark233.id)
+        : path.join(
+            "local-build/plugin-renderers",
+            createHash("sha256").update(output).digest("hex").slice(0, 12),
+            metadata.spark233.id,
+          ),
+    ),
     hostAssets = path.join(hostRenderer, "assets");
+  if (!buildOptions.renderer) {
+    const require = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
+    const { build } = await import(pathToFileURL(require.resolve("vite")).href);
+    await build({
+      configFile: path.join(project, "apps/desktop/vite.config.ts"),
+      root: path.join(source, "renderer"),
+      plugins: [
+        {
+          name: "plugin-renderer-owner",
+          generateBundle() {
+            const modules = [...this.getModuleIds()].map((id) => id.replaceAll("\\", "/"));
+            if (
+              modules.some(
+                (id) =>
+                  id.endsWith("/src/features/launcher/Launcher.tsx") || id.endsWith("/src/App.tsx"),
+              )
+            )
+              throw new Error(
+                `Plugin renderer imports the host launcher/router: ${metadata.spark233.id}`,
+              );
+            this.emitFile({
+              type: "asset",
+              fileName: "spark233-renderer.json",
+              source: JSON.stringify({
+                version: 1,
+                pluginId: metadata.spark233.id,
+                launcherIncluded: false,
+                moduleCount: modules.length,
+              }),
+            });
+          },
+        },
+      ],
+      publicDir: false,
+      build: { outDir: hostRenderer, emptyOutDir: true },
+    });
+  }
   const uiPackage = JSON.parse(
     await fs.readFile(path.join(hostRenderer, "spark233-ui.json"), "utf8"),
   );
@@ -487,7 +535,7 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
     if (rendererPlugins.has(metadata.spark233.id)) {
       // Trusted business plugins carry their renderer build. Their windows load
       // the installed version, so a plugin update does not replace the host.
-      sharedUi = await copyBusinessRenderer(path.join(work, "package"));
+      sharedUi = await copyBusinessRenderer(path.join(work, "package"), source, metadata);
       await fs.mkdir(path.join(work, "package", "legal"), { recursive: true });
       await fs.copyFile(
         path.join(project, "THIRD_PARTY_NOTICES.md"),
@@ -518,6 +566,12 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       name: metadata.name,
       version: metadata.version,
       displayName: metadata.spark233.displayName,
+      ...(metadata.spark233.ui?.icon
+        ? {
+            icon: `data:image/png;base64,${(await fs.readFile(path.join(source, metadata.spark233.ui.icon.png))).toString("base64")}`,
+            iconMonochrome: metadata.spark233.ui.icon.monochrome === true,
+          }
+        : {}),
       translations: metadata.spark233.translations,
       file: filename,
       integrity,

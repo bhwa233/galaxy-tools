@@ -12,7 +12,7 @@
 
 2026-10-28 截图入口调整：截图与截图取字下沉为纵向操作命令，插件网格入口改为“截图历史”（保留最近 50 条，覆盖复制、保存、图钉、长截图与取字全部完成路径）。原生程序此前只在取字路径发布选区，故本次同时改了 `native/capture/SessionResult.h` 与适配脚本并重建 `ScreenCapture.exe`；OCR 插件退出应用与插件网格，只保留“识别图片文字”操作，无图片上下文时弹文件选择。详见[截图历史记录](evidence/spark233-screenshot-history.md)。
 
-2026-10-28 应用入口调整：空查询与插件网格不再显示应用搜索插件的“搜索应用”入口。同一个输入框已经直接搜索并启动应用，该入口只是把搜索范围缩窄到应用，作为磁贴重复了搜索框本身。入口未删除，仍可按“应用/程序/app”关键词命中后进入应用模式；用户手动固定该入口时照常显示。判定收在 `shared/launcher-entries.ts` 的 `pluginKeywordOnlyCommands`，宿主筛选与前端网格共用同一份声明。
+2026-10-28 应用入口调整：空查询与插件网格不再显示应用搜索插件的“搜索应用”入口。同一个输入框已经直接搜索并启动应用，该入口只是把搜索范围缩窄到应用，作为磁贴重复了搜索框本身。入口未删除，仍可按“应用/程序/app”关键词命中后进入应用模式；用户手动固定该入口时照常显示。2026-10-30 起判定迁至应用插件自身的命令 launcher.role 声明，宿主和前端消费同一份元数据。
 
 2026-10-27续作按[剩余实施基线](archive/2026-10/spark233-remaining-implementation-2026-10-27.md)执行：先文档、再集中实现、最后统一验证。本轮新增来源程序匹配、普通文档正清单和恢复状态/预览令牌边界；以下历史实现描述不代表新代码已统一验收。
 
@@ -164,7 +164,9 @@ ScreenCapture 的截图与标注窗口保持原生实现，不以重写为 React
 - 跨窗口弹层、滚动条、焦点、快捷键与长文本遵循统一规则；中文输入法组合期间不误执行命令，列表键盘操作与可见焦点完整。
 - 界面完成后运行 Vercel 指南检查，并对浅色、深色、中文长文本、空数据、错误与缩放场景保存截图；Web 专用规则按 Electron 的实际场景适用。
 
-当前共享包为 `@spark233/ui` 0.2.0，兼容 SDK `>=0.2.0 <0.4.0`、宿主 API `^1.1.0` 与主题协议 `^1.0.0`。框架无关的主题 CSS/应用函数保持独立入口；可选 React 入口提供 Button、Alert、Badge、Card、Input、Textarea 与 Spinner 家族及预编译语义 CSS。组件唯一源码位于 `packages/ui/src/components/`，桌面原组件路径只保留重导出；构建生成包内 JavaScript、类型声明和样式，发布物不引用宿主源码路径，React 与现有基础库通过 peer 提供。官方剪贴板工作区通过包入口消费，正常 renderer 构建及官方归档记录实际 UI 包版本、兼容范围和入口散列；字体 v1 合同单独版本化。更多业务组件沿用同一包复用规则，不为满足条目数量新造控件。
+当前共享包为 `@spark233/ui` 0.3.0，兼容 SDK `>=0.2.0 <0.4.0`、宿主 API `^1.1.0` 与主题协议 `^1.0.0`。框架无关的主题 CSS/应用函数保持独立入口；可选 React 入口提供 Button、Alert、Badge、Card、Input、Textarea 与 Spinner 家族及预编译语义 CSS。组件唯一源码位于 `packages/ui/src/components/`，桌面原组件路径只保留重导出；构建生成包内 JavaScript、类型声明和样式，发布物不引用宿主源码路径，React 与现有基础库通过 peer 提供。官方剪贴板工作区通过包入口消费，正常 renderer 构建及官方归档记录实际 UI 包版本、兼容范围和入口散列；字体 v1 合同单独版本化。更多业务组件沿用同一包复用规则，不为满足条目数量新造控件。
+
+交互原语统一采用 shadcn Base Nova 与 Base UI：共享 Button、Input 和 Badge，以及桌面的对话框、菜单、复选框、分隔线和 Toast。Command 沿用官方 Base 集合的 cmdk 组合方式。瞬时操作反馈由统一 Toast 管理，在当前窗口顶部居中展示，合并重复提示并保留输入焦点；加载错误、任务进度与未保存状态继续留在对应内容区。迁移和验证记录见 [Base UI 与通知](evidence/toast-base-ui-2026-10-30.md)。
 
 ScreenCapture 与 ImageReader 的原生窗口不继承 CSS 或 shadcn 组件。宿主内的设置和结果操作遵循完整规范；原生工具栏与识别窗口通过各自实现调整颜色、字体、图标和主题，一期优先保证高频操作与整体观感一致，记录实际可覆盖范围。
 
@@ -747,3 +749,7 @@ Rubick 为 MIT，Tinker 为 AGPL-3.0。具体复用源码时逐项核对，不�
 [react-screenshots / electron-screenshots](https://github.com/nashaofu/screenshots) 属于之前基础库组合候选，保留作参考；[PixPin](https://pixpin.cn/docs/start/quick-start) 的复杂贴图体验不再作为一期必需标准。
 
 Electron 资料：[进程模型](https://www.electronjs.org/docs/latest/tutorial/process-model)、[进程沙箱](https://www.electronjs.org/docs/latest/tutorial/sandbox)、[安全建议](https://www.electronjs.org/docs/latest/tutorial/security)。
+
+## 2026-10-30 插件声明与独立 renderer
+
+宿主 API 1.3 将窗口标题、图标、入口、默认尺寸和命令展示角色迁入各插件声明。启动器只处理发现、查询和激活，不再渲染插件页面。6 个带页面的官方插件分别构建 renderer，按所属实例接收激活载荷。字段及验证边界见 [实施方案](plugin-declaration-and-launcher-decoupling.md)。

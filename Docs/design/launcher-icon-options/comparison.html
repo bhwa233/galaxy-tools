@@ -1,0 +1,1586 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="UTF-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>spark233 · 四款启动器图标</title
+  ><style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: #f5f4f0;
+      color: #292c29;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+    button,
+    a {
+      -webkit-tap-highlight-color: transparent;
+    }
+    a:focus-visible {
+      outline: 2px solid #2d5a3d;
+      outline-offset: 5px;
+    }
+    svg {
+      display: block;
+      flex-shrink: 0;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #dddfd8;
+      padding-bottom: 20px;
+    }
+    .brand {
+      font-size: 18px;
+      letter-spacing: -0.5px;
+      font-weight: 650;
+    }
+    .eyebrow {
+      font:
+        11px "Segoe UI",
+        sans-serif;
+      letter-spacing: 2px;
+      color: #7c8378;
+    }
+    .page {
+      max-width: 1440px;
+      margin: auto;
+      padding: 38px 44px 34px;
+    }
+    .intro {
+      margin: 29px 0 30px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    h1 {
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -1px;
+      margin: 0 0 10px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #72796f;
+      margin: 0;
+      line-height: 1.75;
+    }
+    .color-key {
+      font-size: 11px;
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      white-space: nowrap;
+      color: #72796f;
+    }
+    .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      vertical-align: -1px;
+      margin-right: 6px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e1e4dc;
+      border-radius: 20px;
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 20px 22px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .num {
+      font:
+        12px "Segoe UI",
+        sans-serif;
+      color: #90988a;
+    }
+    .axis {
+      font-size: 11px;
+      color: #798473;
+    }
+    .hero {
+      height: 245px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card-body {
+      padding: 0 22px 20px;
+    }
+    h2 {
+      font-size: 21px;
+      letter-spacing: -0.5px;
+      font-weight: 600;
+      margin: 0 0 10px;
+    }
+    .description {
+      font-size: 12px;
+      line-height: 1.9;
+      color: #788171;
+      margin: 0;
+      min-height: 69px;
+    }
+    .line {
+      height: 1px;
+      background: #edf0e9;
+      margin: 19px 0 17px;
+    }
+    .section-label {
+      font-size: 10px;
+      letter-spacing: 0.7px;
+      color: #99a190;
+      margin-bottom: 15px;
+    }
+    .sizes {
+      display: flex;
+      gap: 20px;
+      align-items: flex-end;
+      justify-content: space-between;
+    }
+    .sample {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 9px;
+    }
+    .sample span {
+      font:
+        10px "Segoe UI",
+        sans-serif;
+      color: #9aa390;
+    }
+    .trays {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .tray {
+      height: 48px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
+    }
+    .tray.light {
+      background: #f0f2ec;
+      color: #2a352a;
+    }
+    .tray.dark {
+      background: #252823;
+      color: #eceee7;
+    }
+    .tray .clock {
+      font:
+        10px "Segoe UI",
+        sans-serif;
+      opacity: 0.65;
+    }
+    .card-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid #edf0e9;
+      margin-top: 19px;
+      padding-top: 15px;
+      color: #45614a;
+      font-size: 11px;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: 11px;
+      color: #858d7c;
+      margin-top: 25px;
+      line-height: 1.9;
+    }
+    .review {
+      margin-top: 24px;
+      border: 1px solid #dce3d6;
+      background: #edf1e8;
+      border-radius: 14px;
+      padding: 17px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      font-size: 12px;
+      color: #626e5b;
+    }
+    .review strong {
+      font-weight: 600;
+      color: #3b503d;
+    }
+    .detail {
+      padding-bottom: 96px;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 30px;
+      margin-top: 30px;
+    }
+    .canvas {
+      background: #e9ede4;
+      border: 1px solid #dde3d6;
+      border-radius: 24px;
+      min-height: 460px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .detail-side {
+      background: white;
+      border-radius: 24px;
+      border: 1px solid #e1e4dc;
+      padding: 32px;
+    }
+    .detail-side h2 {
+      font-size: 29px;
+    }
+    .detail-side p {
+      color: #747e6c;
+      font-size: 13px;
+      line-height: 1.9;
+    }
+    .detail-side .sizes {
+      justify-content: flex-start;
+      gap: 25px;
+      margin: 25px 0;
+    }
+    .download {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      background: #2d5a3d;
+      color: #fff;
+      font-size: 12px;
+      padding: 12px 17px;
+      margin-top: 22px;
+      margin-right: 8px;
+    }
+    .download.secondary {
+      background: #edf1e8;
+      color: #39533c;
+    }
+    .top-link {
+      font-size: 12px;
+      color: #66775b;
+    }
+    .taskbar {
+      background: #282b26;
+      border: 1px solid #363b31;
+      color: #e5e9df;
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 13px 18px;
+      margin-top: 20px;
+    }
+    .taskbar span {
+      font-size: 11px;
+      margin-left: auto;
+    }
+    .taskbar .active-app {
+      padding: 7px;
+      background: #3f4839;
+      border-radius: 8px;
+    }
+    .notes {
+      font-size: 11px;
+      color: #8b9381;
+      margin-top: 24px;
+      line-height: 1.9;
+    }
+    .svg-link {
+      font-size: 12px;
+      color: #5e7658;
+    }
+    .badge {
+      color: #4f6948;
+      padding: 5px 9px;
+      border-radius: 7px;
+      background: #ebf0e5;
+      font-size: 10px;
+    }
+    .mini-trays {
+      margin-top: 20px;
+    }
+    .detail .trays {
+      margin-top: 10px;
+    }
+    .back {
+      font-size: 12px;
+      color: #6e7d61;
+    }
+    .comparison-scope {
+      font-size: 11px;
+      color: #7c8771;
+    }
+    .chevron {
+      font-size: 15px;
+    }
+    @media (max-width: 1000px) {
+      .page {
+        padding: 25px;
+      }
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+      .intro {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .canvas {
+        min-height: 320px;
+      }
+    }
+    @media (max-width: 560px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .color-key {
+        display: none;
+      }
+      .page {
+        padding: 20px;
+      }
+      .footer {
+        flex-direction: column;
+      }
+      .eyebrow {
+        font-size: 9px;
+      }
+      .review {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .detail-side {
+        padding: 22px;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
+  </style>
+  <body>
+    <main class="page">
+      <header>
+        <a class="brand" href="comparison.html"
+          >spark233<span style="color: #89937d; font-weight: 400"> / 图标探索</span></a
+        ><span class="eyebrow">SPARK / FOUR STUDIES</span>
+      </header>
+      <div class="intro">
+        <div>
+          <h1>同一簇火花，四种轮廓</h1>
+          <p class="subtitle">
+            均采用墨绿与米白，比较造型、重心与小尺寸辨识度。点击图标可查看大图。
+          </p>
+        </div>
+        <div class="color-key">
+          <span><i class="swatch" style="background: #2d5a3d"></i>墨绿 #2D5A3D</span
+          ><span
+            ><i class="swatch" style="background: #f6f3ec; border: 1px solid #dadfcf"></i>米白
+            #F6F3EC</span
+          >
+        </div>
+      </div>
+      <section class="grid">
+        <article class="card">
+          <div class="card-head">
+            <span class="num">01</span><span class="axis">均衡 · 克制</span>
+          </div>
+          <a class="hero" href="index.html?v=1" aria-label="查看聚心"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="168"
+              height="168"
+              viewBox="0 0 256 256"
+              role="img"
+              aria-label="spark233 · 聚心"
+              style="color: #f6f3ec"
+            >
+              <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+              <g fill="currentColor">
+                <path
+                  d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                  transform="rotate(0 128 128)"
+                />
+                <path
+                  d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                  transform="rotate(90 128 128)"
+                />
+                <path
+                  d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                  transform="rotate(180 128 128)"
+                />
+                <path
+                  d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                  transform="rotate(270 128 128)"
+                />
+              </g></svg
+          ></a>
+          <div class="card-body">
+            <h2>聚心</h2>
+            <p class="description">
+              四片火花围绕中心聚拢，结构稳健。适合每天使用、安静耐看的工具。
+            </p>
+            <div class="line"></div>
+            <div class="section-label">应用图标 / 实际尺寸</div>
+            <div class="sizes">
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="48"
+                  height="48"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><span>48 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="32"
+                  height="32"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><span>32 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><span>24 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><span>16 px</span>
+              </div>
+            </div>
+            <div class="section-label" style="margin-top: 23px">单色托盘 / 16 · 24 PX</div>
+            <div class="trays">
+              <div class="tray light">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+              <div class="tray dark">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 聚心"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(0 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(90 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(180 128 128)"
+                    />
+                    <path
+                      d="M124.8 43.6Q128 37 131.2 43.6L154 88Q156 92 152.5 95.4L132.1 115.3Q128 119.3 123.9 115.3L103.5 95.4Q100 92 102 88Z"
+                      transform="rotate(270 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+            </div>
+            <a class="card-link" href="index.html?v=1"
+              ><span>查看大图与下载 SVG</span><span class="chevron">↗</span></a
+            >
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="num">02</span><span class="axis">舒展 · 轻快</span>
+          </div>
+          <a class="hero" href="index.html?v=2" aria-label="查看跃光"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="168"
+              height="168"
+              viewBox="0 0 256 256"
+              role="img"
+              aria-label="spark233 · 跃光"
+              style="color: #f6f3ec"
+            >
+              <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+              <g fill="currentColor">
+                <path
+                  d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                  transform="rotate(45 128 128)"
+                />
+                <path
+                  d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                  transform="rotate(135 128 128)"
+                />
+                <path
+                  d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                  transform="rotate(225 128 128)"
+                />
+                <path
+                  d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                  transform="rotate(315 128 128)"
+                />
+              </g></svg
+          ></a>
+          <div class="card-body">
+            <h2>跃光</h2>
+            <p class="description">
+              右上火花舒展，另外三片收拢呼应。带有快速唤起、即刻出发的方向感。
+            </p>
+            <div class="line"></div>
+            <div class="section-label">应用图标 / 实际尺寸</div>
+            <div class="sizes">
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="48"
+                  height="48"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>48 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="32"
+                  height="32"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>32 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>24 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>16 px</span>
+              </div>
+            </div>
+            <div class="section-label" style="margin-top: 23px">单色托盘 / 16 · 24 PX</div>
+            <div class="trays">
+              <div class="tray light">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+              <div class="tray dark">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 跃光"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M124 34Q128 25 132 34L150 86Q153 93 148 98L133 115Q128 120 123 115L108 98Q103 93 106 86Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M124 53Q128 44 132 53L150 87Q153 94 148 99L133 114Q128 119 123 114L108 99Q103 94 106 87Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M124 68Q128 59 132 68L150 91Q153 98 148 103L133 114Q128 119 123 114L108 103Q103 98 106 91Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+            </div>
+            <a class="card-link" href="index.html?v=2"
+              ><span>查看大图与下载 SVG</span><span class="chevron">↗</span></a
+            >
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="num">03</span><span class="axis">切面 · 利落</span>
+          </div>
+          <a class="hero" href="index.html?v=3" aria-label="查看晶簇"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="168"
+              height="168"
+              viewBox="0 0 256 256"
+              role="img"
+              aria-label="spark233 · 晶簇"
+              style="color: #f6f3ec"
+            >
+              <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+              <g fill="currentColor">
+                <path
+                  d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                  transform="rotate(45 128 128)"
+                />
+                <path
+                  d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                  transform="rotate(135 128 128)"
+                />
+                <path
+                  d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                  transform="rotate(225 128 128)"
+                />
+                <path
+                  d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                  transform="rotate(315 128 128)"
+                />
+              </g></svg
+          ></a>
+          <div class="card-body">
+            <h2>晶簇</h2>
+            <p class="description">四枚几何晶片组成火花，棱角清楚。更像聚合多种能力的桌面工具。</p>
+            <div class="line"></div>
+            <div class="section-label">应用图标 / 实际尺寸</div>
+            <div class="sizes">
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="48"
+                  height="48"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>48 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="32"
+                  height="32"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>32 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>24 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>16 px</span>
+              </div>
+            </div>
+            <div class="section-label" style="margin-top: 23px">单色托盘 / 16 · 24 PX</div>
+            <div class="trays">
+              <div class="tray light">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+              <div class="tray dark">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 晶簇"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 35L160 82L146 101L128 115L110 101L96 82Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+            </div>
+            <a class="card-link" href="index.html?v=3"
+              ><span>查看大图与下载 SVG</span><span class="chevron">↗</span></a
+            >
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="num">04</span><span class="axis">圆润 · 亲和</span>
+          </div>
+          <a class="hero" href="index.html?v=4" aria-label="查看柔焰"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="168"
+              height="168"
+              viewBox="0 0 256 256"
+              role="img"
+              aria-label="spark233 · 柔焰"
+              style="color: #f6f3ec"
+            >
+              <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+              <g fill="currentColor">
+                <path
+                  d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                  transform="rotate(45 128 128)"
+                />
+                <path
+                  d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                  transform="rotate(135 128 128)"
+                />
+                <path
+                  d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                  transform="rotate(225 128 128)"
+                />
+                <path
+                  d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                  transform="rotate(315 128 128)"
+                />
+              </g></svg
+          ></a>
+          <div class="card-body">
+            <h2>柔焰</h2>
+            <p class="description">
+              以饱满曲面收拢成一簇柔和火焰。保留现有图标的自然感，形状更简洁。
+            </p>
+            <div class="line"></div>
+            <div class="section-label">应用图标 / 实际尺寸</div>
+            <div class="sizes">
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="48"
+                  height="48"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>48 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="32"
+                  height="32"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>32 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>24 px</span>
+              </div>
+              <div class="sample">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #f6f3ec"
+                >
+                  <rect width="256" height="256" rx="59" fill="#2d5a3d" />
+                  <g fill="currentColor">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span>16 px</span>
+              </div>
+            </div>
+            <div class="section-label" style="margin-top: 23px">单色托盘 / 16 · 24 PX</div>
+            <div class="trays">
+              <div class="tray light">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #2a352a"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+              <div class="tray dark">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 256 256"
+                  role="img"
+                  aria-label="spark233 · 柔焰"
+                  style="color: #eceee7"
+                >
+                  <g fill="currentColor" transform="translate(-40 -40) scale(1.3125)">
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(45 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(135 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(225 128 128)"
+                    />
+                    <path
+                      d="M128 38C137 38 156 71 156 88C156 102 140 113 128 118C116 113 100 102 100 88C100 71 119 38 128 38Z"
+                      transform="rotate(315 128 128)"
+                    />
+                  </g></svg
+                ><span class="clock">09:41</span>
+              </div>
+            </div>
+            <a class="card-link" href="index.html?v=4"
+              ><span>查看大图与下载 SVG</span><span class="chevron">↗</span></a
+            >
+          </div>
+        </article>
+      </section>
+      <div class="review">
+        <strong>先选轮廓，再打磨细节。</strong
+        ><span>四版均为可编辑 SVG；应用图标与透明单色图形分别提供。</span>
+      </div>
+      <footer class="footer">
+        <span>所有小图均按标注尺寸渲染 · 单色版本适用于深浅托盘</span
+        ><span>点击任一方案进入预览 · 按 1—4 或 ← → 切换</span>
+      </footer>
+    </main>
+  </body>
+</html>

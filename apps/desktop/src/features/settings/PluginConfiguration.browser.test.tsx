@@ -41,6 +41,7 @@ it("keeps edits local, retains a failed save, and lets the user cancel or discar
     );
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
     expect(await cancelled).toBe("cancelled");
     await expect.element(input).toHaveValue("new-model");
     fail = false;

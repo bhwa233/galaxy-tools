@@ -1,11 +1,9 @@
 {
-  "source": {
-    "packageId": "Microsoft.VC.14.51.CRT.Redist.X64.base",
-    "version": "14.51.36247",
-    "url": "https://download.visualstudio.microsoft.com/download/pr/3984a6ef-2ffc-4c07-962e-bf9e9b862819/24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af/Microsoft.VC.14.51.CRT.Redist.X64.base.vsix",
-    "sha256": "24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af"
+  "license": {
+    "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
+    "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+    "file": "Microsoft-VC-Runtime-LICENSE.docx"
   },
-  "schemaVersion": 1,
   "files": [
     {
       "name": "msvcp140.dll",
@@ -28,10 +26,12 @@
       "bytes": 50112
     }
   ],
+  "schemaVersion": 1,
   "architecture": "x64",
-  "license": {
-    "url": "https://visualstudio.microsoft.com/wp-content/uploads/2025/10/Visual-C-V14-License-Redistributable_and_Runtime_ENU.docx",
-    "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
-    "file": "Microsoft-VC-Runtime-LICENSE.docx"
+  "source": {
+    "sha256": "24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af",
+    "url": "https://download.visualstudio.microsoft.com/download/pr/3984a6ef-2ffc-4c07-962e-bf9e9b862819/24a1c8dba0376d9b008ac2ba430d13c06664fc6f163511fd7866485030e289af/Microsoft.VC.14.51.CRT.Redist.X64.base.vsix",
+    "version": "14.51.36247",
+    "packageId": "Microsoft.VC.14.51.CRT.Redist.X64.base"
   }
 }

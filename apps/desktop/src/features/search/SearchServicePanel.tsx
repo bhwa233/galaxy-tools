@@ -1,4 +1,5 @@
 import { useUnsavedChanges } from "../settings/useUnsavedChanges";
+import { SettingsFooter } from "../settings/SettingsFooter";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -8,8 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { configureSearchService, getSearchServiceStatus, rebuildSearchService } from "./api";
 import type { SearchServiceStatus } from "./types";
 
-export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boolean) => void }) {
+export function SearchServicePanel({
+  onBusyChange,
+  settingsFooter = false,
+}: {
+  onBusyChange?: (busy: boolean) => void;
+  settingsFooter?: boolean;
+}) {
   const { t } = useTranslation("search");
+  const { t: settingsText } = useTranslation();
   const [status, setStatus] = useState<SearchServiceStatus>();
   const [paths, setPaths] = useState("");
   const [volumes, setVolumes] = useState<Record<string, boolean>>({});
@@ -92,17 +100,25 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
       }
     }
   }
-  const guard = useUnsavedChanges(
-    hasChanges,
-    () => manage("configure", true),
-    () => {
-      dirty.current = false;
-      setHasChanges(false);
-      if (status) {
-        setPaths(status.excludedRoots.join("\n"));
-        setVolumes(Object.fromEntries(status.volumes.map((volume) => [volume.id, volume.enabled])));
-      }
-    },
+  const discard = () => {
+    dirty.current = false;
+    setHasChanges(false);
+    if (status) {
+      setPaths(status.excludedRoots.join("\n"));
+      setVolumes(Object.fromEntries(status.volumes.map((volume) => [volume.id, volume.enabled])));
+    }
+  };
+  const guard = useUnsavedChanges(hasChanges, () => manage("configure", true), discard);
+  const applyButton = (
+    <Button
+      variant={settingsFooter ? "default" : "outline"}
+      disabled={busy || !status?.connected}
+      onClick={() => {
+        void guard.save().catch(() => {});
+      }}
+    >
+      {settingsFooter ? settingsText("settingsEditor.save") : t("serviceApply")}
+    </Button>
   );
   return (
     <section className="space-y-3 border-t pt-4" aria-label={t("serviceTitle")}>
@@ -158,15 +174,7 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
         <FieldDescription>{t("servicePathHelp")}</FieldDescription>
       </Field>
       <div className="flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          disabled={busy || !status?.connected}
-          onClick={() => {
-            void guard.save().catch(() => {});
-          }}
-        >
-          {t("serviceApply")}
-        </Button>
+        {!settingsFooter && applyButton}
         <Button
           variant="outline"
           disabled={busy || !status?.connected}
@@ -193,6 +201,22 @@ export function SearchServicePanel({ onBusyChange }: { onBusyChange?: (busy: boo
             {status.effectiveExcludedRoots.join("\n")}
           </pre>
         </details>
+      )}
+      {settingsFooter && status && (
+        <SettingsFooter
+          status={settingsText(
+            busy
+              ? "plugins.working"
+              : hasChanges
+                ? "settingsEditor.unsaved"
+                : "settingsEditor.saved",
+          )}
+        >
+          <Button variant="outline" disabled={busy || !hasChanges} onClick={discard}>
+            {settingsText("settingsEditor.discard")}
+          </Button>
+          {applyButton}
+        </SettingsFooter>
       )}
     </section>
   );

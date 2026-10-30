@@ -1,3 +1,5 @@
+import { BackupSchedulePanel } from "./BackupSchedulePanel";
+import { showToast } from "../../components/Toast";
 import {
   Dialog,
   DialogContent,
@@ -81,6 +83,10 @@ export function BackupDialog({ open, onOpenChange, embedded = false }: BackupDia
           action === "create" ? await createBackup() : await restoreBackup(selection!.selectionId);
         if (mounted.current && next) {
           setReport(next);
+          showToast(
+            t(action === "create" ? "notifications.backupCreated" : "notifications.backupRestored"),
+            "success",
+          );
           if (action === "restore") clearSelection();
         }
       }
@@ -123,12 +129,6 @@ export function BackupDialog({ open, onOpenChange, embedded = false }: BackupDia
       <DialogContent
         className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl"
         showCloseButton={!busy}
-        onEscapeKeyDown={(event) => {
-          if (operating.current) event.preventDefault();
-        }}
-        onInteractOutside={(event) => {
-          if (operating.current) event.preventDefault();
-        }}
       >
         <DialogHeader>
           <DialogTitle>{t("backup.title", { defaultValue: "备份与恢复" })}</DialogTitle>
@@ -140,6 +140,7 @@ export function BackupDialog({ open, onOpenChange, embedded = false }: BackupDia
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-1 *:shrink-0">
+          <BackupSchedulePanel />
           <div className="flex flex-wrap gap-2">
             <Button
               disabled={!!busy}

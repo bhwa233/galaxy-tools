@@ -1,4 +1,5 @@
 {
+  "workspaceTitle": "File search",
   "title": "File search scope",
   "workspaceClose": "Close window",
   "chooseDirectory": "Choose search directory",
@@ -94,5 +95,15 @@
   "typeCode": "Source file",
   "typeText": "Text file",
   "typeExecutable": "Program",
-  "typeFile": "File"
+  "typeFile": "File",
+  "queryDirectory": "Choose directory",
+  "defaultDirectory": "Default search scope",
+  "resetDirectory": "Reset scope",
+  "recentSaved": "Recent and saved searches",
+  "saveQuery": "Save current search",
+  "historyHelp": "Stored in local plugin data, up to 50 recent and 50 saved searches. Reusing conditions runs a fresh query.",
+  "savedQueries": "Saved searches",
+  "recentQueries": "Recent searches",
+  "removeQuery": "Delete",
+  "clearRecent": "Clear recent searches"
 }

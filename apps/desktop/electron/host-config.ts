@@ -50,6 +50,7 @@ export function defaultConfig(dataDir: string): AppConfig {
     tileColor: "#f6f3ec",
     tileColorMode: "system",
     theme: "system",
+    accentColor: "green",
     fontSize: 14,
     surfaceFontSize: 14,
     tabIndentSize: 2,

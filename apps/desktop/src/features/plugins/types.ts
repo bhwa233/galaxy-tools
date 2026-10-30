@@ -50,6 +50,8 @@ export interface PluginSummary {
   pluginId: string;
   packageName: string;
   displayName: string;
+  icon?: string;
+  iconMonochrome?: boolean;
   version: string;
   enabled: boolean;
   status: string;
@@ -86,15 +88,23 @@ export interface PluginManagementState {
   catalog: BundledPluginCatalogItem[];
   pending: InstallPreview[];
   updates: UpdateSummary[];
+  updateIssues?: PluginUpdateIssue[];
   checking: boolean;
   tasks: PackageTaskSnapshot[];
   lastChecked?: number;
   error?: string;
 }
+export interface PluginUpdateIssue {
+  pluginId?: string;
+  reason: "notPublished" | "failed";
+  message?: string;
+}
 export interface BundledPluginCatalogItem {
   pluginId: string;
   packageName: string;
   displayName: string;
+  icon?: string;
+  iconMonochrome?: boolean;
   version: string;
   installedVersion?: string;
   pending: boolean;

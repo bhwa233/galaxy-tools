@@ -1,10 +1,11 @@
+import { showToast } from "../../components/Toast";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { XIcon } from "lucide-react";
+import { RefreshCw, XIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { invoke } from "../../platform/desktop";
+import { invoke, listen } from "../../platform/desktop";
 
 interface HistoryEntry {
   id: string;
@@ -32,7 +33,10 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [loadError, setLoadError] = useState<string>();
+  const loadFailed = !!loadError;
+  const displayedError = loadError;
+  const loadGeneration = useRef(0);
   const active = useRef(true);
   useEffect(() => {
     active.current = true;
@@ -45,41 +49,68 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
       ? String(value.message)
       : String(value);
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     try {
       const list = (await invoke("screenshot_action", {
         action: "list",
       })) as unknown as HistoryEntry[];
-      if (active.current) setEntries(Array.isArray(list) ? list : []);
+      if (active.current && generation === loadGeneration.current) {
+        setEntries(Array.isArray(list) ? list : []);
+        setLoadError(undefined);
+      }
     } catch (value) {
-      if (active.current) setError(message(value));
+      if (active.current && generation === loadGeneration.current) {
+        setLoadError(message(value));
+      }
     } finally {
-      if (active.current) setLoading(false);
+      if (active.current && generation === loadGeneration.current) setLoading(false);
     }
   }, []);
   useEffect(() => {
+    const refresh = () => {
+      void load();
+    };
+    const subscription = listen("screenshot-result", refresh);
+    window.addEventListener("focus", refresh);
     void load();
+    return () => {
+      loadGeneration.current++;
+      window.removeEventListener("focus", refresh);
+      void subscription.then((stop) => stop());
+    };
   }, [load]);
   const act = async (action: "copy" | "save" | "ocr" | "remove", id: string) => {
     setBusy(true);
-    setError(undefined);
     try {
-      await invoke("screenshot_action", { action, id });
+      const result = await invoke("screenshot_action", { action, id });
+      if (active.current) {
+        if (action === "copy") showToast(t("notifications.copied"), "success");
+        if (
+          action === "save" &&
+          result &&
+          typeof result === "object" &&
+          "saved" in result &&
+          result.saved
+        )
+          showToast(t("notifications.saved"), "success");
+        if (action === "remove") showToast(t("notifications.deleted"), "success");
+      }
       // Copying and saving leave the row untouched; deletion must not.
       if (active.current && action === "remove") await load();
     } catch (value) {
-      if (active.current) setError(message(value));
+      if (active.current) showToast(message(value));
     } finally {
       if (active.current) setBusy(false);
     }
   };
   const clear = async () => {
     setBusy(true);
-    setError(undefined);
     try {
       await invoke("screenshot_action", { action: "clear" });
-      if (active.current) setEntries([]);
+      if (active.current) showToast(t("notifications.cleared"), "success");
+      if (active.current) await load();
     } catch (value) {
-      if (active.current) setError(message(value));
+      if (active.current) showToast(message(value));
     } finally {
       if (active.current) setBusy(false);
     }
@@ -90,15 +121,30 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
       aria-label={t("screenshot.history", { defaultValue: "截图历史" })}
     >
       <div className="electron-title-drag flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          {t("screenshot.count", {
-            defaultValue: "共 {{count}} 张，最多保留 50 张",
-            count: entries.length,
-          })}
-        </span>
+        {!loadFailed && (
+          <span className="text-xs text-muted-foreground">
+            {t("screenshot.count", {
+              defaultValue: "共 {{count}} 张，最多保留 50 张",
+              count: entries.length,
+            })}
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="ml-auto"
+          disabled={busy || loading}
+          title={t("screenshot.refresh")}
+          aria-label={t("screenshot.refresh")}
+          onClick={() => {
+            setLoading(true);
+            void load();
+          }}
+        >
+          <RefreshCw />
+        </Button>
         <Button
           variant="outline"
-          className="ml-auto"
           disabled={busy || !entries.length}
           onClick={() => {
             void clear();
@@ -116,9 +162,9 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
           <XIcon />
         </Button>
       </div>
-      {error && (
+      {displayedError && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{displayedError}</AlertDescription>
         </Alert>
       )}
       {loading ? (
@@ -192,11 +238,11 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
             </li>
           ))}
         </ul>
-      ) : (
+      ) : !loadFailed ? (
         <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
           {t("screenshot.empty", { defaultValue: "还没有截图。截图完成后会自动记录在这里。" })}
         </p>
-      )}
+      ) : null}
     </section>
   );
 }

@@ -1,17 +1,22 @@
+import { showToast } from "../../components/Toast";
 import { openSettingsWindow } from "../settings/api";
 import { useEffect, useRef, useState } from "react";
 import { translationTarget } from "../../../../../packages/official/translation/language.mjs";
 import { registerHostPreparation } from "../windows/hostPreparation";
+import { WorkspaceTitleBar } from "../windows/WorkspaceTitleBar";
 import { useTranslation } from "react-i18next";
-import { XIcon } from "lucide-react";
+import { BookOpenIcon, HistoryIcon, LanguagesIcon, Trash2Icon, XIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { invoke, listen, writeText } from "../../platform/desktop";
 import { getTranslationConfiguration, translationAction, watchTranslationChunks } from "./api";
 import { DictionaryPane } from "./DictionaryPane";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { TranslatePane } from "./TranslatePane";
 import { useTranslationHistory } from "./useTranslationHistory";
+import uiConfiguration from "../../../../../packages/official/translation/config/ui.json";
 import type {
   DictionaryEntryResult,
+  DictionaryHistory,
   DictionaryItem,
   TranslationConfiguration,
   TranslationHistoryEntry,
@@ -37,6 +42,8 @@ const errorText = (value: unknown) =>
       : String(value);
 const TARGETS = ["en", "zh-CN"] as const;
 type Target = (typeof TARGETS)[number];
+type WorkspaceView = "dictionary" | "translation" | "search-history";
+const navigationIcons = { book: BookOpenIcon, languages: LanguagesIcon, history: HistoryIcon };
 
 /** The workspace never calls a model while typing or looking up a word.
  * Translation is the only networked action; history and dictionary stay local. */
@@ -54,16 +61,18 @@ export function TranslationWorkspace({
   const [cancelled, setCancelled] = useState(false);
   const [override, setOverride] = useState<Target>();
   const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
   const [exporting, setExporting] = useState(false);
   const [config, setConfig] = useState<TranslationConfiguration>();
   const [chunksReady, setChunksReady] = useState(false);
   const [autoLookup, setAutoLookup] = useState(true);
-  const [dictionaryOpen, setDictionaryOpen] = useState(false);
+  const [view, setView] = useState<WorkspaceView>(uiConfiguration.defaultView as WorkspaceView);
   const [dictionaryQuery, setDictionaryQuery] = useState("");
   const [dictionaryEntry, setDictionaryEntry] = useState<DictionaryEntryResult>();
   const [dictionaryItems, setDictionaryItems] = useState<DictionaryItem[]>([]);
   const [dictionarySearching, setDictionarySearching] = useState(false);
+  const [dictionaryHistory, setDictionaryHistory] = useState<DictionaryHistory["entries"]>([]);
+  const [dictionaryHistoryBusy, setDictionaryHistoryBusy] = useState(false);
+  const [dictionaryHistoryFailed, setDictionaryHistoryFailed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const history = useTranslationHistory();
 
@@ -114,7 +123,6 @@ export function TranslationWorkspace({
     setTranslated("");
     setTranslation(undefined);
     setCancelled(false);
-    setNotice(undefined);
   };
 
   const applyDictionary = (value: unknown) => {
@@ -127,14 +135,11 @@ export function TranslationWorkspace({
       const next = result as unknown as DictionaryEntryResult;
       setDictionaryEntry(next);
       setDictionaryQuery(next.entry.word);
-      setText(next.entry.word);
       setDictionaryItems(next.related ?? []);
-      setDictionaryOpen(true);
       return true;
     }
     if (result?.kind === "dictionary-search" && Array.isArray(result.items)) {
       setDictionaryItems(result.items as DictionaryItem[]);
-      setDictionaryOpen(true);
       return true;
     }
     return false;
@@ -158,6 +163,18 @@ export function TranslationWorkspace({
       typeof result?.translateRequestId === "string" ? result.translateRequestId : undefined;
     if (requestId && requestId === lastHandoff.current) return;
     lastHandoff.current = requestId;
+    if (result?.kind === "dictionary-input" && typeof result.query === "string") {
+      dictionaryGeneration.current++;
+      setDictionarySearching(false);
+      setDictionaryEntry(undefined);
+      setDictionaryItems([]);
+      setDictionaryQuery(result.query);
+      setView("dictionary");
+      setHistoryOpen(false);
+      setError(undefined);
+      if (result.query.trim()) void lookup(result.query);
+      return;
+    }
     resetTranslation();
     dictionaryGeneration.current++;
     setDictionarySearching(false);
@@ -166,7 +183,11 @@ export function TranslationWorkspace({
     setDictionaryQuery("");
     setDictionaryEntry(undefined);
     setDictionaryItems([]);
-    setDictionaryOpen(false);
+    setView(
+      result?.kind === "dictionary-entry" || result?.kind === "dictionary-search"
+        ? "dictionary"
+        : "translation",
+    );
     setOverride(undefined);
     if (result) apply(initialResult);
     if (requestId && typeof result?.text === "string" && result.text.trim())
@@ -230,12 +251,31 @@ export function TranslationWorkspace({
     const generation = ++dictionaryGeneration.current;
     lastLookup.current = word;
     setDictionarySearching(true);
+    setDictionaryEntry(undefined);
+    setDictionaryItems([]);
     setError(undefined);
     try {
-      const result = await translationAction({ action: "search", query: word, limit: 10 });
+      const result = (await translationAction({
+        action: "search",
+        query: word,
+        limit: 10,
+        recordHistory: true,
+      })) as { kind: "dictionary-search"; items: DictionaryItem[] };
       if (mounted.current && generation === dictionaryGeneration.current) {
         setDictionaryEntry(undefined);
         applyDictionary(result);
+        if (result?.kind === "dictionary-search" && result.items[0]) {
+          const entry = (await translationAction({
+            action: "detail",
+            id: result.items[0].id,
+          })) as DictionaryEntryResult;
+          if (
+            mounted.current &&
+            generation === dictionaryGeneration.current &&
+            entry?.kind === "dictionary-entry"
+          )
+            setDictionaryEntry(entry);
+        }
       }
     } catch (value) {
       if (mounted.current && generation === dictionaryGeneration.current)
@@ -250,8 +290,13 @@ export function TranslationWorkspace({
     setDictionarySearching(true);
     setError(undefined);
     try {
-      const result = await translationAction({ action: "detail", id });
-      if (mounted.current && generation === dictionaryGeneration.current) apply(result);
+      const result = (await translationAction({ action: "detail", id })) as DictionaryEntryResult;
+      if (
+        mounted.current &&
+        generation === dictionaryGeneration.current &&
+        result?.kind === "dictionary-entry"
+      )
+        setDictionaryEntry(result);
     } catch (value) {
       if (mounted.current && generation === dictionaryGeneration.current)
         setError(errorText(value));
@@ -270,6 +315,8 @@ export function TranslationWorkspace({
     window.clearTimeout(selectionTimer.current);
     selectionTimer.current = window.setTimeout(() => {
       setDictionaryQuery(candidate);
+      setView("dictionary");
+      setHistoryOpen(false);
       void lookup(candidate);
     }, 250);
   };
@@ -290,7 +337,6 @@ export function TranslationWorkspace({
     setBusy(true);
     setError(undefined);
     setCancelled(false);
-    setNotice(undefined);
     setTranslated("");
     setTranslation(undefined);
     const target = explicit ?? override;
@@ -339,14 +385,16 @@ export function TranslationWorkspace({
     const generation = ++exportGeneration.current;
     setExporting(true);
     setError(undefined);
-    setNotice(undefined);
     try {
       if (target === "copy") await writeText(content);
       else await invoke("text_action", { target: "notes", text: content });
       if (mounted.current && exportGeneration.current === generation)
-        setNotice(target === "copy" ? t("markdown.copied") : t("translation.noteSaved"));
+        showToast(
+          t(target === "copy" ? "notifications.copied" : "notifications.noteSaved"),
+          "success",
+        );
     } catch (value) {
-      if (mounted.current && exportGeneration.current === generation) setError(errorText(value));
+      if (mounted.current && exportGeneration.current === generation) showToast(errorText(value));
     } finally {
       if (mounted.current && exportGeneration.current === generation) setExporting(false);
     }
@@ -364,13 +412,24 @@ export function TranslationWorkspace({
     resetTranslation();
     setText(entry.text);
     setTranslated(entry.translatedText);
+    setTranslation({
+      kind: "translation",
+      requestId: entry.id,
+      text: entry.text,
+      target: entry.target,
+      translatedText: entry.translatedText,
+      cached: entry.cached,
+      incomplete: entry.incomplete,
+    });
     setOverride(entry.target);
+    setView("translation");
+    setHistoryOpen(false);
   };
   const toggleAutoLookup = () => {
     const next = !autoLookup;
     setAutoLookup(next);
     void translationAction({ action: "preferences_set", autoLookup: next }).catch((value) =>
-      setError(errorText(value)),
+      showToast(errorText(value)),
     );
   };
   const configure = () => {
@@ -378,7 +437,41 @@ export function TranslationWorkspace({
       page: "plugins",
       pluginId: "spark233.translation",
       tab: "config",
-    }).catch((value) => setError(errorText(value)));
+    }).catch((value) => showToast(errorText(value)));
+  };
+  const updateDictionaryHistory = async (
+    action: "dictionary_history_list" | "dictionary_history_delete" | "dictionary_history_clear",
+    query?: string,
+  ) => {
+    setDictionaryHistoryBusy(true);
+    setError(undefined);
+    try {
+      const result = (await translationAction(
+        action === "dictionary_history_delete" ? { action, query: query! } : { action },
+      )) as DictionaryHistory;
+      if (mounted.current && result?.kind === "dictionary-history") {
+        setDictionaryHistory(result.entries);
+        setDictionaryHistoryFailed(false);
+        if (action !== "dictionary_history_list")
+          showToast(
+            t(
+              action === "dictionary_history_delete"
+                ? "notifications.deleted"
+                : "notifications.cleared",
+            ),
+            "success",
+          );
+      }
+    } catch (value) {
+      if (mounted.current) {
+        if (action === "dictionary_history_list") {
+          setError(errorText(value));
+          setDictionaryHistoryFailed(true);
+        } else showToast(errorText(value));
+      }
+    } finally {
+      if (mounted.current) setDictionaryHistoryBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -401,7 +494,7 @@ export function TranslationWorkspace({
 
   return (
     <section
-      className="flex min-h-0 flex-1 flex-col gap-2 p-3"
+      className="flex min-h-0 flex-1 flex-col"
       aria-label={t("translation.title", { defaultValue: "词典与翻译" })}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
@@ -410,6 +503,28 @@ export function TranslationWorkspace({
         void cancel().finally(onClose);
       }}
     >
+      <WorkspaceTitleBar
+        title={t("translation.title")}
+        onClose={() => cancel().finally(onClose)}
+        onError={(value) => setError(errorText(value))}
+      >
+        {view === "translation" ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            title={t("translation.historyTitle")}
+            aria-label={t("translation.historyTitle")}
+            aria-pressed={historyOpen}
+            onClick={() => {
+              setHistoryOpen((value) => !value);
+              if (!historyOpen) void history.refresh();
+            }}
+          >
+            <HistoryIcon />
+          </Button>
+        ) : null}
+      </WorkspaceTitleBar>
       {error && (
         <div
           role="alert"
@@ -426,27 +541,52 @@ export function TranslationWorkspace({
           </button>
         </div>
       )}
-      {notice && (
-        <p role="status" className="text-xs text-muted-foreground">
-          {notice}
-        </p>
-      )}
-      <div className="relative flex min-h-0 flex-1 gap-3 overflow-hidden">
-        <HistoryDrawer
-          open={historyOpen}
-          entries={history.entries}
-          enabled={history.enabled}
-          onToggle={() => {
-            setHistoryOpen((value) => !value);
-            if (!historyOpen) void history.refresh();
-          }}
-          onSelect={selectHistory}
-          onDelete={(id) => void history.remove(id)}
-          onClear={() => void history.clear()}
-          onToggleEnabled={(enabled) => void history.setEnabled(enabled)}
-        />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <nav
+          aria-label={t("translation.title")}
+          className="flex w-32 shrink-0 flex-col gap-1 border-r border-border p-2"
+        >
+          {uiConfiguration.navigation.map((entry) => {
+            const item = entry.id as WorkspaceView;
+            const Icon = navigationIcons[entry.icon as keyof typeof navigationIcons];
+            return (
+              <Button
+                key={item}
+                type="button"
+                aria-pressed={view === item}
+                size="sm"
+                variant={view === item ? "secondary" : "ghost"}
+                className="justify-start"
+                onClick={() => {
+                  setView(item);
+                  setHistoryOpen(false);
+                  if (item === "search-history")
+                    void updateDictionaryHistory("dictionary_history_list");
+                }}
+              >
+                <Icon />
+                {t(entry.label, { defaultValue: entry.label })}
+              </Button>
+            );
+          })}
+        </nav>
+        {historyOpen && view === "translation" && (
+          <HistoryDrawer
+            open={historyOpen}
+            entries={history.entries}
+            enabled={history.enabled}
+            onToggle={() => {
+              setHistoryOpen((value) => !value);
+              if (!historyOpen) void history.refresh();
+            }}
+            onSelect={selectHistory}
+            onDelete={(id) => void history.remove(id)}
+            onClear={() => void history.clear()}
+            onToggleEnabled={(enabled) => void history.setEnabled(enabled)}
+          />
+        )}
         <TranslatePane
-          className="min-w-0 flex-1"
+          className={view === "translation" ? "min-w-0 flex-1 p-3" : "hidden"}
           text={text}
           translated={translated}
           translation={translation}
@@ -472,11 +612,10 @@ export function TranslationWorkspace({
           onSaveNote={() => void exportResult("notes")}
           onConfigure={configure}
           onLookupSelection={lookupSelection}
-          onClose={() => void cancel().finally(onClose)}
         />
-        {dictionaryOpen && (
+        {view === "dictionary" && (
           <DictionaryPane
-            className="w-[340px] shrink-0 max-[900px]:absolute max-[900px]:inset-y-0 max-[900px]:right-0 max-[900px]:z-10 max-[900px]:w-[300px]"
+            className="min-w-0 flex-1"
             query={dictionaryQuery}
             entry={dictionaryEntry}
             items={dictionaryItems}
@@ -491,8 +630,72 @@ export function TranslationWorkspace({
             onToggleAutoLookup={toggleAutoLookup}
             onCopyEntry={(content) => void exportResult("copy", content)}
             onSaveEntry={(content) => void exportResult("notes", content)}
-            onClose={() => setDictionaryOpen(false)}
           />
+        )}
+        {view === "search-history" && (
+          <section
+            className="flex min-w-0 flex-1 flex-col p-3"
+            aria-label={t("translation.searchHistory")}
+          >
+            <div className="flex items-center gap-2 border-b pb-2">
+              <h2 className="text-sm font-medium">{t("translation.searchHistory")}</h2>
+              <span className="text-xs text-muted-foreground">
+                {dictionaryHistory.length} / 100
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto"
+                disabled={dictionaryHistoryBusy || !dictionaryHistory.length}
+                onClick={() => void updateDictionaryHistory("dictionary_history_clear")}
+              >
+                {t("translation.historyClear")}
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {dictionaryHistory.length ? (
+                <ul>
+                  {dictionaryHistory.map((entry) => (
+                    <li key={entry.query} className="flex items-center gap-2 border-b py-1">
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 truncate rounded px-2 py-2 text-left text-sm hover:bg-muted"
+                        onClick={() => {
+                          setDictionaryQuery(entry.query);
+                          setView("dictionary");
+                          void lookup(entry.query);
+                        }}
+                      >
+                        {entry.query}
+                      </button>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(entry.at).toLocaleString()}
+                      </span>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        disabled={dictionaryHistoryBusy}
+                        title={t("translation.historyDelete")}
+                        aria-label={t("translation.historyDelete")}
+                        onClick={() =>
+                          void updateDictionaryHistory("dictionary_history_delete", entry.query)
+                        }
+                      >
+                        <Trash2Icon />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                !dictionaryHistoryBusy &&
+                !dictionaryHistoryFailed && (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {t("translation.searchHistoryEmpty")}
+                  </p>
+                )
+              )}
+            </div>
+          </section>
         )}
       </div>
     </section>

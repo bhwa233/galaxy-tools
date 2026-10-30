@@ -30,3 +30,8 @@ export interface ExternalFile {
   title: string;
   filePath: string;
 }
+
+export interface NoteHistory {
+  entries: Array<{ versionId: string; savedAt: string; title: string; bytes: number }>;
+  currentRevision: string;
+}

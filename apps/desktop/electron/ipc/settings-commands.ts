@@ -21,6 +21,7 @@ export function createSettingsCommands(
     | "syncMcp"
     | "publishPluginTheme"
     | "refreshTray"
+    | "refreshWindowPresentations"
     | "migrateNotesDirectory"
     | "hostShortcuts"
   >,
@@ -56,7 +57,16 @@ export function createSettingsCommands(
       const target = z
         .strictObject({
           page: z
-            .enum(["general", "shortcuts", "tray", "entries", "plugins", "backup", "diagnostics"])
+            .enum([
+              "general",
+              "shortcuts",
+              "tray",
+              "entries",
+              "plugins",
+              "marketplace",
+              "backup",
+              "diagnostics",
+            ])
             .default("general"),
           pluginId: z
             .string()
@@ -152,6 +162,7 @@ export function createSettingsCommands(
         ctx.emit("config-changed", ctx.hostConfig.value);
         ctx.publishPluginTheme();
         ctx.refreshTray();
+        ctx.refreshWindowPresentations();
         return ctx.hostConfig.value;
       }
       case "config_migrate_data_dir": {

@@ -44,6 +44,15 @@ export class NotesDataClient {
   list(category?: string) {
     return this.call("note.list", category === undefined ? {} : { category });
   }
+  history(id: string) {
+    return this.call("note.history", { id });
+  }
+  revision(id: string, versionId: string) {
+    return this.call("note.revision", { id, versionId });
+  }
+  restoreRevision(id: string, versionId: string, expectedRevision: string) {
+    return this.call("note.restore", { id, versionId, expectedRevision });
+  }
   get(id: string) {
     return this.call("note.get", { id });
   }

@@ -1,4 +1,9 @@
-import type { ThemeOption } from "./types";
+import type { ThemeOption, ThemeAccent } from "./types";
+
+export function applyAccentColor(accent: ThemeAccent = "green"): void {
+  document.documentElement.dataset.accent = accent;
+  localStorage.setItem("theme-accent", accent);
+}
 
 function resolveTheme(option: ThemeOption): "light" | "dark" {
   if (option === "system") {

@@ -1,14 +1,17 @@
 import { createContext, useContext, type ComponentProps, type ReactNode } from "react";
 import * as Modal from "./ui/dialog";
 
-// Reuse the existing Radix Dialog and form content. A page needs semantic
-// headings instead of Radix portal/title context; no second modal is introduced.
+// Reuse the existing Base UI Dialog and form content. A page needs semantic
+// headings instead of Base UI portal/title context; no second modal is introduced.
 const Embedded = createContext(false);
 export function Dialog({
   embedded = false,
   children,
   ...props
-}: ComponentProps<typeof Modal.Dialog> & { embedded?: boolean }) {
+}: Omit<ComponentProps<typeof Modal.Dialog>, "children"> & {
+  embedded?: boolean;
+  children?: ReactNode;
+}) {
   return (
     <Embedded.Provider value={embedded}>
       {embedded ? props.open ? children : null : <Modal.Dialog {...props}>{children}</Modal.Dialog>}

@@ -5,7 +5,8 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 if (-not $BuildRoot) { $BuildRoot = Join-Path $repoRoot 'local-build/spark233/native-clipboard' }
 $BuildRoot = [IO.Path]::GetFullPath($BuildRoot)
 $boundary = Join-Path $BuildRoot 'build/spark233_clipboard_boundary.exe'
-$node = Join-Path $env:LOCALAPPDATA 'spark233/toolchains/node-v26.12.1-win-x64/node.exe'
+. (Join-Path $repoRoot 'scripts/use-toolchain.ps1')
+$node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
 $probe = Join-Path $PSScriptRoot 'probe.mjs'
 foreach ($required in @($boundary, $node, (Join-Path $BuildRoot 'node_modules/@crosscopy/clipboard/index.js'))) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Run the clipboard prepare/build entry first: $required" }

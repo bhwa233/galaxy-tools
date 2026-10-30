@@ -1,3 +1,4 @@
+import { showToast } from "../../components/Toast";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -62,9 +63,7 @@ export function DiagnosticsDialog({
   const [busy, setBusy] = useState<"clear" | "export" | "refresh">();
   const operation = useRef(false);
   const [error, setError] = useState<"unavailable" | "failed">();
-  const [notice, setNotice] = useState<
-    "cleared" | "memoryClearedDiskUnavailable" | "exported" | "exportCancelled"
-  >();
+  const [notice, setNotice] = useState<"memoryClearedDiskUnavailable">();
   const [source, setSource] = useState<"all" | "host" | "plugin">("all");
   const [pluginId, setPluginId] = useState("");
   const [levels, setLevels] = useState<DiagnosticLevel[]>([...DIAGNOSTIC_LEVELS]);
@@ -226,14 +225,16 @@ export function DiagnosticsDialog({
     try {
       if (action === "export") {
         const result = await exportDiagnostics(filter);
-        if (generation === connection.current)
-          setNotice(result.exported ? "exported" : "exportCancelled");
+        if (generation === connection.current && result.exported)
+          showToast(t("notifications.exported"), "success");
       } else {
         const result = await (action === "clear" ? clearDiagnostics() : listDiagnostics());
         if (generation === connection.current) {
           merge(result);
-          if (action === "clear")
-            setNotice(result.diskStatus === "ready" ? "cleared" : "memoryClearedDiskUnavailable");
+          if (action === "clear") {
+            if (result.diskStatus === "ready") showToast(t("notifications.cleared"), "success");
+            else setNotice("memoryClearedDiskUnavailable");
+          } else showToast(t("notifications.refreshed"), "success");
         }
       }
     } catch (value) {

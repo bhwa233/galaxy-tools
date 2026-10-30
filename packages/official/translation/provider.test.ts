@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +32,7 @@ describe("translation direction and target cache", () => {
   });
   afterEach(async () => {
     await translator?.stop();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     fs.rmSync(directory, { recursive: true, force: true });
   });
@@ -188,8 +190,42 @@ describe("translation history", () => {
   });
   afterEach(async () => {
     await translator?.stop();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("persists bounded deduplicated dictionary history and serializes deletes", async () => {
+    await Promise.all(
+      Array.from({ length: 101 }, (_, index) => translator.rememberDictionary(`word${index}`)),
+    );
+    await translator.rememberDictionary(" WORD100 ");
+    let entries = (await translator.listDictionaryHistory()).entries;
+    expect(entries).toHaveLength(100);
+    expect(entries[0].query).toBe("WORD100");
+    expect(entries.some((entry) => entry.query === "word0" || entry.query === "word100")).toBe(
+      false,
+    );
+    await translator.stop();
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    entries = (await translator.listDictionaryHistory()).entries;
+    expect(entries[0].query).toBe("WORD100");
+    await Promise.all([
+      translator.deleteDictionaryHistory("WORD100"),
+      translator.rememberDictionary("next"),
+    ]);
+    expect((await translator.listDictionaryHistory()).entries[0].query).toBe("next");
+    await translator.clearDictionaryHistory();
+    expect((await translator.listDictionaryHistory()).entries).toEqual([]);
+  });
+
+  it("does not overwrite a damaged dictionary history", async () => {
+    await translator.stop();
+    const filename = path.join(directory, "dictionary-history.json");
+    fs.writeFileSync(filename, "damaged");
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    await expect(translator.rememberDictionary("hello")).rejects.toThrow("Dictionary history");
+    expect(fs.readFileSync(filename, "utf8")).toBe("damaged");
   });
 
   // The workspace shows history from disk after a restart, so a duplicate must
@@ -236,6 +272,62 @@ describe("translation history", () => {
     expect((await translator.clearHistory()).entries).toEqual([]);
     await translator.prepareStop();
     expect(stored().entries).toEqual([]);
+  });
+
+  // A failed rewrite previously reported success and resurrected deleted rows
+  // after restart. The durable snapshot must remain the source of truth.
+  it("retains history on failed deletion and serializes clear with new translations", async () => {
+    await translator.translate({ text: "保留" }, context());
+    const id = (await translator.listHistory()).entries[0].id;
+    const rename = fsPromises.rename;
+    const failure = vi.spyOn(fsPromises, "rename").mockImplementation(async (from, to) => {
+      if (to === path.join(directory, "history.json")) throw new Error("history disk unavailable");
+      return rename(from, to);
+    });
+    await expect(translator.deleteHistory(id)).rejects.toThrow("history disk unavailable");
+    await expect(translator.clearHistory()).rejects.toThrow("history disk unavailable");
+    expect((await translator.listHistory()).entries[0].id).toBe(id);
+    expect(stored().entries[0].text).toBe("保留");
+    await expect(translator.translate({ text: "未保存" }, context())).resolves.toMatchObject({
+      historySaved: false,
+      translatedText: "记录译文",
+    });
+    failure.mockRestore();
+    await Promise.all([
+      translator.clearHistory(),
+      translator.translate({ text: "清空后的新记录" }, context()),
+    ]);
+    await translator.stop();
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    expect((await translator.listHistory()).entries.map((row) => row.text)).toEqual([
+      "清空后的新记录",
+    ]);
+  });
+
+  // Long inputs shared a clipped prefix as their identity and lost their tails.
+  it("restores complete long translations and keeps distinct equal-prefix inputs", async () => {
+    const prefix = "相同前文".repeat(600),
+      output = "完整译文".repeat(900);
+    vi.mocked(fetch).mockImplementation(
+      async () => new Response(JSON.stringify({ choices: [{ message: { content: output } }] })),
+    );
+    await translator.translate({ text: prefix + "甲" }, context());
+    await translator.translate({ text: prefix + "乙" }, context());
+    await translator.stop();
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    const entries = (await translator.listHistory()).entries;
+    expect(entries.map((row) => row.text)).toEqual([prefix + "乙", prefix + "甲"]);
+    expect(entries.every((row) => row.translatedText === output && !row.incomplete)).toBe(true);
+    await translator.stop();
+    fs.writeFileSync(
+      path.join(directory, "history.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [{ ...entries[0], text: prefix.slice(0, 2000), incomplete: undefined }],
+      }),
+    );
+    translator = createTranslator({ dataDir: directory, signal: new AbortController().signal });
+    expect((await translator.listHistory()).entries[0].incomplete).toBe(true);
   });
 
   // The limit is enforced on load as well, because a previous build or a manual

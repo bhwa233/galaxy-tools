@@ -19,6 +19,11 @@
   --spark233-accent-hover: #3a7a52;
   --spark233-accent-soft: #e8f0eb;
   --spark233-accent-selected: #d4e8da;
+  --spark233-swatch-green: #2d5a3d;
+  --spark233-swatch-blue: #1d4ed8;
+  --spark233-swatch-purple: #6d28d9;
+  --spark233-swatch-orange: #a84408;
+  --spark233-swatch-rose: #be185d;
   --background: #ffffff;
   --foreground: #1a1a18;
   --card: #ffffff;
@@ -65,4 +70,57 @@
   --muted-foreground: #abb2aa;
   --destructive: #ef9a9a;
   --border: #3c3935;
+}
+
+:root[data-accent="blue"] {
+  --spark233-accent: #1d4ed8;
+  --spark233-accent-hover: #1e40af;
+  --spark233-accent-soft: #eff6ff;
+  --spark233-accent-selected: #dbeafe;
+}
+:root[data-accent="purple"] {
+  --spark233-accent: #6d28d9;
+  --spark233-accent-hover: #5b21b6;
+  --spark233-accent-soft: #f5f3ff;
+  --spark233-accent-selected: #ede9fe;
+}
+:root[data-accent="orange"] {
+  --spark233-accent: #a84408;
+  --spark233-accent-hover: #8c3504;
+  --spark233-accent-soft: #fff4e8;
+  --spark233-accent-selected: #ffdfbc;
+}
+:root[data-accent="rose"] {
+  --spark233-accent: #be185d;
+  --spark233-accent-hover: #9d174d;
+  --spark233-accent-soft: #fff1f5;
+  --spark233-accent-selected: #fce0eb;
+}
+:root[data-theme="dark"][data-accent="blue"] {
+  --spark233-accent: #78a9ff;
+  --spark233-accent-hover: #9cbfff;
+  --spark233-accent-soft: #17263d;
+  --spark233-accent-selected: #243b5b;
+  --primary-foreground: #0b1629;
+}
+:root[data-theme="dark"][data-accent="purple"] {
+  --spark233-accent: #b49aff;
+  --spark233-accent-hover: #c7b5ff;
+  --spark233-accent-soft: #29213b;
+  --spark233-accent-selected: #3e3157;
+  --primary-foreground: #181027;
+}
+:root[data-theme="dark"][data-accent="orange"] {
+  --spark233-accent: #efab61;
+  --spark233-accent-hover: #ffc284;
+  --spark233-accent-soft: #33271b;
+  --spark233-accent-selected: #4b3824;
+  --primary-foreground: #24170b;
+}
+:root[data-theme="dark"][data-accent="rose"] {
+  --spark233-accent: #f18eb4;
+  --spark233-accent-hover: #ffaccb;
+  --spark233-accent-soft: #361f2a;
+  --spark233-accent-selected: #502a3c;
+  --primary-foreground: #2b101c;
 }

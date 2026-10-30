@@ -226,6 +226,21 @@ inline void recognition(const Result& result, const int width, const int height)
             box.Append(pair);
         }
         item.SetNamedValue(L"box", box);
+        JsonArray characters;
+        for (const auto& word : line.words) {
+            JsonObject character;
+            character.SetNamedValue(L"text", JsonValue::CreateStringValue(winrt::to_hstring(word.text)));
+            JsonArray characterBox;
+            for (const auto& point : word.box) {
+                JsonArray pair;
+                pair.Append(JsonValue::CreateNumberValue(point.x));
+                pair.Append(JsonValue::CreateNumberValue(point.y));
+                characterBox.Append(pair);
+            }
+            character.SetNamedValue(L"box", characterBox);
+            characters.Append(character);
+        }
+        item.SetNamedValue(L"characters", characters);
         lines.Append(item);
         if (!text.empty()) text += '\n';
         text += line.text;

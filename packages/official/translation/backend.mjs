@@ -15,11 +15,13 @@ export default function translationPlugin(lifetime) {
       const action =
         input.action ?? (activation.commandId === "translate" ? "translate" : "search");
       switch (action) {
-        case "search":
-          return dictionary.search(
-            input.query ?? (activation.context?.kind === "text" ? activation.context.text : ""),
-            input.limit ?? 10,
-          );
+        case "search": {
+          const query = input.query ?? (activation.context?.kind === "text" ? activation.context.text : "");
+          const result = dictionary.search(query, input.limit ?? 10);
+          if (input.recordHistory === true && result.items.length)
+            await translator.rememberDictionary(query).catch(() => {});
+          return result;
+        }
         case "detail":
           return dictionary.detail(input.id);
         case "configure":
@@ -43,6 +45,12 @@ export default function translationPlugin(lifetime) {
           return translator.deleteHistory(input.id);
         case "history_clear":
           return translator.clearHistory();
+        case "dictionary_history_list":
+          return translator.listDictionaryHistory();
+        case "dictionary_history_delete":
+          return translator.deleteDictionaryHistory(input.query);
+        case "dictionary_history_clear":
+          return translator.clearDictionaryHistory();
         case "preferences_get":
           return translator.getPreferences();
         case "preferences_set":

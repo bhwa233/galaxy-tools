@@ -1,3 +1,7 @@
+import { dialog } from "electron";
+import path from "node:path";
+import fs from "node:fs";
+import { SearchHistoryStore } from "../plugins/official/search-history.js";
 import { AppError } from "../persistence.js";
 import type { PluginActivation } from "@spark233/sdk";
 import type { RuntimeContext } from "../runtime.js";
@@ -37,14 +41,33 @@ export function searchQueryWithCategory(
 }
 
 export function createSearchCommands(ctx: Pick<RuntimeContext, "isHostView" | "pluginHost">) {
-  async function run({ command, args, layout }: CommandInvocation): Promise<unknown> {
-    if (command !== "search_action") return;
+  async function run({ win, command, args, layout }: CommandInvocation): Promise<unknown> {
+    if (command !== "search_action" && command !== "search_workspace") return;
     if (!ctx.isHostView(layout)) throw new AppError("permissionDenied", "搜索工作区仅限宿主界面");
     const manager = ctx.pluginHost?.manager;
     if (!manager) throw new Error("插件宿主尚未就绪");
+    if (command === "search_workspace") {
+      const store = new SearchHistoryStore(manager.dataDirectory("spark233.search"));
+      if (args.action === "get") return store.get();
+      if (args.action === "pick-directory") {
+        const picked = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
+        return {
+          ...store.get(),
+          ...(!picked.canceled && picked.filePaths[0] ? { directory: picked.filePaths[0] } : {}),
+        };
+      }
+      if (args.action === "clear") return store.update("clear");
+      if (args.action === "remove") return store.update("remove", undefined, args.id);
+      if (args.action === "remember" || args.action === "save")
+        return store.update(args.action, args.conditions, undefined, args.name);
+      throw new AppError("invalidPayload", "未知搜索历史操作");
+    }
     const activate = (activation: PluginActivation) =>
       manager.activate("spark233.search", activation);
     if (args.action === "query") {
+      const directory = typeof args.directory === "string" ? args.directory : "";
+      if (directory && (!path.isAbsolute(directory) || !fs.statSync(directory).isDirectory()))
+        throw new AppError("invalidPayload", "搜索目录不可用");
       const query = searchQueryWithCategory(args.query, args.category, args.mode);
       if (!query)
         return {
@@ -57,6 +80,7 @@ export function createSearchCommands(ctx: Pick<RuntimeContext, "isHostView" | "p
         parameters: {
           callerId,
           query,
+          ...(directory ? { directory } : {}),
           ...(args.sort ? { sort: args.sort, sortDesc: args.sortDesc === true } : {}),
           ...(args.limit ? { limit: args.limit } : {}),
         },
@@ -71,5 +95,5 @@ export function createSearchCommands(ctx: Pick<RuntimeContext, "isHostView" | "p
       parameters: { callerId, selection: args.selection },
     });
   }
-  return { search_action: run } satisfies Record<string, CommandHandler>;
+  return { search_action: run, search_workspace: run } satisfies Record<string, CommandHandler>;
 }

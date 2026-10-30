@@ -118,60 +118,6 @@ it("enters a mode through its real candidate and Escape returns subsequent queri
   }
 });
 
-it("opens AI translation from the dictionary mode", async () => {
-  const mode = "spark233.translation:dictionary";
-  const entry: LauncherItem = {
-    id: "dictionary-entry",
-    pluginId: "spark233.translation",
-    commandId: "search",
-    kind: "command",
-    title: "本地词典",
-  };
-  const state: LauncherState = {
-    firstRun: false,
-    pluginsReady: true,
-    commands: [
-      {
-        id: "search",
-        pluginId: entry.pluginId,
-        title: entry.title,
-        keywords: [],
-        enabled: true,
-        mode,
-      },
-      { id: "translate", pluginId: entry.pluginId, title: "AI 翻译", keywords: [], enabled: true },
-    ],
-    modeOptions: { [mode]: { directoryFilter: false } },
-  };
-  const desktop = installDesktopBridge({
-    launcher_state: () => state,
-    launcher_take_workspace: () => undefined,
-    launcher_cancel_query: () => undefined,
-    launcher_enter_mode: () => undefined,
-    plugins_activate: () => ({}),
-    launcher_query: (value) => {
-      const query = value as { sessionId: string; mode?: string };
-      return {
-        sessionId: query.sessionId,
-        requestId: "dictionary",
-        revision: 0,
-        items: query.mode ? [] : [entry],
-      };
-    },
-  });
-  const view = await render(<Launcher />);
-  try {
-    await page.getByRole("option", { name: /^本地词典/ }).click();
-    await page.getByRole("button", { name: "AI 翻译", exact: true }).click();
-    expect(
-      desktop.calls.filter((call) => call.command === "plugins_activate").at(-1)?.args,
-    ).toEqual({ pluginId: "spark233.translation", commandId: "translate" });
-  } finally {
-    await view.unmount();
-    desktop.restore();
-  }
-});
-
 it("keeps an active OCR task visible when cancellation cannot be confirmed", async () => {
   let finishTask!: (value: unknown) => void;
   const pending = new Promise<unknown>((resolve) => {
@@ -188,7 +134,14 @@ it("keeps an active OCR task visible when cancellation cannot be confirmed", asy
     firstRun: false,
     pluginsReady: true,
     commands: [
-      { id: "ocr", pluginId: entry.pluginId, title: entry.title, keywords: [], enabled: true },
+      {
+        id: "ocr",
+        pluginId: entry.pluginId,
+        title: entry.title,
+        keywords: [],
+        enabled: true,
+        progress: { title: "取消文字识别", cancelCommand: "cancel" },
+      },
     ],
   };
   const desktop = installDesktopBridge({

@@ -48,6 +48,7 @@ it("ignores late searches and keeps original/plain-text copy bound to the curren
   let releaseDetail: ((value: unknown) => void) | undefined;
   const commands: ClipboardRequest[] = [];
   const desktop = installDesktopBridge({
+    window_control: () => false,
     clipboard_action: async (args) => {
       const command = args as ClipboardRequest;
       commands.push(command);

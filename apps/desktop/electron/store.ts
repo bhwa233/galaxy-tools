@@ -2,7 +2,8 @@
 import fs from "node:fs";
 import { HostConfigStore } from "./host-config.js";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { z } from "zod";
 import { DEFAULT_NOTE_EDITOR_MODE } from "../src/features/notes/types.js";
 import type { AppConfig } from "../src/features/settings/types.js";
 import type {
@@ -166,12 +167,100 @@ export class NoteStore {
     const { preview: _, ...rest } = meta;
     return { ...rest, content: fs.readFileSync(this.notePath(meta), "utf8") };
   }
+  private revisionRoot(id: string): string {
+    return confined(this.dataDir, ".history", component(id));
+  }
+  private revisionIndex(id: string) {
+    const file = confined(this.revisionRoot(id), "index.json");
+    return fs.existsSync(file)
+      ? z
+          .array(
+            z.object({
+              versionId: z.uuid(),
+              savedAt: z.string(),
+              title: z.string(),
+              bytes: z.number().nonnegative(),
+            }),
+          )
+          .max(10000)
+          .parse(readJson(file))
+      : [];
+  }
+  private fingerprint(note: Note): string {
+    return createHash("sha256")
+      .update(JSON.stringify([note.title, note.content, note.category, note.editorMode]))
+      .digest("hex");
+  }
+  history(id: string) {
+    const current = this.get(id);
+    return { entries: this.revisionIndex(id), currentRevision: this.fingerprint(current) };
+  }
+  revision(id: string, versionId: string): SaveNoteRequest {
+    this.get(id);
+    if (!this.revisionIndex(id).some((entry) => entry.versionId === versionId))
+      throw new AppError("noteNotFound", "找不到此历史版本");
+    const value = z
+      .object({
+        title: z.string(),
+        content: z.string(),
+        category: z.string(),
+        editorMode: z.enum(["text", "markdown"]).optional(),
+      })
+      .parse(readJson(confined(this.revisionRoot(id), z.uuid().parse(versionId) + ".json")));
+    return request(value);
+  }
+  restoreRevision(id: string, versionId: string, expectedRevision: string): Note {
+    const current = this.get(id);
+    if (this.fingerprint(current) !== expectedRevision)
+      throw new AppError("noteChanged", "便签已被修改，请重新查看后恢复");
+    return this.save({ ...this.revision(id, versionId), category: current.category }, id);
+  }
+  private rememberRevision(note: Note): void {
+    const entries = this.revisionIndex(note.id),
+      versionId = randomUUID();
+    const { title, content, category, editorMode } = note;
+    const serialized = JSON.stringify({ title, content, category, editorMode });
+    atomicWrite(confined(this.revisionRoot(note.id), versionId + ".json"), serialized);
+    atomicWrite(
+      confined(this.revisionRoot(note.id), "index.json"),
+      JSON.stringify([
+        {
+          versionId,
+          savedAt: new Date().toISOString(),
+          title,
+          bytes: Buffer.byteLength(serialized),
+        },
+        ...entries,
+      ]),
+    );
+  }
+  private trimRevisions(id: string): void {
+    const entries = this.revisionIndex(id);
+    let bytes = 0;
+    const kept = entries.filter((entry, index) => {
+      bytes += entry.bytes;
+      return index === 0 || (index < 30 && bytes <= 64 * 1024 * 1024);
+    });
+    atomicWrite(confined(this.revisionRoot(id), "index.json"), JSON.stringify(kept));
+    for (const entry of entries)
+      if (!kept.some((item) => item.versionId === entry.versionId))
+        fs.rmSync(confined(this.revisionRoot(id), entry.versionId + ".json"), { force: true });
+  }
   save(value: SaveNoteRequest, id?: string): Note {
     const req = request(value),
       notes = this.metadata(),
       old = id ? notes.find((note) => note.id === id) : undefined;
     if (id && !old) throw new AppError("noteNotFound", "找不到便签", { noteId: id });
     id ??= randomUUID();
+    if (old) {
+      const previous = this.get(id);
+      if (
+        previous.content !== req.content ||
+        previous.title !== req.title ||
+        (req.editorMode && previous.editorMode !== req.editorMode)
+      )
+        this.rememberRevision(previous);
+    }
     const now = new Date().toISOString();
     const meta: NoteMetadata = {
       id,
@@ -205,6 +294,13 @@ export class NoteStore {
       // Case-only renames on Windows can refer to the same newly saved file.
       if (source.toLowerCase() !== target.toLowerCase() && fs.existsSync(source))
         fs.unlinkSync(source);
+    }
+    if (old) {
+      try {
+        this.trimRevisions(id);
+      } catch (error) {
+        console.error("note-history-retention", error);
+      }
     }
     const { preview: _, ...rest } = meta;
     return { ...rest, content: req.content };
@@ -308,7 +404,12 @@ export class NoteStore {
     if (!fs.existsSync(dir)) return [];
     const removed: string[] = [];
     for (const file of fs.readdirSync(dir))
-      if (!content.includes(`images/${noteId}/${file}`)) {
+      if (
+        !content.includes(`images/${noteId}/${file}`) &&
+        !this.revisionIndex(noteId).some((entry) =>
+          this.revision(noteId, entry.versionId).content.includes(`images/${noteId}/${file}`),
+        )
+      ) {
         fs.unlinkSync(confined(dir, file));
         removed.push(file);
       }
@@ -332,6 +433,7 @@ export class NoteStore {
     // Copy then switch config; keep the source as a recovery copy, including images and layout.
     for (const item of [
       "notes",
+      ".history",
       "images",
       "backgrounds",
       "metadata.json",

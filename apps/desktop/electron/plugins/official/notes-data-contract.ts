@@ -16,6 +16,9 @@ export interface NotesDataParameters {
   initialize: { locale?: string };
   "note.list": { category?: string };
   "note.get": { id: string };
+  "note.history": { id: string };
+  "note.revision": { id: string; versionId: string };
+  "note.restore": { id: string; versionId: string; expectedRevision: string };
   "note.save": { request: SaveNoteRequest; id?: string };
   "note.append": { id: string; content: string };
   "note.delete": { id: string };
@@ -47,6 +50,9 @@ export interface NotesDataResults {
   initialize: { version: 1 };
   "note.list": NoteMetadata[];
   "note.get": Note;
+  "note.history": import("../../../src/features/notes/types.js").NoteHistory;
+  "note.revision": SaveNoteRequest;
+  "note.restore": Note;
   "note.save": Note;
   "note.append": Note;
   "note.delete": null;

@@ -1,4 +1,4 @@
-import type { PluginContext } from "@spark233/sdk";
+import type { PluginContext, PluginCommand } from "@spark233/sdk";
 
 export interface LauncherCommand {
   id: string;
@@ -9,11 +9,15 @@ export interface LauncherCommand {
   /** Opaque host routing key; the frontend sends it back unchanged. */
   mode?: string;
   enabled: boolean;
+  launcher?: PluginCommand["launcher"];
+  progress?: PluginCommand["progress"];
 }
 export interface LauncherState {
   firstRun: boolean;
   catalogSignature?: string;
   commands: LauncherCommand[];
+  pluginIcons?: Record<string, string>;
+  pluginIconMonochrome?: Record<string, boolean>;
   pluginsReady: boolean;
   contextLabel?: string;
   contextRevision?: number;

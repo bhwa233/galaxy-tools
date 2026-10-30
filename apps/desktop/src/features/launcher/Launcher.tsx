@@ -4,23 +4,15 @@ import {
   clearLauncherContext,
   setLauncherComposition,
 } from "./api";
-import {
-  PluginIcon,
-  pluginActionCommands,
-  pluginEntryCommands,
-  pluginKeywordOnlyCommands,
-} from "../plugins/PluginIcon";
-import { activatePlugin } from "../plugins/api";
+import { PluginIcon } from "../plugins/PluginIcon";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
-  lazy,
-  Suspense,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { AppWindowIcon, ArrowLeftIcon, ArrowRightIcon, SettingsIcon, XIcon } from "lucide-react";
@@ -60,8 +52,6 @@ import {
 } from "@/components/ui/context-menu";
 import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
 import { LauncherItemActions } from "./LauncherItemActions";
-import { prepareHostWindow } from "../windows/hostPreparation";
-import type { SearchPreview } from "../search/SearchPreviewDialog";
 import { openSettingsWindow } from "../settings/api";
 import {
   cancelLauncherQuery,
@@ -84,27 +74,6 @@ import type {
   LauncherState,
 } from "./types";
 
-const OcrWorkspace = lazy(() =>
-  import("../ocr/OcrWorkspace").then((module) => ({ default: module.OcrWorkspace })),
-);
-const ScreenshotHistoryWorkspace = lazy(() =>
-  import("../screenshot/ScreenshotHistoryWorkspace").then((module) => ({
-    default: module.ScreenshotHistoryWorkspace,
-  })),
-);
-const SearchWorkspace = lazy(() =>
-  import("../search/SearchWorkspace").then((module) => ({ default: module.SearchWorkspace })),
-);
-const TranslationWorkspace = lazy(() => import("../translation/TranslationWorkspace"));
-const ClipboardPanel = lazy(() =>
-  import("./ClipboardPanel").then((module) => ({ default: module.ClipboardPanel })),
-);
-const SearchPreviewDialog = lazy(() =>
-  import("../search/SearchPreviewDialog").then((module) => ({
-    default: module.SearchPreviewDialog,
-  })),
-);
-
 function message(value: unknown): string {
   return value instanceof Error
     ? value.message
@@ -124,11 +93,14 @@ export function Launcher() {
   const [mode, setMode] = useState<{ key: string; title: string }>();
   const [directory, setDirectory] = useState<string>();
   const [scopeRevision, setScopeRevision] = useState(0);
+  const [handoffRevision, setHandoffRevision] = useState(0);
   const [result, setResult] = useState<LauncherQueryResult>();
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(false);
-  const [ocrExecuting, setOcrExecuting] = useState(false);
-  const ocrTasks = useRef(0);
+  const [progressCommands, setProgressCommands] = useState<
+    Array<{ key: string; command: LauncherCommand }>
+  >([]);
+  const progressTasks = useRef(new Map<string, LauncherCommand>());
   const [composing, setComposing] = useState(false);
   const [error, setError] = useState<string>();
   const [stateError, setStateError] = useState<string>();
@@ -137,26 +109,10 @@ export function Launcher() {
   const [actionItem, setActionItem] = useState<LauncherItem>();
   const [preferenceBusy, setPreferenceBusy] = useState(false);
   const [preferenceError, setPreferenceError] = useState<string>();
-  const [preview, setPreview] = useState<SearchPreview>();
-  const [previewOpen, setPreviewOpen] = useState(false);
   const routeParams = new URLSearchParams(window.location.search);
   const [panelVisible, setPanelVisible] = useState(() => routeParams.get("preload") !== "1");
   const panelVisibleRef = useRef(panelVisible);
-  const compactWorkspace = routeParams.get("compact") === "1";
-  const separateWorkspace = routeParams.has("workspace");
-  const [workspace, setWorkspace] = useState<{ kind: string; result?: unknown } | undefined>(() =>
-    ["clipboard", "translation", "screenshot-history", "search"].includes(
-      routeParams.get("workspace") ?? "",
-    )
-      ? { kind: routeParams.get("workspace")!, result: undefined }
-      : undefined,
-  );
   const acceptResult = (value: unknown) => {
-    if (value && typeof value === "object" && "searchPreview" in value) {
-      setPreview(value.searchPreview as SearchPreview);
-      setPreviewOpen(true);
-      return;
-    }
     if (value && typeof value === "object" && "launcherResults" in value) {
       const next = value.launcherResults as LauncherQueryResult;
       setResult((previous) =>
@@ -179,8 +135,6 @@ export function Launcher() {
       );
       return;
     }
-    if (value && typeof value === "object" && "workspace" in value && "result" in value)
-      setWorkspace({ kind: String(value.workspace), result: value.result });
   };
   const [executing, setExecuting] = useState<string[]>([]);
   const [onboardingBusy, setOnboardingBusy] = useState(false);
@@ -201,59 +155,55 @@ export function Launcher() {
   const focusInput = useCallback(() => {
     if (panelVisibleRef.current) requestAnimationFrame(() => input.current?.focus());
   }, []);
-  const acceptWorkspace = useCallback(
-    (value: { kind: string; result?: unknown }) => {
-      if (
-        value.kind === "launcher-input" &&
-        value.result &&
-        typeof value.result === "object" &&
-        "text" in value.result &&
-        typeof value.result.text === "string" &&
-        "revision" in value.result &&
-        typeof value.result.revision === "number"
-      ) {
-        if (value.result.revision <= inputRevision.current) return;
-        inputRevision.current = value.result.revision;
-        queryGeneration.current++;
-        actionGeneration.current++;
-        setWorkspace(undefined);
-        setMode(undefined);
-        setDirectory(undefined);
-        setQuery(value.result.text);
-        setResult(undefined);
-        setSelected("");
-        setError(undefined);
-        setQueryError(undefined);
-        setActionItem(undefined);
-        setPreviewOpen(false);
-        focusInput();
-        return;
-      }
-      if (
-        value.kind === "launcher-mode" &&
-        value.result &&
-        typeof value.result === "object" &&
-        "key" in value.result &&
-        typeof value.result.key === "string" &&
-        "title" in value.result &&
-        typeof value.result.title === "string"
-      ) {
-        queryGeneration.current++;
-        setWorkspace(undefined);
-        setMode({ key: value.result.key, title: value.result.title });
-        setDirectory(undefined);
-        setQuery("");
-        setResult(undefined);
-        setSelected("");
-        setError(undefined);
-        setQueryError(undefined);
-        setActionItem(undefined);
-        setPreviewOpen(false);
-        focusInput();
-      } else setWorkspace({ kind: value.kind, result: value.result });
-    },
-    [focusInput],
-  );
+  const acceptWorkspace = useEffectEvent((value: { kind: string; result?: unknown }) => {
+    if (
+      value.kind === "launcher-input" &&
+      value.result &&
+      typeof value.result === "object" &&
+      "text" in value.result &&
+      typeof value.result.text === "string" &&
+      "revision" in value.result &&
+      typeof value.result.revision === "number"
+    ) {
+      if (value.result.revision <= inputRevision.current) return;
+      inputRevision.current = value.result.revision;
+      queryGeneration.current++;
+      // Even unchanged text replaces the query invalidated by this handoff.
+      setHandoffRevision((revision) => revision + 1);
+      actionGeneration.current++;
+      setMode(undefined);
+      setDirectory(undefined);
+      setQuery(value.result.text);
+      setResult(undefined);
+      setSelected("");
+      setError(undefined);
+      setQueryError(undefined);
+      setActionItem(undefined);
+      focusInput();
+      return;
+    }
+    if (
+      value.kind === "launcher-mode" &&
+      value.result &&
+      typeof value.result === "object" &&
+      "key" in value.result &&
+      typeof value.result.key === "string" &&
+      "title" in value.result &&
+      typeof value.result.title === "string"
+    ) {
+      queryGeneration.current++;
+      setHandoffRevision((revision) => revision + 1);
+      setMode({ key: value.result.key, title: value.result.title });
+      setDirectory(undefined);
+      setQuery("");
+      setResult(undefined);
+      setSelected("");
+      setError(undefined);
+      setQueryError(undefined);
+      setActionItem(undefined);
+      focusInput();
+    }
+  });
   const refreshState = useCallback(async () => {
     const generation = ++stateGeneration.current;
     stateRequest.current = generation;
@@ -316,10 +266,8 @@ export function Launcher() {
           setSelected("");
           setLoading(false);
           setActionItem(undefined);
-          setPreviewOpen(false);
         }
       }),
-      listen("ocr-result", (event) => setWorkspace({ kind: "ocr", result: event.payload })),
       listen("open-workspace", (event) => {
         const generation = ++workspaceGeneration.current;
         void takeLauncherWorkspace()
@@ -348,20 +296,17 @@ export function Launcher() {
         if (mounted.current && workspaceRequest === workspaceGeneration.current)
           setError(message(value));
       });
-    const drop = separateWorkspace
-      ? Promise.resolve(() => {})
-      : getCurrentWindow().onDragDropEvent((event) => {
-          const generation = ++stateGeneration.current;
-          void setLauncherContextFiles(event.payload.paths)
-            .then((next) => {
-              if (!mounted.current || generation !== stateGeneration.current) return;
-              setWorkspace(undefined);
-              stateSnapshot.current = next;
-              setState(next);
-              focusInput();
-            })
-            .catch((value) => setError(message(value)));
-        });
+    const drop = getCurrentWindow().onDragDropEvent((event) => {
+      const generation = ++stateGeneration.current;
+      void setLauncherContextFiles(event.payload.paths)
+        .then((next) => {
+          if (!mounted.current || generation !== stateGeneration.current) return;
+          stateSnapshot.current = next;
+          setState(next);
+          focusInput();
+        })
+        .catch((value) => setError(message(value)));
+    });
     for (const subscription of subscriptions)
       void subscription.catch((value: unknown) => {
         if (mounted.current) setError(message(value));
@@ -395,9 +340,8 @@ export function Launcher() {
   );
   useEffect(() => {
     const generation = ++queryGeneration.current;
-    if (!panelVisible || !state || composing || workspace) {
+    if (!panelVisible || !state || composing) {
       setLoading(false);
-      if (workspace) setQueryError(undefined);
       return;
     }
     const sessionId = crypto.randomUUID();
@@ -460,9 +404,9 @@ export function Launcher() {
     mode?.key,
     directory,
     scopeRevision,
+    handoffRevision,
     queryStateKey,
     composing,
-    workspace,
     panelVisible,
   ]);
 
@@ -477,19 +421,8 @@ export function Launcher() {
     setQueryError(undefined);
     focusInput();
   };
-  const closeWorkspace = async () => {
-    await prepareHostWindow();
-    if (separateWorkspace) {
-      await getCurrentWindow().close();
-    } else {
-      await hideLauncher();
-      setWorkspace(undefined);
-    }
-  };
   const escape = () => {
-    if (workspace || separateWorkspace) {
-      void closeWorkspace().catch((value) => setError(message(value)));
-    } else if (mode) returnFromMode();
+    if (mode) returnFromMode();
     else if (query) {
       setQuery("");
       setError(undefined);
@@ -504,8 +437,7 @@ export function Launcher() {
         event.defaultPrevented ||
         event.isComposing ||
         composition.current ||
-        actionItem ||
-        previewOpen
+        actionItem
       )
         return;
       event.preventDefault();
@@ -548,10 +480,9 @@ export function Launcher() {
     if (tasks.current.has(key)) return;
     tasks.current.add(key);
     setExecuting([...tasks.current]);
-    const isOcr = item.pluginId === "spark233.ocr" && item.commandId === "ocr";
-    if (isOcr) {
-      ocrTasks.current++;
-      setOcrExecuting(true);
+    if (command?.progress) {
+      progressTasks.current.set(key, command);
+      setProgressCommands([...progressTasks.current].map(([key, command]) => ({ key, command })));
     }
     setError(undefined);
     const generation = queryGeneration.current;
@@ -573,10 +504,10 @@ export function Launcher() {
         setError(message(value));
     } finally {
       tasks.current.delete(key);
-      if (isOcr) ocrTasks.current--;
+      progressTasks.current.delete(key);
       if (mounted.current) {
         setExecuting([...tasks.current]);
-        if (isOcr) setOcrExecuting(ocrTasks.current > 0);
+        setProgressCommands([...progressTasks.current].map(([key, command]) => ({ key, command })));
       }
     }
   };
@@ -767,20 +698,18 @@ export function Launcher() {
   const resultHint = result?.hint;
   const modeOptions = mode ? state?.modeOptions?.[mode.key] : undefined;
   const pluginEntries = new Map<string, string>();
-  for (const command of state?.commands ?? [])
-    if (command.enabled && !pluginEntries.has(command.pluginId))
-      pluginEntries.set(command.pluginId, pluginEntryCommands[command.pluginId] ?? command.id);
-  const isKeywordOnlyEntry = (item: LauncherItem) =>
-    !!item.commandId && !!pluginKeywordOnlyCommands[item.pluginId]?.includes(item.commandId);
-  const isActionCommand = (item: LauncherItem) =>
-    !!item.commandId && !!pluginActionCommands[item.pluginId]?.includes(item.commandId);
+  for (const command of state?.commands ?? []) {
+    if (!command.enabled) continue;
+    if (command.launcher?.role === "entry") pluginEntries.set(command.pluginId, command.id);
+    else if (!command.launcher && !pluginEntries.has(command.pluginId))
+      pluginEntries.set(command.pluginId, command.id);
+  }
   const isGridEntry = (item: LauncherItem) =>
-    (item.kind === "application" ||
-      item.preference?.kind === "application" ||
-      ((item.kind === "command" || item.preference?.kind === "command") &&
-        item.commandId === pluginEntries.get(item.pluginId) &&
-        !isKeywordOnlyEntry(item))) &&
-    !isActionCommand(item);
+    item.kind === "application" ||
+    item.preference?.kind === "application" ||
+    ((item.kind === "command" || item.preference?.kind === "command") &&
+      item.commandId === pluginEntries.get(item.pluginId) &&
+      !["action", "keyword-only", "hidden"].includes(findCommand(item)?.launcher?.role ?? ""));
   const gridItems = result?.items.filter(isGridEntry) ?? [];
   const renderItem = (item: LauncherItem, grid = false) => {
     const command = findCommand(item);
@@ -810,7 +739,11 @@ export function Launcher() {
         }}
       >
         {item.kind === "command" || item.preference?.kind === "command" ? (
-          <PluginIcon pluginId={item.pluginId} className="size-7 shrink-0 text-primary" />
+          <PluginIcon
+            icon={state?.pluginIcons?.[item.pluginId]}
+            monochrome={state?.pluginIconMonochrome?.[item.pluginId]}
+            className="size-7 shrink-0 text-primary"
+          />
         ) : item.icon && /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(item.icon) ? (
           <img
             src={item.icon}
@@ -874,7 +807,7 @@ export function Launcher() {
     if (!item.preference && !item.actions?.length) return card;
     return (
       <ContextMenu key={key}>
-        <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+        <ContextMenuTrigger render={card} />
         <ContextMenuContent onKeyDown={(event) => event.stopPropagation()}>
           <ContextMenuGroup>
             <LauncherItemActions
@@ -892,85 +825,6 @@ export function Launcher() {
       </ContextMenu>
     );
   };
-  const close = () => {
-    void closeWorkspace().catch((value) => setError(message(value)));
-  };
-  const workspaceFrame = (content: ReactNode) => (
-    <main className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      {displayError && (
-        <Alert variant="destructive">
-          <AlertDescription>{displayError}</AlertDescription>
-        </Alert>
-      )}
-      <Suspense
-        fallback={
-          <div className="flex flex-1 items-center justify-center">
-            <Spinner />
-          </div>
-        }
-      >
-        {content}
-      </Suspense>
-    </main>
-  );
-  const availableCommands = new Set(
-    state?.commands
-      .filter((command) => command.enabled)
-      .map((command) => `${command.pluginId}:${command.id}`),
-  );
-  const availableTextTargets = {
-    notes: availableCommands.has("spark233.notes:new"),
-    dictionary: availableCommands.has("spark233.translation:search"),
-    ai: availableCommands.has("spark233.translation:translate"),
-  };
-  const unavailableTargetReason = t("plugins.actionUnavailable");
-  if (workspace?.kind === "ocr")
-    return workspaceFrame(
-      <OcrWorkspace
-        initialResult={workspace.result}
-        onClose={close}
-        onResult={acceptResult}
-        availableTargets={{
-          notes: availableTextTargets.notes,
-          dictionary: availableTextTargets.dictionary,
-          translate: availableTextTargets.ai,
-        }}
-        unavailableTargetReason={unavailableTargetReason}
-      />,
-    );
-  if (workspace?.kind === "translation")
-    return workspaceFrame(
-      <TranslationWorkspace
-        initialResult={workspace.result}
-        onClose={close}
-        notesAvailable={availableTextTargets.notes}
-        unavailableTargetReason={unavailableTargetReason}
-      />,
-    );
-  if (workspace?.kind === "clipboard")
-    return workspaceFrame(<ClipboardPanel compact={compactWorkspace} onClose={close} />);
-  if (workspace?.kind === "search") {
-    const requested =
-      workspace.result && typeof workspace.result === "object" && "query" in workspace.result
-        ? workspace.result.query
-        : undefined;
-    const initialQuery = typeof requested === "string" ? requested : undefined;
-    return workspaceFrame(
-      <SearchWorkspace
-        key={initialQuery ?? "search"}
-        initialQuery={initialQuery}
-        onClose={close}
-      />,
-    );
-  }
-  if (workspace?.kind === "screenshot-history")
-    return workspaceFrame(<ScreenshotHistoryWorkspace onClose={close} />);
-  if (separateWorkspace)
-    return workspaceFrame(
-      <div className="flex items-center justify-center p-6">
-        <Spinner />
-      </div>,
-    );
   return (
     <main className="flex h-screen flex-col gap-3 overflow-hidden bg-background p-4 text-foreground">
       <header className="electron-title-drag flex shrink-0 flex-wrap items-center justify-between gap-2">
@@ -1094,14 +948,15 @@ export function Launcher() {
         </Alert>
       )}
 
-      {ocrExecuting && (
+      {progressCommands.map(({ key, command }) => (
         <Button
+          key={key}
           size="sm"
           variant="outline"
           onClick={() => {
             void invoke("launcher_execute", {
-              pluginId: "spark233.ocr",
-              commandId: "cancel",
+              pluginId: command.pluginId,
+              commandId: command.progress!.cancelCommand,
             })
               .then((result) => {
                 if (
@@ -1111,15 +966,17 @@ export function Launcher() {
                   result.ok === false
                 )
                   throw new Error(
-                    typeof result.reason === "string" ? result.reason : "OCR cancellation failed",
+                    typeof result.reason === "string"
+                      ? result.reason
+                      : "Plugin cancellation failed",
                   );
               })
               .catch((value) => setError(message(value)));
           }}
         >
-          {t("launcher.cancelOcr")}
+          {command.progress?.title}
         </Button>
-      )}
+      ))}
       <Command
         label={t("launcher.searchLabel", { defaultValue: "搜索应用、插件与操作" })}
         shouldFilter={false}
@@ -1168,35 +1025,6 @@ export function Launcher() {
                 )}
               </>
             )}
-            {mode.key.startsWith("spark233.search:") && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  void openSettingsWindow({
-                    page: "plugins",
-                    pluginId: "spark233.search",
-                    tab: "config",
-                  }).catch((value) => setError(message(value)));
-                }}
-              >
-                {searchText("title")}
-              </Button>
-            )}
-            {mode.key === "spark233.translation:dictionary" &&
-              availableCommands.has("spark233.translation:translate") && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    void activatePlugin("spark233.translation", "translate").catch((value) =>
-                      setError(message(value)),
-                    );
-                  }}
-                >
-                  {t("launcher.aiTranslate")}
-                </Button>
-              )}
           </div>
         )}
         <CommandInput
@@ -1283,7 +1111,10 @@ export function Launcher() {
             )
               .map((group) => ({
                 ...group,
-                title: group.pluginId === "spark233.applications" ? undefined : group.title,
+                title:
+                  group.items.length && group.items.every((item) => item.kind === "application")
+                    ? undefined
+                    : group.title,
                 items: group.items.filter((item) => !isGridEntry(item)),
               }))
               .filter((group) => group.items.length || group.status === "error" || group.hint)
@@ -1362,18 +1193,6 @@ export function Launcher() {
           </div>
         </DialogContent>
       </Dialog>
-      {previewOpen && (
-        <Suspense fallback={null}>
-          <SearchPreviewDialog
-            value={preview}
-            open={previewOpen}
-            onOpenChange={(open) => {
-              setPreviewOpen(open);
-              if (!open) focusInput();
-            }}
-          />
-        </Suspense>
-      )}
     </main>
   );
 }

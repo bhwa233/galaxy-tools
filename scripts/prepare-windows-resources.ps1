@@ -15,11 +15,8 @@ try {
     }
     $capture = Join-Path $repoRoot 'local-build/spark233/native-capture-p4'
     & ./scripts/native-capture/prepare.ps1 -OutputRoot $capture -SkipReleases
-    & ./scripts/native-capture/adapt.ps1 -OutputRoot $capture
     & ./scripts/native-capture/prepare-ocr-deps.ps1 @tools
-    & ./scripts/native-capture/build.ps1 @tools -OutputRoot $capture `
-        -OpenCVDirectory (Join-Path $repoRoot 'local-build/spark233/native-capture/deps/opencv/x64/vc18/staticlib') `
-        -OnnxRuntimeRoot (Join-Path $repoRoot 'local-build/spark233/native-capture/deps/onnxruntime-win-x64-1.23.2')
+    & ./scripts/native-capture/build.ps1 @tools -OutputRoot $capture -WithOcr
     & ./scripts/native-capture/prepare-vc-runtime.ps1
     & ./scripts/native-clipboard/build.ps1 @tools -BuildRoot (Join-Path $repoRoot 'local-build/spark233/native-clipboard-p6')
     & ./scripts/native-search/build.ps1 @tools

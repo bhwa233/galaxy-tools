@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { SearchHistoryStore } from "../plugins/official/search-history.js";
 import { describe, expect, it } from "vitest";
 import { searchQueryWithCategory } from "./search-commands.js";
 
@@ -28,4 +32,31 @@ describe("search workspace category tokens", () => {
     expect(value.length).toBeLessThanOrEqual(8192);
     expect(value.endsWith("ext:xls;xlsx;xlsm;xlsb")).toBe(true);
   });
+});
+
+it("persists search conditions and clears recents without deleting saved searches", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "search-history-"));
+  try {
+    const store = new SearchHistoryStore(root);
+    const conditions = {
+      query: "合同",
+      directory: root,
+      mode: "files" as const,
+      category: "word" as const,
+      sortId: "mtime-desc" as const,
+    };
+    store.update("remember", conditions);
+    store.update("remember", conditions);
+    store.update("save", conditions);
+    const reopened = new SearchHistoryStore(root);
+    expect(reopened.get().recent).toHaveLength(1);
+    expect(reopened.get().saved[0]).toMatchObject(conditions);
+    reopened.update("clear");
+    expect(reopened.get().recent).toEqual([]);
+    expect(reopened.get().saved[0]).toMatchObject(conditions);
+    reopened.update("remove", undefined, reopened.get().saved[0].id);
+    expect(reopened.get().saved).toEqual([]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -4,6 +4,7 @@ export declare function applyPluginTheme(
     version: "1.0.0";
     effective: "light" | "dark";
     preference: "light" | "dark" | "system";
+    accent?: "green" | "blue" | "purple" | "orange" | "rose";
   },
   root?: HTMLElement,
 ): void;

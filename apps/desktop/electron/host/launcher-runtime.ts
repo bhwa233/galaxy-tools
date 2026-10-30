@@ -161,9 +161,21 @@ export function createLauncherRuntime(
     return openLauncherWindow();
   }
 
+  function assertHostAvailable(): void {
+    if (ctx.maintenance)
+      throw new AppError(
+        "maintenance",
+        ctx.ui("正在备份或恢复，请稍后重试", "A backup or restore is running. Try again shortly."),
+      );
+    if (ctx.hostShutdown.isQuitting)
+      throw new AppError(
+        "hostStopping",
+        ctx.ui("正在保存并退出，请稍后重试", "Saving and quitting. Try again shortly."),
+      );
+  }
+
   async function prepareLauncher(): Promise<void> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
+    assertHostAvailable();
     const closing = ctx.windows.get("launcher");
     if (closing) await ctx.releasing.get(closing.id);
     if (ctx.clipboardRuntime && !hostWindowFocused()) {
@@ -184,8 +196,7 @@ export function createLauncherRuntime(
 
   // Both normal opening and selection handoff use the same launcher window.
   function openLauncherWindow(): BrowserWindow {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
+    assertHostAvailable();
     const layout: Layout = ctx.layouts.get("launcher") ?? {
       label: "launcher",
       view: "launcher",
@@ -193,6 +204,7 @@ export function createLauncherRuntime(
       visible: true,
       topmost: false,
     };
+    layout.hostPage = "launcher";
     const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const { width, height } = ctx.safeBounds({
       width: layout.bounds.width,
@@ -236,19 +248,20 @@ export function createLauncherRuntime(
         topmost: false,
       }),
       visible: false,
+      hostPage: "launcher",
     };
     ctx.createWindow(layout);
   }
 
   async function activateHostCommand(pluginId: string, commandId: string): Promise<unknown> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("maintenance", "宿主当前正在保存或恢复");
+    assertHostAvailable();
     const manager = ctx.pluginHost?.manager;
     const entry = manager
       ?.commands()
       .find((item) => item.pluginId === pluginId && item.command.id === commandId);
     if (!manager || !entry) throw new AppError("pluginDisabled", "插件操作当前不可用");
-    if (!entry.command.mode) return manager.activate(pluginId, { commandId });
+    if (!entry.command.mode || entry.command.window)
+      return manager.activate(pluginId, { commandId });
     if (!commandMatchesSourceApplication(entry.command))
       throw new AppError("pluginSourceUnavailable", "此操作需要来源程序上下文");
     const metadata = manager.describe(pluginId);
@@ -272,90 +285,6 @@ export function createLauncherRuntime(
     ctx.emit("open-workspace", payload, win);
   }
 
-  async function showOfficialWorkspace(
-    kind: "translation" | "ocr" | "screenshot-history" | "search",
-    result: unknown,
-  ): Promise<void> {
-    if (!launcherPresentationGuard()()) return;
-    endLauncherExecutionQuery();
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError(
-        "maintenance",
-        ctx.ui("正在备份或恢复，请稍后重试", "A backup or restore is running. Try again shortly."),
-      );
-    // The screenshot history belongs to the screenshot plugin; other workspaces
-    // keep the one-to-one kind/plugin naming.
-    const pluginId = kind === "screenshot-history" ? "spark233.screenshot" : `spark233.${kind}`;
-    if (ctx.officialRenderers.get(pluginId)?.scope.state !== "active")
-      throw new Error("The plugin workspace is not available");
-    const layout: Layout = ctx.layouts.get(kind) ?? {
-      label: kind,
-      view: "launcher",
-      pluginId,
-      workspace: kind,
-      bounds: ctx.safeBounds({ width: 1040, height: 700 }),
-      visible: true,
-      topmost: false,
-    };
-    layout.visible = true;
-    const win = ctx.createWindow(layout),
-      payload = { kind, result };
-    ctx.workspaceRequests.set(ctx.labelOf(win), payload);
-    ctx.emit("open-workspace", payload, win);
-  }
-
-  async function showClipboardWorkspace(presentation?: {
-    compact: boolean;
-    position: "cursor" | "edge";
-  }): Promise<void> {
-    if (!launcherPresentationGuard()()) return;
-    endLauncherExecutionQuery();
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
-    if (presentation?.compact) {
-      if (ctx.clipboardRuntime && !hostWindowFocused())
-        await ctx.clipboardRuntime
-          .rememberTarget()
-          .catch((error) => console.error("clipboard-target", error));
-      if (!launcherPresentationGuard()()) return;
-      const point = screen.getCursorScreenPoint(),
-        area = screen.getDisplayNearestPoint(point).workArea;
-      const layout: Layout = ctx.layouts.get("clipboard-quick") ?? {
-        label: "clipboard-quick",
-        view: "launcher",
-        pluginId: "spark233.clipboard",
-        workspace: "clipboard",
-        compact: true,
-        bounds: ctx.safeBounds({ width: 450, height: 400 }),
-        visible: true,
-        topmost: false,
-      };
-      layout.bounds = ctx.safeBounds({
-        ...layout.bounds,
-        x: presentation.position === "edge" ? area.x + area.width - layout.bounds.width : point.x,
-        y: point.y,
-      });
-      layout.visible = true;
-      ctx.createWindow(layout);
-      return;
-    }
-    if (ctx.clipboardRuntime && !hostWindowFocused())
-      await ctx.clipboardRuntime
-        .rememberTarget()
-        .catch((error) => console.error("clipboard-target", error));
-    if (!launcherPresentationGuard()()) return;
-    const layout: Layout = ctx.layouts.get("clipboard") ?? {
-      label: "clipboard",
-      view: "launcher",
-      pluginId: "spark233.clipboard",
-      workspace: "clipboard",
-      bounds: ctx.safeBounds({ width: 1040, height: 700 }),
-      visible: true,
-      topmost: false,
-    };
-    layout.visible = true;
-    ctx.createWindow(layout);
-  }
   return {
     launcherPresentationGuard,
     endLauncherExecutionQuery,
@@ -373,7 +302,5 @@ export function createLauncherRuntime(
     requestLauncher,
     preloadLauncher,
     activateHostCommand,
-    showOfficialWorkspace,
-    showClipboardWorkspace,
   };
 }

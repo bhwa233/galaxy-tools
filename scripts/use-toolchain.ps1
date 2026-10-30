@@ -1,18 +1,15 @@
 # Dot-source this file to select the repository's Node/pnpm in this shell.
-# Reuses the official Node distribution; it does not change global runtimes or install packages.
+# Prefer the selected nvm runtime; dependencies remain pinned by the repository.
 $sparkRepoRoot = Split-Path $PSScriptRoot -Parent
 $sparkNodeVersion = (Get-Content -LiteralPath (Join-Path $sparkRepoRoot '.node-version') -Raw).Trim()
-$sparkPortableRoot = Join-Path $env:LOCALAPPDATA "spark233/toolchains/node-v$sparkNodeVersion-win-x64"
-$sparkPortableExe = Join-Path $sparkPortableRoot 'node.exe'
-if (Test-Path -LiteralPath $sparkPortableExe) {
-  $sparkPreviousPath = $env:PATH
-  $env:PATH = $sparkPortableRoot + [IO.Path]::PathSeparator + $env:PATH
-  if ((& node --version) -ne "v$sparkNodeVersion") {
-    $env:PATH = $sparkPreviousPath
-    throw "The portable runtime does not match .node-version ($sparkNodeVersion)."
-  }
-} elseif ((& node --version) -ne "v$sparkNodeVersion") {
-  throw "Install official Node $sparkNodeVersion, or extract its Windows x64 ZIP to $sparkPortableRoot."
+if ($env:NVM_SYMLINK -and (Test-Path -LiteralPath (Join-Path $env:NVM_SYMLINK 'node.exe'))) {
+  $env:PATH = $env:NVM_SYMLINK + [IO.Path]::PathSeparator + $env:PATH
+}
+if ((& node --version) -ne "v$sparkNodeVersion" -and (Get-Command nvm.exe -ErrorAction SilentlyContinue)) {
+  & nvm.exe use $sparkNodeVersion
+}
+if ((& node --version) -ne "v$sparkNodeVersion") {
+  throw "Run nvm install $sparkNodeVersion and nvm use $sparkNodeVersion before selecting the toolchain."
 }
 $sparkPackageManager = (Get-Content -LiteralPath (Join-Path $sparkRepoRoot 'package.json') -Raw | ConvertFrom-Json).packageManager
 if ($sparkPackageManager -notmatch '^pnpm@([^+]+)') { throw 'packageManager must pin pnpm.' }

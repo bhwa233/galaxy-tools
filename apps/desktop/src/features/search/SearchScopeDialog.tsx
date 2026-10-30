@@ -1,3 +1,4 @@
+import { showToast } from "../../components/Toast";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -26,6 +27,7 @@ export interface SearchScopeDialogProps {
 /** Compose the existing form/dialog primitives; paths are validated by the host. */
 export function SearchScopeDialog({ open, onOpenChange }: SearchScopeDialogProps) {
   const { t } = useTranslation("search");
+  const { t: notificationText } = useTranslation();
   const inputId = useId();
   const [paths, setPaths] = useState("");
   const [extensions, setExtensions] = useState("");
@@ -91,6 +93,7 @@ export function SearchScopeDialog({ open, onOpenChange }: SearchScopeDialogProps
           },
         );
         setPaths(settings.excludedRoots.join("\n"));
+        showToast(notificationText("notifications.saved"), "success");
         onOpenChange(false);
       }
     } catch (value) {
@@ -110,12 +113,6 @@ export function SearchScopeDialog({ open, onOpenChange }: SearchScopeDialogProps
       <DialogContent
         className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-xl"
         showCloseButton={!operating.current && !serviceBusy}
-        onEscapeKeyDown={(event) => {
-          if (operating.current || serviceBusy) event.preventDefault();
-        }}
-        onInteractOutside={(event) => {
-          if (operating.current || serviceBusy) event.preventDefault();
-        }}
       >
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>

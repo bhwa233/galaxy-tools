@@ -76,6 +76,15 @@ export function validatePluginMetadata(
     throw new AppError("incompatiblePlugin", "插件与当前宿主版本不兼容");
   }
   if (
+    (manifest.ui?.icon ||
+      Object.keys(manifest.ui?.windows ?? {}).length ||
+      manifest.commands.some(
+        (command) => command.launcher || command.window || command.progress,
+      )) &&
+    !semver.subset(manifest.host, ">=1.3.0")
+  )
+    throw new AppError("incompatiblePlugin", "插件窗口声明需要声明最低宿主版本 1.3.0");
+  if (
     !manifest.platforms.some((platform) => platform === environment.platform) ||
     !manifest.architectures.some((arch) => arch === environment.arch)
   ) {
@@ -105,6 +114,37 @@ export function resolvePluginEntries(
     }
     return real;
   };
+  const icon = (
+    value: NonNullable<NonNullable<PluginPackageMetadata["spark233"]["ui"]>["icon"]>,
+  ) => {
+    for (const resource of [
+      value,
+      ...Object.values(value.themes ?? {}).flatMap((theme) => [theme.light, theme.dark]),
+    ])
+      for (const format of ["png", "ico"] as const) {
+        const relative = resource[format];
+        if (!relative) continue;
+        const file = entry(relative, format === "png" ? /\.png$/i : /\.ico$/i);
+        const bytes = fs.readFileSync(file);
+        if (
+          bytes.length > 1024 * 1024 ||
+          (format === "png"
+            ? !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+            : !bytes.subarray(0, 4).equals(Buffer.from([0, 0, 1, 0])))
+        )
+          throw new AppError("invalidPlugin", "插件图标格式不合法或超过大小限制");
+        if (
+          format === "png" &&
+          (bytes.length < 24 || bytes.readUInt32BE(16) > 1024 || bytes.readUInt32BE(20) > 1024)
+        )
+          throw new AppError("invalidPlugin", "插件图标超过 1024 像素");
+      }
+  };
+  if (metadata.spark233.ui?.icon) icon(metadata.spark233.ui.icon);
+  for (const window of Object.values(metadata.spark233.ui?.windows ?? {})) {
+    entry(window.entry, /\.html$/i);
+    if (window.icon) icon(window.icon);
+  }
   return {
     ...(metadata.spark233.entry ? { web: entry(metadata.spark233.entry, /\.html$/i) } : {}),
     ...(metadata.spark233.backend

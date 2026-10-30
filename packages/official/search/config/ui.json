@@ -1,0 +1,98 @@
+{
+  "defaults": {
+    "mode": "files",
+    "category": "all",
+    "sort": "relevance",
+    "pageSize": 60
+  },
+  "defaultDescending": {
+    "name": false,
+    "mtime": true,
+    "size": true
+  },
+  "categories": [
+    {
+      "id": "all",
+      "label": "categoryAll"
+    },
+    {
+      "id": "folder",
+      "label": "categoryFolder"
+    },
+    {
+      "id": "excel",
+      "label": "categoryExcel"
+    },
+    {
+      "id": "word",
+      "label": "categoryWord"
+    },
+    {
+      "id": "ppt",
+      "label": "categoryPpt"
+    },
+    {
+      "id": "pdf",
+      "label": "categoryPdf"
+    },
+    {
+      "id": "image",
+      "label": "categoryImage"
+    },
+    {
+      "id": "video",
+      "label": "categoryVideo"
+    },
+    {
+      "id": "audio",
+      "label": "categoryAudio"
+    },
+    {
+      "id": "archive",
+      "label": "categoryArchive"
+    }
+  ],
+  "sortOptions": [
+    {
+      "id": "relevance",
+      "label": "sortRelevance",
+      "desc": false
+    },
+    {
+      "id": "name-asc",
+      "field": "name",
+      "label": "sortNameAsc",
+      "desc": false
+    },
+    {
+      "id": "name-desc",
+      "field": "name",
+      "label": "sortNameDesc",
+      "desc": true
+    },
+    {
+      "id": "mtime-desc",
+      "field": "mtime",
+      "label": "sortModifiedDesc",
+      "desc": true
+    },
+    {
+      "id": "mtime-asc",
+      "field": "mtime",
+      "label": "sortModifiedAsc",
+      "desc": false
+    },
+    {
+      "id": "size-desc",
+      "field": "size",
+      "label": "sortSizeDesc",
+      "desc": true
+    },
+    {
+      "id": "size-asc",
+      "field": "size",
+      "label": "sortSizeAsc",
+      "desc": false
+    }
+  ]
+}

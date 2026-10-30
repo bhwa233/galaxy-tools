@@ -72,6 +72,9 @@ export class ShutdownCoordinator<Window> {
       await this.options.shutdownPlugins();
       await this.options.onCommit();
     } catch (error) {
+      // Saving has failed and automatic shutdown has stopped. A decision dialog
+      // may remain open, so it must not keep ordinary interaction fenced.
+      this.quitting = false;
       try {
         await this.options.onError(error);
       } catch (reportError) {

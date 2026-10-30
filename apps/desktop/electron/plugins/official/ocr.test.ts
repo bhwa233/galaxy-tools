@@ -1,3 +1,4 @@
+import { OcrSessions } from "./ocr-sessions.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -259,4 +260,59 @@ describe("OCR worker session and resource ownership", () => {
     expect(fs.existsSync(f.directory)).toBe(false);
     await expect(f.scope.stop("disable")).resolves.toEqual({ ok: true, errors: [] });
   });
+});
+
+// Native output retirement must not remove recoverable workspace edits or images.
+it("keeps edited OCR sessions across retirement and restart and validates draft spans", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ocr-drafts-"));
+  try {
+    const image = path.join(root, "input.png");
+    fs.writeFileSync(image, png);
+    const store = new OcrSessions(root),
+      id = randomUUID();
+    store.remember(
+      {
+        sessionId: id,
+        text: "hello",
+        width: 1,
+        height: 1,
+        source: { id: "temporary" },
+        lines: [
+          {
+            text: "hello",
+            box: [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 1],
+            ],
+          },
+        ],
+      },
+      image,
+    );
+    store.save(id, { text: "corrected", ranges: [{ start: 0, end: 9 }] });
+    for (let index = 0; index < 23; index++)
+      store.remember(
+        {
+          sessionId: randomUUID(),
+          text: "next",
+          width: 1,
+          height: 1,
+          source: { id: "temporary" },
+          lines: [],
+        },
+        image,
+      );
+    const reopened = new OcrSessions(root);
+    expect(reopened.get(id).draft?.text).toBe("corrected");
+    expect(fs.readFileSync(reopened.image(id))).toEqual(png);
+    expect(() => reopened.save(id, { text: "x", ranges: [{ start: 0, end: 4 }] })).toThrow();
+    expect(reopened.get(id).draft?.text).toBe("corrected");
+    expect(() => reopened.remove("../input.png")).toThrow();
+    reopened.remove(id);
+    expect(fs.existsSync(path.dirname(reopened.image(id)))).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

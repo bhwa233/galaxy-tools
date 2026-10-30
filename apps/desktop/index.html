@@ -14,6 +14,10 @@
           t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         }
         document.documentElement.setAttribute("data-theme", t);
+        var accent = localStorage.getItem("theme-accent");
+        if (["green", "blue", "purple", "orange", "rose"].includes(accent)) {
+          document.documentElement.setAttribute("data-accent", accent);
+        }
       })();
     </script>
     <style>

@@ -1,5 +1,6 @@
+import { Monitor, PanelLeft, Pin, Redo2, Trash2, Undo2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { memo } from "react";
-import { SlidingButtonGroup } from "../../components/SlidingButtonGroup";
 import { showToast } from "../../components/Toast";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../markdown/MarkdownPreviewLazy";
 import { NoteReminderButton } from "../reminders/NoteReminderButton";
@@ -121,36 +122,28 @@ export const EditorPane = memo(function EditorPane({
   byteSize,
 }: Props) {
   return (
-    <div className="flex-1 flex flex-col min-w-0">
-      <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
-        <div className="flex items-center gap-1">
-          <button
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-2">
+        <div className="flex flex-wrap items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
+            className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
             title={
               sidebarCollapsed
                 ? t("main.window.expandSidebar", { defaultValue: "展开侧栏" })
                 : t("main.window.collapseSidebar", { defaultValue: "收起侧栏" })
             }
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-            </svg>
-          </button>
+            <PanelLeft />
+          </Button>
 
           <div className="h-4 w-px bg-paper-deep/30 mx-1" />
 
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               if (selectedId) void toggleNotePin(selectedId);
             }}
@@ -158,29 +151,19 @@ export const EditorPane = memo(function EditorPane({
             aria-label={pinTitle}
             aria-pressed={selectedNotePinned}
             data-note-pin-toolbar="true"
-            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
+            className={`size-7 p-0 flex items-center justify-center rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
               selectedNotePinned
-                ? "text-bamboo bg-bamboo-mist/40 hover:text-red-400 hover:bg-danger-bg"
-                : "text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50"
+                ? "text-accent-foreground bg-accent hover:bg-accent"
+                : "text-muted-foreground hover:text-primary hover:bg-accent"
             }`}
             title={pinTitle}
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 17v5" />
-              <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z" />
-            </svg>
-          </button>
+            <Pin className={selectedNotePinned ? "fill-current" : undefined} />
+          </Button>
 
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             type="button"
             disabled={!selectedId || isExternal}
             data-show-desktop-toolbar="true"
@@ -196,90 +179,58 @@ export const EditorPane = memo(function EditorPane({
                 }
               })();
             }}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-accent cursor-pointer disabled:opacity-50"
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              aria-hidden="true"
-            >
-              <rect x="3" y="4" width="18" height="13" rx="2" />
-              <path d="M8 21h8m-4-4v4" />
-            </svg>
-          </button>
+            <Monitor aria-hidden="true" />
+          </Button>
 
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onMouseDown={(event) => event.preventDefault()}
             onClick={handleUndo}
             disabled={!selectedId}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
             title={t("main.editor.undo", { defaultValue: "撤销（Ctrl+Z）" })}
             aria-label={t("main.editor.undoLabel", { defaultValue: "撤销" })}
           >
-            <svg
-              data-testid="main-editor-undo-icon"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M9 14 4 9l5-5" />
-              <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
-            </svg>
-          </button>
+            <Undo2 data-testid="main-editor-undo-icon" aria-hidden="true" />
+          </Button>
 
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onMouseDown={(event) => event.preventDefault()}
             onClick={handleRedo}
             disabled={!selectedId}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
             title={t("main.editor.redo", { defaultValue: "重做（Ctrl+Y）" })}
             aria-label={t("main.editor.redoLabel", { defaultValue: "重做" })}
           >
-            <svg
-              data-testid="main-editor-redo-icon"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              style={{ transform: "scaleX(-1)" }}
-            >
-              <path d="M9 14 4 9l5-5" />
-              <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
-            </svg>
-          </button>
+            <Redo2 data-testid="main-editor-redo-icon" aria-hidden="true" />
+          </Button>
 
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => void saveCurrentNote(true)}
             disabled={!selectedId || saveState === "saving"}
-            className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            className="px-2.5 h-7 flex items-center justify-center rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
             title={t("common.save", { defaultValue: "保存" })}
           >
             {t("common.save", { defaultValue: "保存" })}
-          </button>
+          </Button>
 
           {deleteConfirm ? (
             <div
               className={`flex items-center gap-1 ml-1 ${deleteExiting ? "animate-delete-confirm-exit" : "animate-delete-confirm"}`}
             >
-              <span className="text-[11px] text-red-400 whitespace-nowrap">
+              <span className="text-xs text-destructive whitespace-nowrap">
                 {t("main.editor.confirmDelete", { defaultValue: "确认删除？" })}
               </span>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   setDeleteExiting(true);
@@ -289,11 +240,13 @@ export const EditorPane = memo(function EditorPane({
                     void handleDeleteNote();
                   }, 150);
                 }}
-                className="px-2 h-6 rounded-md text-[11px] text-cloud bg-red-400 hover:bg-red-500 transition-colors cursor-pointer whitespace-nowrap outline-none"
+                className="px-2 h-6 rounded-md text-xs text-destructive bg-destructive/10 hover:bg-destructive/20 transition-colors cursor-pointer whitespace-nowrap outline-none"
               >
                 {t("common.delete", { defaultValue: "删除" })}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   setDeleteExiting(true);
@@ -302,32 +255,22 @@ export const EditorPane = memo(function EditorPane({
                     setDeleteConfirm(false);
                   }, 150);
                 }}
-                className="px-2 h-6 rounded-md text-[11px] text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
+                className="px-2 h-6 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer outline-none"
               >
                 {t("common.cancel", { defaultValue: "取消" })}
-              </button>
+              </Button>
             </div>
           ) : (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setDeleteConfirm(true)}
               disabled={!selectedId}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-red-400 hover:bg-danger-bg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+              className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer disabled:opacity-50"
               title={t("noteMenu.delete", { defaultValue: "删除便签" })}
             >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="3,6 5,6 21,6" />
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-            </button>
+              <Trash2 />
+            </Button>
           )}
         </div>
 
@@ -336,20 +279,29 @@ export const EditorPane = memo(function EditorPane({
             noteId={selectedId}
             disabled={!selectedId || isExternal}
             onError={showToast}
+            className="text-muted-foreground! aria-pressed:bg-accent! aria-pressed:text-accent-foreground!"
           />
-          <SlidingButtonGroup
-            options={viewModeOptions}
-            value={viewMode}
-            onChange={setViewMode}
-            buttonClassName="px-3 py-1"
-          />
+          <div
+            role="group"
+            aria-label={t("main.editor.viewMode")}
+            className="flex items-center gap-1"
+          >
+            {viewModeOptions.map((option) => (
+              <Button
+                key={option.value}
+                size="sm"
+                variant={viewMode === option.value ? "secondary" : "ghost"}
+                aria-pressed={viewMode === option.value}
+                onClick={() => setViewMode(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div
-        key={noteTransitionKey}
-        className="animate-note-enter px-6 pt-4 pb-2 shrink-0 border-b border-paper-deep/15"
-      >
+      <div key={noteTransitionKey} className="shrink-0 border-b px-5 py-4">
         <input
           type="text"
           maxLength={isExternal ? undefined : NOTE_TITLE_MAX_LENGTH}
@@ -367,10 +319,10 @@ export const EditorPane = memo(function EditorPane({
           }}
           placeholder={t("common.untitledNote", { defaultValue: "无标题便签" })}
           disabled={!selectedId}
-          className="w-full text-[20px] font-display font-bold text-ink placeholder:text-ink-ghost/50 tracking-wide disabled:opacity-60"
+          className="w-full bg-transparent text-xl font-semibold text-foreground placeholder:text-muted-foreground tracking-wide disabled:opacity-60"
         />
-        <div className="flex items-center gap-3 mt-1.5">
-          <span className="text-[10px] text-ink-ghost font-mono tabular-nums truncate max-w-[200px]">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className="text-xs text-muted-foreground font-body tabular-nums truncate max-w-[200px]">
             {selectedExternalFile
               ? t("main.externalFile.label", {
                   path: selectedExternalFile.filePath,
@@ -380,19 +332,19 @@ export const EditorPane = memo(function EditorPane({
                 ? `${formatShortDate(selectedNote.updatedAt)} ${formatTime(selectedNote.updatedAt)}`
                 : "--"}
           </span>
-          <span className="text-[10px] text-ink-ghost/40">·</span>
-          <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
+          <span className="text-xs text-muted-foreground">·</span>
+          <span className="text-xs text-muted-foreground font-body tabular-nums">
             {t("common.wordCount", { count: charCount, defaultValue: "{{count}} 字" })}
           </span>
-          <span className="text-[10px] text-ink-ghost/40">·</span>
+          <span className="text-xs text-muted-foreground">·</span>
           <span
             key={saveState}
-            className={`text-[10px] font-mono tabular-nums animate-status-fade ${
+            className={`text-xs font-body tabular-nums ${
               saveState === "error"
-                ? "text-red-400"
+                ? "text-destructive"
                 : saveState === "dirty"
-                  ? "text-amber-500/70"
-                  : "text-bamboo/60"
+                  ? "text-muted-foreground"
+                  : "text-primary"
             }`}
           >
             {saveStateLabel[saveState]}
@@ -400,9 +352,9 @@ export const EditorPane = memo(function EditorPane({
         </div>
       </div>
 
-      <div key={viewMode} ref={splitContainerRef} className="flex-1 flex min-h-0 animate-view-fade">
+      <div key={viewMode} ref={splitContainerRef} className="flex-1 flex min-h-0">
         {!selectedId && !isLoading ? (
-          <div className="flex-1 flex items-center justify-center text-[13px] text-ink-ghost">
+          <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
             {t("main.editor.emptyHint", { defaultValue: "选择或新建一张便签" })}
           </div>
         ) : (
@@ -412,9 +364,11 @@ export const EditorPane = memo(function EditorPane({
                 className="flex flex-col min-h-0 shrink-0"
                 style={{ width: viewMode === "split" ? `${splitRatio * 100}%` : "100%" }}
               >
-                <div className="flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0">
+                <div className="flex shrink-0 flex-wrap items-center gap-0.5 px-4 py-2">
                   {toolbarButtons.map((button) => (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       key={button.label}
                       title={button.title}
                       onMouseDown={(e) => e.preventDefault()}
@@ -429,10 +383,10 @@ export const EditorPane = memo(function EditorPane({
                           );
                         }
                       }}
-                      className={`w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer ${button.style}`}
+                      className={`size-7 p-0 flex items-center justify-center rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer ${button.style}`}
                     >
                       {button.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
 
@@ -450,7 +404,7 @@ export const EditorPane = memo(function EditorPane({
                     onDrop={imageDropHandler}
                     onDragOver={imageDragOverHandler}
                     onScroll={handleEditorScroll}
-                    className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
+                    className="w-full h-full leading-[1.9] text-foreground font-body placeholder:text-muted-foreground"
                     style={{
                       fontSize: `${settingsConfig?.fontSize ?? 14}px`,
                       tabSize: `var(--tab-indent-size, 2)`,
@@ -467,14 +421,14 @@ export const EditorPane = memo(function EditorPane({
 
             {viewMode === "split" && (
               <div
-                className={`w-1.5 shrink-0 cursor-col-resize group relative flex items-center justify-center ${isResizingSplit ? "bg-bamboo/30" : "hover:bg-bamboo/20"} transition-colors`}
+                className={`w-1.5 shrink-0 cursor-col-resize group relative flex items-center justify-center ${isResizingSplit ? "bg-primary/30" : "hover:bg-primary/20"} transition-colors`}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   setIsResizingSplit(true);
                 }}
               >
                 <div
-                  className={`absolute inset-y-0 -left-1.5 -right-1.5 ${isResizingSplit ? "" : "group-hover:bg-bamboo/5"}`}
+                  className={`absolute inset-y-0 -left-1.5 -right-1.5 ${isResizingSplit ? "" : "group-hover:bg-primary/5"}`}
                 />
                 {/* 拖拽手柄指示器 */}
                 <div className="relative z-10 flex flex-col gap-[3px] opacity-0 group-hover:opacity-100 transition-opacity">
@@ -488,8 +442,8 @@ export const EditorPane = memo(function EditorPane({
             {viewMode === "split" && (
               <div className="flex flex-col min-h-0 min-w-0 flex-1">
                 {viewMode === "split" && (
-                  <div className="px-4 pt-2.5 pb-1 shrink-0">
-                    <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
+                  <div className="shrink-0 px-5 py-2">
+                    <span className="text-xs text-muted-foreground font-body ">
                       {t("main.editor.previewLabel", { defaultValue: "Preview" })}
                     </span>
                   </div>
@@ -514,37 +468,39 @@ export const EditorPane = memo(function EditorPane({
         )}
       </div>
 
-      <div className="flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0">
+      <div className="flex min-h-8 shrink-0 flex-wrap items-center justify-between gap-2 border-t bg-muted/20 px-4 py-1 text-muted-foreground">
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
+          <span className="text-xs text-muted-foreground font-body tabular-nums">
             {t("main.statusBar.lineNumber", {
               count: lineCount,
               defaultValue: "Ln {{count}}",
             })}
           </span>
-          <span className="text-[10px] text-ink-ghost/40">|</span>
-          <span className="text-[10px] text-ink-ghost font-mono">
+          <span className="text-xs text-muted-foreground">|</span>
+          <span className="text-xs text-muted-foreground font-body">
             {t("main.statusBar.format", { defaultValue: "Markdown + LaTeX" })}
           </span>
         </div>
         <div className="flex items-center gap-3">
           {selectedId && !isExternal && content.includes("images/") && (
             <>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 onClick={() => void handleCleanUnusedImages()}
-                className="text-[10px] text-ink-ghost hover:text-bamboo font-mono cursor-pointer transition-colors"
+                className="text-xs text-muted-foreground hover:text-primary font-body cursor-pointer transition-colors"
               >
                 {t("main.images.cleanUnused", { defaultValue: "清理未使用图片" })}
-              </button>
-              <span className="text-[10px] text-ink-ghost/40">|</span>
+              </Button>
+              <span className="text-xs text-muted-foreground">|</span>
             </>
           )}
-          <span className="text-[10px] text-ink-ghost font-mono">
+          <span className="text-xs text-muted-foreground font-body">
             {t("main.statusBar.encoding", { defaultValue: "UTF-8" })}
           </span>
-          <span className="text-[10px] text-ink-ghost/40">|</span>
-          <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
+          <span className="text-xs text-muted-foreground">|</span>
+          <span className="text-xs text-muted-foreground font-body tabular-nums">
             {t("main.statusBar.byteSize", { size: byteSize, defaultValue: "{{size}} KB" })}
           </span>
         </div>

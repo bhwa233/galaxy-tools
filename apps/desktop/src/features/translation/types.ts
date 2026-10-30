@@ -3,6 +3,10 @@ export interface DictionaryItem {
   title: string;
   description?: string;
 }
+export interface DictionaryHistory {
+  kind: "dictionary-history";
+  entries: { query: string; at: string }[];
+}
 export interface DictionaryEntryResult {
   kind: "dictionary-entry";
   entry: {
@@ -25,6 +29,8 @@ export interface TranslationResult {
   translatedText: string;
   cached: boolean;
   cacheSaved?: boolean;
+  historySaved?: boolean;
+  incomplete?: boolean;
 }
 export interface TranslationConfiguration {
   kind: "translation-config";
@@ -48,6 +54,7 @@ export interface TranslationHistoryEntry {
   model: string;
   cached: boolean;
   source: TranslationSource;
+  incomplete?: boolean;
 }
 export interface TranslationHistory {
   kind: "translation-history";

@@ -50,6 +50,63 @@ it("preloads without searching and cancels hidden queries before reopening", asy
   }
 });
 
+// A shortcut's empty selection used to invalidate the pending empty query
+// without changing any effect dependency, leaving the loading status forever.
+it("restarts an unchanged shortcut query and ignores its superseded response", async () => {
+  const requests: Array<{ sessionId: string; resolve: (value: unknown) => void }> = [];
+  const desktop = installDesktopBridge({
+    launcher_state: () => ({ firstRun: false, pluginsReady: true, commands: [] }),
+    launcher_take_workspace: () => undefined,
+    launcher_cancel_query: () => undefined,
+    launcher_query: (args) =>
+      new Promise((resolve) => {
+        requests.push({ sessionId: (args as { sessionId: string }).sessionId, resolve });
+      }),
+  });
+  const view = await render(<Launcher />);
+  const handoff = { kind: "launcher-input", result: { text: "", revision: 1 } };
+  try {
+    await expect.poll(() => requests.length).toBe(1);
+    desktop.emit("open-workspace", handoff);
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1].sessionId).not.toBe(requests[0].sessionId);
+    await expect
+      .poll(() =>
+        desktop.calls.some(
+          (call) =>
+            call.command === "launcher_cancel_query" &&
+            (call.args as { sessionId: string }).sessionId === requests[0].sessionId,
+        ),
+      )
+      .toBe(true);
+    requests[0].resolve({
+      sessionId: requests[0].sessionId,
+      requestId: "old",
+      revision: 0,
+      items: [{ id: "old", pluginId: "fixture", title: "过期查询结果" }],
+    });
+    requests[1].resolve({
+      sessionId: requests[1].sessionId,
+      requestId: "new",
+      revision: 0,
+      items: [{ id: "new", pluginId: "fixture", title: "当前查询结果" }],
+    });
+    await expect.element(page.getByText("当前查询结果", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("过期查询结果", { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByTestId("launcher-query-status")).not.toBeInTheDocument();
+    desktop.emit("open-workspace", handoff);
+    await expect
+      .poll(() => desktop.calls.filter((call) => call.command === "launcher_take_workspace").length)
+      .toBe(3);
+    expect(requests).toHaveLength(2);
+    await expect.element(page.getByText("当前查询结果", { exact: true })).toBeVisible();
+  } finally {
+    for (const request of requests) request.resolve({ sessionId: request.sessionId, items: [] });
+    await view.unmount();
+    desktop.restore();
+  }
+});
+
 it("fills the shared launcher with a selection and ignores stale handoffs after the user edits it", async () => {
   type Handoff = { kind: string; result: { text: string; revision: number } };
   let resolveInitial!: (value: Handoff) => void;
@@ -237,6 +294,13 @@ it("searches, navigates real candidates in both directions and executes the sele
       title: item.title,
       keywords: [],
       enabled: true,
+      launcher: {
+        role: ["owned-search-a", "owned-search-b", "owned-next-row"].includes(item.id)
+          ? "entry"
+          : item.id === "owned-applications-entry"
+            ? "keyword-only"
+            : "action",
+      },
     })),
   };
   const desktop = installDesktopBridge({

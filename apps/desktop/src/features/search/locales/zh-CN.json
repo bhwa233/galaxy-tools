@@ -1,5 +1,6 @@
 {
   "title": "文件搜索范围",
+  "workspaceTitle": "文件搜索",
   "workspaceClose": "关闭窗口",
   "chooseDirectory": "选择搜索目录",
   "allDirectories": "搜索全部目录",
@@ -94,5 +95,15 @@
   "typeCode": "代码文件",
   "typeText": "文本文件",
   "typeExecutable": "应用程序",
-  "typeFile": "文件"
+  "typeFile": "文件",
+  "queryDirectory": "限定目录",
+  "defaultDirectory": "默认搜索范围",
+  "resetDirectory": "恢复默认范围",
+  "recentSaved": "最近与常用搜索",
+  "saveQuery": "保存当前条件",
+  "historyHelp": "条件保存在本机插件数据中，最近与常用搜索各最多 50 条。重用时会重新查询，不复用旧结果。",
+  "savedQueries": "常用搜索",
+  "recentQueries": "最近搜索",
+  "removeQuery": "删除",
+  "clearRecent": "清空最近搜索"
 }

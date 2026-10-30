@@ -1,11 +1,13 @@
 import { memo } from "react";
+import { CircleArrowUp, Copy, Info, Minus, Settings, Square, StickyNote, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { NoteSession } from "./useNoteSession";
+import { usePluginWindow } from "../windows/PluginWindowContext";
+
 type Props = Pick<
   NoteSession,
   | "isMacOS"
   | "handleTitleBarMouseDown"
-  | "title"
-  | "selectedNote"
   | "t"
   | "handleOpenNotepad"
   | "handleOpenSettings"
@@ -22,8 +24,6 @@ type Props = Pick<
 export const NoteTitleBar = memo(function NoteTitleBar({
   isMacOS,
   handleTitleBarMouseDown,
-  title,
-  selectedNote,
   t,
   handleOpenNotepad,
   handleOpenSettings,
@@ -37,185 +37,84 @@ export const NoteTitleBar = memo(function NoteTitleBar({
   isMaximized,
   handleClose,
 }: Props) {
+  const windowInfo = usePluginWindow();
   return (
-    <div
-      className={`electron-title-drag relative z-10 flex items-center justify-between h-11 bg-paper/55 backdrop-blur-[1px] border-b border-paper-deep/30 shrink-0 select-none cursor-default ${
-        isMacOS ? "pl-20 pr-5" : "pl-5 pr-0"
-      }`}
+    <header
+      className={`electron-title-drag relative z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background pr-3 select-none ${isMacOS ? "pl-20" : "pl-4"}`}
       onMouseDown={handleTitleBarMouseDown}
     >
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="text-[15px] font-serif font-medium text-ink-soft tracking-wide leading-none">
-          spark233
-        </span>
-        <span className="text-[11px] text-ink-ghost font-body leading-none translate-y-px">—</span>
-        <span className="text-[11px] text-ink-faint font-body truncate max-w-[240px] leading-none translate-y-px">
-          {title ||
-            selectedNote?.preview ||
-            t("common.untitledNote", { defaultValue: "无标题便签" })}
-        </span>
-      </div>
-      <div className="flex items-center">
-        <button
+      <h1 className="truncate text-sm font-semibold">
+        {windowInfo?.title ?? t("main.window.manager")}
+      </h1>
+      <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={() => void handleOpenNotepad()}
-          className="w-10 h-11 flex items-center justify-center text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
-          title={t("main.window.quickNotepad", { defaultValue: "快捷便签" })}
+          title={t("main.window.quickNotepad")}
+          aria-label={t("main.window.quickNotepad")}
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M4 4h16v14H7l-3 3V4z" />
-            <path d="M8 9h8M8 13h5" />
-          </svg>
-        </button>
-        <button
+          <StickyNote />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={() => void handleOpenSettings()}
-          className="w-10 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
-          title={t("main.window.settings", { defaultValue: "设置" })}
+          title={t("main.window.settings")}
+          aria-label={t("main.window.settings")}
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </button>
-        <button
+          <Settings />
+        </Button>
+        <Button
+          variant="ghost"
+          size={aboutButtonExpanded ? "sm" : "icon-sm"}
           onClick={handleOpenAbout}
-          className={`h-11 flex items-center justify-center overflow-hidden text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-[width,padding,gap,background-color,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
-            aboutButtonExpanded ? "w-[72px] gap-1.5 px-3" : "w-10 gap-0 px-0"
-          }`}
           title={aboutButtonTitle}
           aria-label={aboutButtonTitle}
         >
           {aboutUpdateReminder.hasPendingUpdate ? (
-            <svg
-              data-testid="main-about-update-icon"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 16V8" />
-              <path d="m8.5 11.5 3.5-3.5 3.5 3.5" />
-            </svg>
+            <CircleArrowUp data-testid="main-about-update-icon" className="text-primary" />
           ) : (
-            <svg
-              data-testid="main-about-info-icon"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 16v-4" />
-              <path d="M12 8h.01" />
-            </svg>
+            <Info data-testid="main-about-info-icon" />
           )}
-          {aboutUpdateReminder.hasPendingUpdate ? (
-            <span
-              data-testid="main-about-update-label"
-              className={`overflow-hidden whitespace-nowrap text-[11px] font-body leading-none transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                aboutButtonExpanded
-                  ? "max-w-[24px] translate-x-0 opacity-100"
-                  : "max-w-0 translate-x-1 opacity-0"
-              }`}
-            >
-              {aboutButtonLabel}
-            </span>
-          ) : null}
-        </button>
-
+          {aboutUpdateReminder.hasPendingUpdate && aboutButtonExpanded && (
+            <span data-testid="main-about-update-label">{aboutButtonLabel}</span>
+          )}
+        </Button>
         {!isMacOS && (
           <>
-            <div className="w-px h-4 bg-paper-deep/30 mx-0.5" />
-
-            <button
+            <div className="mx-1 h-4 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={handleMinimize}
-              className="w-11 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-soft hover:bg-paper-warm transition-all cursor-pointer"
-              title={t("main.window.minimize", { defaultValue: "最小化" })}
+              title={t("main.window.minimize")}
+              aria-label={t("main.window.minimize")}
             >
-              <svg width="12" height="12" viewBox="0 0 12 12">
-                <rect x="1" y="5.5" width="10" height="1" fill="currentColor" rx="0.5" />
-              </svg>
-            </button>
-            <button
+              <Minus />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={handleMaximize}
-              className="w-11 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-soft hover:bg-paper-warm transition-all cursor-pointer"
-              title={
-                isMaximized
-                  ? t("main.window.restore", { defaultValue: "还原" })
-                  : t("main.window.maximize", { defaultValue: "最大化" })
-              }
+              title={t(isMaximized ? "main.window.restore" : "main.window.maximize")}
+              aria-label={t(isMaximized ? "main.window.restore" : "main.window.maximize")}
             >
-              {isMaximized ? (
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                >
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <path d="M3 5H2V2a1 1 0 0 1 1-1h5v1" />
-                </svg>
-              ) : (
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                >
-                  <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" />
-                </svg>
-              )}
-            </button>
-            <button
+              {isMaximized ? <Copy /> : <Square />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="hover:bg-destructive/10 hover:text-destructive"
               onClick={handleClose}
-              className="w-11 h-11 flex items-center justify-center text-ink-ghost hover:text-red-500 hover:bg-danger-bg transition-all cursor-pointer"
-              title={t("main.window.close", { defaultValue: "关闭" })}
+              title={t("main.window.close")}
+              aria-label={t("main.window.close")}
             >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 12 12"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              >
-                <path d="M2 2l8 8M10 2l-8 8" />
-              </svg>
-            </button>
+              <X />
+            </Button>
           </>
         )}
       </div>
-    </div>
+    </header>
   );
 });

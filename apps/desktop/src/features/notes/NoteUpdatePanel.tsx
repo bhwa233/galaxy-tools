@@ -20,8 +20,8 @@ export const NoteUpdatePanel = memo(function NoteUpdatePanel({
 }: Props) {
   return (
     <div
-      className={`relative shrink-0 overflow-hidden h-full transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-        sidePanelExpanded || mountedSidePanel ? "border-l border-paper-deep/20" : "border-l-0"
+      className={`relative shrink-0 bg-background overflow-hidden h-full transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        sidePanelExpanded || mountedSidePanel ? "border-l border-border" : "border-l-0"
       } ${
         settingsOverlay
           ? `absolute right-0 top-0 bottom-0 z-30 ${visibleSidePanel ? "w-[360px] shadow-xl" : "w-0"}`

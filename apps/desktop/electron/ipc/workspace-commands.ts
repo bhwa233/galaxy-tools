@@ -1,3 +1,5 @@
+import { OcrSessions } from "../plugins/official/ocr-sessions.js";
+import type { OcrDocument } from "../../shared/ocr-sessions.js";
 import { ClipboardItem, clipboard, dialog, nativeImage } from "electron";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -14,7 +16,7 @@ export function createWorkspaceCommands(
     RuntimeContext,
     | "isHostView"
     | "pluginHost"
-    | "showOfficialWorkspace"
+    | "openPluginWindow"
     | "translationSettings"
     | "officialRenderers"
     | "clipboardRuntime"
@@ -23,6 +25,38 @@ export function createWorkspaceCommands(
   >,
 ) {
   async function run({ command, args, layout }: CommandInvocation): Promise<unknown> {
+    if (command === "ocr_action") {
+      if (layout.pluginId !== "spark233.ocr")
+        throw new AppError("permissionDenied", "OCR session access requires its own workspace");
+      const manager = ctx.pluginHost?.manager,
+        renderer = ctx.officialRenderers.get("spark233.ocr");
+      if (
+        !manager ||
+        !renderer ||
+        (renderer.scope.state !== "active" &&
+          !(args.action === "save" && renderer.scope.state === "preparing"))
+      )
+        throw new Error("OCR plugin is unavailable");
+      const store = new OcrSessions(manager.dataDirectory("spark233.ocr"));
+      if (args.action === "list") return store.list();
+      const id = text(args.sessionId);
+      if (args.action === "remove") {
+        store.remove(id);
+        ctx.pluginImages.delete(`ocr-history:${id}`);
+        return { removed: true };
+      }
+      const value =
+        args.action === "save" ? store.save(id, args.document as OcrDocument) : store.get(id);
+      ctx.pluginImages.set(value.source.id, {
+        owner: renderer.scope.owner,
+        sessionId: id,
+        path: store.image(id),
+        resource: { id: value.source.id, kind: "image", mimeType: "image/png" },
+        width: value.width,
+        height: value.height,
+      });
+      return value;
+    }
     if (command === "text_action") {
       if (!ctx.isHostView(layout)) throw new AppError("permissionDenied", "文本动作仅限宿主工作区");
       if (!ctx.pluginHost) throw new Error("插件宿主尚未就绪");
@@ -34,11 +68,10 @@ export function createWorkspaceCommands(
           context: { kind: "text", text: content },
         });
       if (args.target === "dictionary") {
-        const result = await ctx.pluginHost.manager.activate("spark233.translation", {
-          commandId: "search",
-          parameters: { action: "search", query: content, limit: 20 },
+        await ctx.openPluginWindow("spark233.translation", "main", {
+          kind: "dictionary-input",
+          query: content,
         });
-        await ctx.showOfficialWorkspace("translation", result);
         return;
       }
       if (args.target === "translate") {
@@ -55,7 +88,10 @@ export function createWorkspaceCommands(
           commandId: "status",
           parameters: { action: "config_status" },
         });
-        await ctx.showOfficialWorkspace("translation", { kind: "translate-input", text: content });
+        await ctx.openPluginWindow("spark233.translation", "main", {
+          kind: "translate-input",
+          text: content,
+        });
         return;
       }
       throw new Error("未知文本动作");
@@ -65,7 +101,7 @@ export function createWorkspaceCommands(
         throw new AppError("permissionDenied", "翻译设置和工作区仅限宿主界面");
       if (!ctx.pluginHost) throw new Error("插件宿主尚未就绪");
       if (command === "translation_configure")
-        throw new AppError("obsoleteClient", "请在插件管理中保存翻译配置");
+        throw new AppError("obsoleteClient", "请在插件配置中保存翻译配置");
       if (args.action === "config_status") {
         const config = ctx.translationSettings();
         return {
@@ -85,6 +121,9 @@ export function createWorkspaceCommands(
         history_list: "history-list",
         history_delete: "history-delete",
         history_clear: "history-clear",
+        dictionary_history_list: "dictionary-history",
+        dictionary_history_delete: "dictionary-history",
+        dictionary_history_clear: "dictionary-history",
         preferences_get: "preferences-get",
         preferences_set: "preferences-set",
       };
@@ -242,6 +281,7 @@ export function createWorkspaceCommands(
   return {
     clipboard_action: run,
     clipboard_image_ocr: run,
+    ocr_action: run,
     screenshot_action: run,
     text_action: run,
     translation_action: run,

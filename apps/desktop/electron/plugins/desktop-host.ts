@@ -19,6 +19,7 @@ import type {
   PluginSummary,
   UpdateSummary,
   PluginUpdateSource,
+  PluginUpdateIssue,
   PackageTaskSnapshot,
 } from "../../src/features/plugins/types.js";
 import { AppError, atomicWrite, canonical, confined, readJson } from "../persistence.js";
@@ -44,7 +45,7 @@ import {
   type StagedPluginPackage,
 } from "./package-installer.js";
 import { resolveRegistryPluginPackage } from "./package-source.js";
-import { createWebPluginRuntime } from "./web-host.js";
+import { createWebPluginRuntime, type WebPluginController } from "./web-host.js";
 import { createNativePluginRuntime } from "./native-runtime.js";
 import { runPluginDataMigration } from "./migration.js";
 import { createCapabilityBroker } from "./capabilities.js";
@@ -53,6 +54,7 @@ import type { DiagnosticEvent, DiagnosticKind } from "../../src/features/diagnos
 import { PluginTrayStateStore } from "../host/plugin-tray.js";
 
 export interface DesktopPluginHostOptions {
+  getPluginIcon?: (pluginId: string) => string | undefined;
   root: string;
   hostVersion: string;
   getTheme: () => PluginTheme;
@@ -149,6 +151,12 @@ const bundledEntrySchema = z.strictObject({
   file: z.string().regex(/^[a-z0-9][a-z0-9.-]*\.tgz$/),
   integrity: z.string().transform(requirePackageIntegrity),
   displayName: z.string().min(1).max(160).optional(),
+  iconMonochrome: z.boolean().optional(),
+  icon: z
+    .string()
+    .max(2 * 1024 * 1024)
+    .regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/)
+    .optional(),
   translations: z
     .strictObject({
       "zh-CN": z.strictObject({ displayName: z.string().min(1).max(160) }).optional(),
@@ -186,6 +194,7 @@ export class DesktopPluginHost {
   private readonly packageTasks = new Map<string, PackageTask>();
   private offlineReservations = 0;
   private updates: UpdateSummary[] = [];
+  private updateIssues: PluginUpdateIssue[] = [];
   private lastChecked?: number;
   private error?: string;
   private bundleError?: string;
@@ -325,24 +334,40 @@ export class DesktopPluginHost {
           const stop = options.subscribeResourceRevocations((ids) => broker.revokeContext(ids));
           scope.own("event", { dispose: stop });
         }
-        const web = entries.web
-          ? await createWebPluginRuntime({
-              scope,
-              pluginRoot: installation.directory,
-              entryPath: entries.web,
-              manifest: metadata.spark233,
-              dataDir: this.manager.dataDirectory(installation.pluginId),
-              grant: installation.grant,
-              getTheme: options.getTheme,
-              subscribeTheme: options.subscribeTheme,
-              capabilityBroker: broker,
-              onCrash: (error) => {
-                void this.manager
-                  .reportCrash(scope.owner, error)
-                  .catch((failure) => console.error("plugin-crash-recovery", failure));
-              },
-            })
-          : undefined;
+        const webControllers = new Map<string, Promise<WebPluginController>>();
+        const getWeb = (
+          profile = Object.keys(metadata.spark233.ui?.windows ?? {})[0],
+          documentKey?: string,
+        ): Promise<WebPluginController | undefined> => {
+          if (!entries.web && !profile) return Promise.resolve(undefined);
+          const key = JSON.stringify([profile, documentKey]);
+          const known = webControllers.get(key);
+          if (known) return known;
+          const declaration = profile ? metadata.spark233.ui?.windows?.[profile] : undefined;
+          const opening = createWebPluginRuntime({
+            scope,
+            pluginRoot: installation.directory,
+            entryPath: declaration
+              ? confined(installation.directory, declaration.entry)
+              : entries.web!,
+            windowProfile: profile,
+            getLocale: options.getLocale,
+            manifest: metadata.spark233,
+            dataDir: this.manager.dataDirectory(installation.pluginId),
+            grant: installation.grant,
+            getTheme: options.getTheme,
+            subscribeTheme: options.subscribeTheme,
+            capabilityBroker: broker,
+            onCrash: (error) => {
+              void this.manager
+                .reportCrash(scope.owner, error)
+                .catch((failure) => console.error("plugin-crash-recovery", failure));
+            },
+          });
+          webControllers.set(key, opening);
+          return opening;
+        };
+        const web = await getWeb();
         if (!backend && !web) {
           if (!native) throw new Error("Plugin has no supported runtime entry");
           await native.checkStartup();
@@ -359,7 +384,26 @@ export class DesktopPluginHost {
             broker?.grantContext(activation.context);
             const result = await backend?.activate(activation);
             // An on-startup activation must not display a window.
-            if (activation.commandId || activation.context) await web?.activate(activation);
+            if (activation.commandId || activation.context) {
+              const profile = metadata.spark233.commands.find(
+                (command) => command.id === activation.commandId,
+              )?.window;
+              const declaration = profile ? metadata.spark233.ui?.windows?.[profile] : undefined;
+              const parameters = activation.parameters;
+              const documentKey =
+                declaration?.reuse === "document"
+                  ? parameters &&
+                    typeof parameters === "object" &&
+                    !Array.isArray(parameters) &&
+                    typeof parameters.documentId === "string" &&
+                    parameters.documentId.length <= 200
+                    ? parameters.documentId
+                    : randomUUID()
+                  : undefined;
+              const controller = await getWeb(profile, documentKey);
+              await controller?.checkStartup();
+              await controller?.activate(activation);
+            }
             return result;
           },
         };
@@ -556,6 +600,7 @@ export class DesktopPluginHost {
     this.pending = saved.pending;
     this.packageTasks.clear();
     this.updates = [];
+    this.updateIssues = [];
     this.lastChecked = saved.lastChecked;
     this.error = saved.error;
     this.changed();
@@ -699,6 +744,7 @@ export class DesktopPluginHost {
   private list(caller?: string): PluginManagementState {
     const plugins: PluginSummary[] = this.manager.list().map((record) => {
       let displayName = record.pluginId;
+      let iconMonochrome = false;
       let capabilities = record.grant.capabilities;
       let commands: PluginSummary["commands"] = [];
       let tray: PluginSummary["tray"];
@@ -712,6 +758,7 @@ export class DesktopPluginHost {
           this.options.getLocale?.() ?? "zh-CN",
         );
         displayName = localized.displayName;
+        iconMonochrome = localized.ui?.icon?.monochrome === true;
         tray = localized.tray;
         capabilities = metadata.spark233.capabilities;
         commands = localized.commands.filter(
@@ -727,6 +774,8 @@ export class DesktopPluginHost {
         pluginId: record.pluginId,
         packageName: record.packageName,
         displayName,
+        icon: this.options.getPluginIcon?.(record.pluginId),
+        iconMonochrome,
         version: record.version,
         enabled: record.enabled,
         status: lastError ? "error" : record.status,
@@ -753,6 +802,8 @@ export class DesktopPluginHost {
           packageName: entry.name,
           version: entry.version,
           displayName: entry.translations?.[locale]?.displayName ?? entry.displayName ?? entry.name,
+          icon: installed?.icon ?? entry.icon,
+          iconMonochrome: installed?.iconMonochrome ?? entry.iconMonochrome,
           ...(installed ? { installedVersion: installed.version } : {}),
           pending,
           canPrepare: !pending && (!installed || semver.gt(entry.version, installed.version)),
@@ -769,6 +820,7 @@ export class DesktopPluginHost {
         .filter((task) => task.owner === caller)
         .map((task) => this.taskSnapshot(task)),
       updates: this.updates,
+      ...(this.updateIssues.length ? { updateIssues: this.updateIssues } : {}),
       checking: !!this.checking,
       ...(this.lastChecked === undefined ? {} : { lastChecked: this.lastChecked }),
       ...([this.error, this.bundleError].filter(Boolean).length
@@ -1065,7 +1117,7 @@ export class DesktopPluginHost {
     const epoch = this.restoreEpoch;
     const operation = (async () => {
       const updates: UpdateSummary[] = [];
-      const errors: string[] = [];
+      const issues: PluginUpdateIssue[] = [];
       for (const installed of this.manager.list()) {
         const source = this.updateSource(installed);
         if (!source) continue;
@@ -1100,13 +1152,11 @@ export class DesktopPluginHost {
             typeof error === "object" &&
             (("statusCode" in error && error.statusCode === 404) ||
               ("code" in error && error.code === "E404"));
-          errors.push(
-            `${installed.pluginId}: ${
-              missing
-                ? "The update package is not published at the configured registry; the installed offline plugin remains available."
-                : String(error)
-            }`,
-          );
+          issues.push({
+            pluginId: installed.pluginId,
+            reason: missing ? "notPublished" : "failed",
+            ...(!missing ? { message: String(error) } : {}),
+          });
         }
       }
       if (
@@ -1117,13 +1167,14 @@ export class DesktopPluginHost {
       )
         return;
       this.updates = updates;
-      this.error = errors.length ? errors.join("\n") : undefined;
+      this.updateIssues = issues;
       this.lastChecked = Date.now();
       atomicWrite(this.checksFile, JSON.stringify({ lastChecked: this.lastChecked }));
     })();
     this.checking = operation
       .catch((error) => {
-        if (epoch === this.restoreEpoch) this.error = String(error);
+        if (epoch === this.restoreEpoch)
+          this.updateIssues = [{ reason: "failed", message: String(error) }];
       })
       .finally(() => {
         if (epoch !== this.restoreEpoch) return;

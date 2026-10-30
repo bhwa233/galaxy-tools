@@ -6,11 +6,14 @@ Windows 11 x64 桌面启动器与插件工具集，提供便签、截图、OCR�
 
 ## 开发
 
-工具链固定为 **Node.js 26.12.1 / pnpm 12.15.0**，以 `.node-version` 和 `package.json` 为准。Electron 内嵌的 Node 与开发工具链分别管理。
+工具链固定为 **Node.js 26.13.0 / pnpm 12.16.1**，以 `.node-version` 和 `package.json` 为准。Electron 内嵌的 Node 与开发工具链分别管理。
 
-安装对应版本后，从仓库根目录运行。Windows 已准备便携工具链时，在 Git Bash 中执行 `source scripts/use-toolchain.sh`；PowerShell 使用 `. ./scripts/use-toolchain.ps1`。选择脚本只影响当前终端，在另一个终端运行不会改变当前 Git Bash 的环境。
+Windows 使用 nvm 安装并切换 Node。在 Git Bash 中执行 `source scripts/use-toolchain.sh`；PowerShell 使用 `. ./scripts/use-toolchain.ps1`。脚本优先使用 nvm 的 Node；Windows 的 `nvm use` 会切换共享 Node 链接，pnpm 的路径选择只影响当前终端。
 
 ```sh
+nvm install 26.13.0
+nvm use 26.13.0
+source scripts/use-toolchain.sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
@@ -18,9 +21,9 @@ pnpm dev
 需要准备 pnpm 时，可使用官方 Node 的 npm 安装到项目工具链目录。npm 12 需要批准并重建 pnpm 自身的安装脚本：
 
 ```powershell
-npm.cmd install --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" --save-exact --no-package-lock pnpm@12.15.0
-npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" install-scripts approve pnpm
-npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.15.0" rebuild pnpm
+npm.cmd install --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.16.1" --save-exact --no-package-lock pnpm@12.16.1
+npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.16.1" install-scripts approve pnpm
+npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.16.1" rebuild pnpm
 . ./scripts/use-toolchain.ps1
 ```
 

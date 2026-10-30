@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-translation",
-  "version": "0.1.5",
+  "version": "0.1.8",
   "private": true,
   "description": "Offline ECDICT base dictionary and explicit OpenAI-compatible translation",
   "license": "MIT",
@@ -13,7 +13,9 @@
     "language.mjs",
     "language.d.mts",
     "data/**",
-    "README.md"
+    "README.md",
+    "assets/**",
+    "config/**"
   ],
   "type": "module",
   "scripts": {
@@ -21,6 +23,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "i18next": "26.5.11",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-i18next": "17.1.9",
     "vitest": "5.0.5"
   },
   "spark233": {
@@ -28,7 +36,7 @@
     "id": "spark233.translation",
     "displayName": "词典与翻译",
     "api": "^1.0.0",
-    "host": ">=1.0.0",
+    "host": ">=1.3.0 <2",
     "platforms": [
       "win32"
     ],
@@ -47,6 +55,55 @@
     ],
     "commands": [
       {
+        "id": "dictionary-history",
+        "title": "查词历史",
+        "internal": true,
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "workspace",
+        "title": "本地词典",
+        "keywords": [
+          "词典",
+          "查词",
+          "dict"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Local dictionary"
+          }
+        },
+        "launcher": {
+          "role": "entry"
+        },
+        "window": "main"
+      },
+      {
+        "id": "lookup",
+        "title": "查词",
+        "keywords": [
+          "词典",
+          "查词",
+          "dict"
+        ],
+        "inputs": [
+          "text"
+        ],
+        "match": "text",
+        "translations": {
+          "en-US": {
+            "title": "Look up word"
+          }
+        },
+        "launcher": {
+          "role": "action",
+          "input": "query"
+        },
+        "window": "main"
+      },
+      {
         "id": "search",
         "search": "word",
         "title": "本地词典",
@@ -60,7 +117,11 @@
           "en-US": {
             "title": "Local dictionary"
           }
-        }
+        },
+        "launcher": {
+          "role": "hidden"
+        },
+        "window": "main"
       },
       {
         "id": "detail",
@@ -70,6 +131,9 @@
           "en-US": {
             "title": "View dictionary entry"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -88,7 +152,13 @@
           "en-US": {
             "title": "AI translation"
           }
-        }
+        },
+        "launcher": {
+          "role": "hidden",
+          "withInput": true,
+          "preferSentence": true
+        },
+        "window": "main"
       },
       {
         "id": "configure",
@@ -98,6 +168,9 @@
           "en-US": {
             "title": "Configure translation service"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -108,6 +181,9 @@
           "en-US": {
             "title": "Cancel translation"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -118,6 +194,9 @@
           "en-US": {
             "title": "Translation service status"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -128,6 +207,9 @@
           "en-US": {
             "title": "Translation history"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -138,6 +220,9 @@
           "en-US": {
             "title": "Delete history entry"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -148,6 +233,9 @@
           "en-US": {
             "title": "Clear translation history"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -158,6 +246,9 @@
           "en-US": {
             "title": "Translation workspace preferences"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       },
       {
@@ -168,6 +259,9 @@
           "en-US": {
             "title": "Save translation workspace preferences"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       }
     ],
@@ -191,12 +285,96 @@
     },
     "entry": "renderer/index.html",
     "ui": {
-      "theme": "^1.0.0"
+      "theme": "^1.0.0",
+      "icon": {
+        "png": "assets/icon.png",
+        "ico": "assets/icon.ico",
+        "monochrome": true,
+        "themes": {
+          "green": {
+            "light": {
+              "png": "assets/theme-icons/green-light/icon.png",
+              "ico": "assets/theme-icons/green-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/green-dark/icon.png",
+              "ico": "assets/theme-icons/green-dark/icon.ico"
+            }
+          },
+          "blue": {
+            "light": {
+              "png": "assets/theme-icons/blue-light/icon.png",
+              "ico": "assets/theme-icons/blue-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/blue-dark/icon.png",
+              "ico": "assets/theme-icons/blue-dark/icon.ico"
+            }
+          },
+          "purple": {
+            "light": {
+              "png": "assets/theme-icons/purple-light/icon.png",
+              "ico": "assets/theme-icons/purple-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/purple-dark/icon.png",
+              "ico": "assets/theme-icons/purple-dark/icon.ico"
+            }
+          },
+          "orange": {
+            "light": {
+              "png": "assets/theme-icons/orange-light/icon.png",
+              "ico": "assets/theme-icons/orange-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/orange-dark/icon.png",
+              "ico": "assets/theme-icons/orange-dark/icon.ico"
+            }
+          },
+          "rose": {
+            "light": {
+              "png": "assets/theme-icons/rose-light/icon.png",
+              "ico": "assets/theme-icons/rose-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/rose-dark/icon.png",
+              "ico": "assets/theme-icons/rose-dark/icon.ico"
+            }
+          }
+        }
+      },
+      "windows": {
+        "main": {
+          "entry": "renderer/index.html",
+          "title": "词典与翻译",
+          "translations": {
+            "en-US": {
+              "title": "Dictionary and translation"
+            }
+          },
+          "size": {
+            "width": 1040,
+            "height": 700
+          },
+          "minSize": {
+            "width": 640,
+            "height": 420
+          },
+          "resizable": true,
+          "maximizable": true,
+          "taskbar": true,
+          "reuse": "singleton",
+          "presentation": "standard",
+          "legacyLabels": [
+            "translation"
+          ]
+        }
+      }
     },
     "tray": [
       {
         "id": "search",
-        "commandId": "search",
+        "commandId": "workspace",
         "order": 0
       },
       {

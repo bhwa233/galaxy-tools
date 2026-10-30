@@ -20,3 +20,10 @@ host-provided data/cache directories.
 
 Upstream: https://github.com/jimmgreen/pulse, pinned commit
 `c4fe01ed82fe091f495f531972a854aa32caac2b` (Apache-2.0).
+
+The search workspace supports a directory for the current query without changing
+the global index scope. Both filename and content queries retain existing private
+root and access checks. Recent searches and saved conditions are kept in the
+plugin's `workspace-history.json` (up to 50 each); they store query conditions,
+never result-selection handles, and run a fresh query when reused. Clearing
+recents preserves saved conditions.

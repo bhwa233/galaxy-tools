@@ -1,4 +1,6 @@
+import type { OcrSession, OcrSessionSummary } from "./ocr-sessions.js";
 import type { JsonValue } from "@spark233/sdk";
+import type { PluginWindowActivation, PluginWindowInfo } from "./plugin-windows.js";
 import type { z } from "zod";
 import type {
   CustomApplicationTarget,
@@ -70,6 +72,7 @@ export type TranslationResponse =
   | TranslationResult
   | DictionaryEntryResult
   | { kind: "dictionary-search"; items: DictionaryItem[] }
+  | { kind: "dictionary-history"; entries: { query: string; at: string }[] }
   | { cancelled: boolean }
   | TranslationHistory
   | TranslationPreferences;
@@ -123,6 +126,7 @@ interface CommandResults {
   applications_entries_get: CustomApplicationsSettings;
   applications_entries_pick: CustomApplicationTarget | undefined;
   applications_entries_save: CustomApplicationsSettings;
+  backup_schedule: import("./backup-schedule.js").BackupSchedule;
   backup_create: BackupReport | undefined;
   backup_inspect: BackupSelection | undefined;
   backup_restore: BackupReport;
@@ -174,12 +178,17 @@ interface CommandResults {
   launcher_return: void;
   launcher_state: LauncherState;
   launcher_take_workspace: { kind: string; result?: unknown } | undefined;
+  plugin_window_info: PluginWindowInfo;
+  plugin_window_take_activation: PluginWindowActivation | undefined;
   note_context_menu: void;
   note_set_pinned: void;
   note_window_states: NoteWindowSnapshot;
   notes_create: Note;
   notes_delete: void;
   notes_export_markdown: void;
+  notes_history: import("../src/features/notes/types.js").NoteHistory;
+  notes_revision: import("../src/features/notes/types.js").SaveNoteRequest;
+  notes_history_restore: Note;
   notes_get: Note;
   notes_import_markdown: Note;
   notes_list: NoteMetadata[];
@@ -212,7 +221,9 @@ interface CommandResults {
   reminders_set: ReminderItem;
   save_external_file: void;
   /** History rows, or the outcome of a per-row action. */
+  ocr_action: OcrSession | OcrSessionSummary[] | { removed: boolean };
   screenshot_action: JsonValue;
+  search_workspace: import("./search-history.js").SearchHistory;
   search_action: SearchActionResponse;
   search_scope_get: SearchScopeSettings;
   search_scope_pick: string | undefined;
@@ -301,7 +312,14 @@ export interface Events {
   "launcher-shown": undefined;
   "launcher-visibility-changed": { visible: boolean };
   "ocr-result": JsonValue;
+  "screenshot-result": {
+    resource: { id: string };
+    width: number;
+    height: number;
+    action: "copy" | "save" | "ocr";
+  };
   "open-workspace": { kind: string; result?: unknown };
+  "plugin-window-activation": PluginWindowActivation;
   "clipboard-changed": undefined;
   "plugin-settings-changed": { pluginId: string };
   "plugin-package-task-changed": PackageTaskSnapshot;

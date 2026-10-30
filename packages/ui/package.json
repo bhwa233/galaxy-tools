@@ -1,6 +1,6 @@
 {
   "name": "@spark233/ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "files": [
@@ -36,23 +36,23 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@base-ui/react": "1.9.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/react": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "class-variance-authority": "0.7.1",
     "cn": "0.5.0",
-    "lucide-react": "1.61.0",
-    "radix-ui": "1.8.1",
+    "lucide-react": "1.64.0",
     "react": "19.3.1",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.5"
   },
   "peerDependencies": {
+    "@base-ui/react": "^1.9.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
-    "lucide-react": "^1.61.0",
-    "radix-ui": "^1.8.0",
+    "lucide-react": "^1.64.0",
     "react": "^19.0.0"
   },
   "peerDependenciesMeta": {
@@ -65,10 +65,10 @@
     "cn": {
       "optional": true
     },
-    "radix-ui": {
+    "lucide-react": {
       "optional": true
     },
-    "lucide-react": {
+    "@base-ui/react": {
       "optional": true
     }
   },

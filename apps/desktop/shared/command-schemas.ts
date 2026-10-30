@@ -1,3 +1,4 @@
+import { searchConditions } from "./search-history.js";
 import { z } from "zod";
 import type { CommandName } from "./command-policies.js";
 import { configPatchSchema } from "./config-schema.js";
@@ -146,6 +147,7 @@ const translationRequest = z.discriminatedUnion("action", [
     action: z.literal("search"),
     query: z.string().max(8192),
     limit: z.number().int().min(1).max(100).optional(),
+    recordHistory: z.boolean().optional(),
   }),
   z.strictObject({ action: z.literal("detail"), id }),
   z.strictObject({
@@ -158,6 +160,12 @@ const translationRequest = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("history_list") }),
   z.strictObject({ action: z.literal("history_delete"), id }),
   z.strictObject({ action: z.literal("history_clear") }),
+  z.strictObject({ action: z.literal("dictionary_history_list") }),
+  z.strictObject({
+    action: z.literal("dictionary_history_delete"),
+    query: z.string().min(1).max(512),
+  }),
+  z.strictObject({ action: z.literal("dictionary_history_clear") }),
   z.strictObject({ action: z.literal("preferences_get") }),
   z.strictObject({
     action: z.literal("preferences_set"),
@@ -181,6 +189,15 @@ export const commandSchemas = {
     entries: z.array(application).max(1000),
     revision: z.string().max(200),
   }),
+  backup_schedule: z.discriminatedUnion("action", [
+    z.strictObject({ action: z.enum(["get", "choose", "run"]) }),
+    z.strictObject({
+      action: z.literal("save"),
+      enabled: z.boolean(),
+      intervalDays: z.number().int().min(1).max(30),
+      keep: z.number().int().min(1).max(100),
+    }),
+  ]),
   backup_create: empty,
   backup_inspect: empty,
   backup_restore: z.strictObject({ selectionId: z.uuid() }),
@@ -289,12 +306,21 @@ export const commandSchemas = {
   launcher_return: empty,
   launcher_state: empty,
   launcher_take_workspace: empty,
+  plugin_window_info: empty,
+  plugin_window_take_activation: empty,
   note_context_menu: empty,
   note_set_pinned: noteArgs.extend({ pinned: z.boolean() }),
   note_window_states: empty,
   notes_create: z.strictObject({ request: note }),
   notes_delete: z.strictObject({ id }),
   notes_export_markdown: fileArgs.extend({ id }),
+  notes_history: z.strictObject({ id }),
+  notes_revision: z.strictObject({ id, versionId: z.uuid() }),
+  notes_history_restore: z.strictObject({
+    id,
+    versionId: z.uuid(),
+    expectedRevision: z.string().length(64),
+  }),
   notes_get: z.strictObject({ id }),
   notes_import_markdown: fileArgs.extend({ category: z.string().max(512).optional() }),
   notes_list: empty,
@@ -337,14 +363,45 @@ export const commandSchemas = {
   }),
   save_external_file: fileArgs.extend({ content: text }),
   // History rows are addressed by their entry id; only list and clear are global.
+  ocr_action: z.discriminatedUnion("action", [
+    z.strictObject({ action: z.literal("list") }),
+    z.strictObject({ action: z.enum(["get", "remove"]), sessionId: id }),
+    z.strictObject({
+      action: z.literal("save"),
+      sessionId: id,
+      document: z.object({
+        text: z.string().max(4 * 1024 * 1024),
+        ranges: z
+          .array(
+            z
+              .object({
+                start: z.number().int().nonnegative(),
+                end: z.number().int().nonnegative(),
+              })
+              .nullable(),
+          )
+          .max(50000),
+      }),
+    }),
+  ]),
   screenshot_action: z.strictObject({
     action: z.enum(["list", "copy", "save", "ocr", "remove", "clear"]),
     id: id.optional(),
   }),
+  search_workspace: z.discriminatedUnion("action", [
+    z.strictObject({ action: z.enum(["get", "clear", "pick-directory"]) }),
+    z.strictObject({
+      action: z.enum(["remember", "save"]),
+      conditions: searchConditions,
+      name: z.string().max(120).optional(),
+    }),
+    z.strictObject({ action: z.literal("remove"), id: z.uuid() }),
+  ]),
   search_action: z.discriminatedUnion("action", [
     z.strictObject({
       action: z.literal("query"),
       query: z.string().max(8192),
+      directory: location.optional(),
       mode: z.enum(["files", "content"]),
       category: z
         .enum([
@@ -379,7 +436,16 @@ export const commandSchemas = {
   search_service_status: empty,
   settings_open: z.strictObject({
     page: z
-      .enum(["general", "shortcuts", "tray", "entries", "plugins", "backup", "diagnostics"])
+      .enum([
+        "general",
+        "shortcuts",
+        "tray",
+        "entries",
+        "plugins",
+        "marketplace",
+        "backup",
+        "diagnostics",
+      ])
       .optional(),
     pluginId: plugin.optional(),
     tab: z.enum(["config", "functions", "matching", "info"]).optional(),

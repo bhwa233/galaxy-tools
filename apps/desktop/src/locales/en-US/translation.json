@@ -1,4 +1,23 @@
 {
+  "notifications": {
+    "dismiss": "Dismiss notification",
+    "copied": "Copied",
+    "saved": "Saved",
+    "deleted": "Deleted",
+    "cleared": "Cleared",
+    "refreshed": "Refreshed",
+    "noteSaved": "Saved to notes",
+    "copyFailed": "Copy failed. Please try again.",
+    "exported": "Exported",
+    "backupCreated": "Backup created",
+    "backupRestored": "Backup restored",
+    "installed": "{{name}} installed",
+    "updated": "{{name}} updated",
+    "uninstalled": "{{name}} removed",
+    "enabled": "{{name}} enabled",
+    "disabled": "{{name}} disabled",
+    "region": "Notifications"
+  },
   "about": {
     "closeTitle": "Close About",
     "contributors": "Contributors",
@@ -12,6 +31,7 @@
     "version": "Version: v{{version}}"
   },
   "common": {
+    "retry": "Retry",
     "back": "Back",
     "blankNote": "Blank Note",
     "cancel": "Cancel",
@@ -89,6 +109,7 @@
       "externalConflict": "Another application changed this file. Overwrite the disk version with your current content?"
     },
     "editor": {
+      "viewMode": "Editor view",
       "confirmDelete": "Confirm delete?",
       "contentPlaceholder": "Start writing…",
       "emptyHint": "Select or create a note",
@@ -155,6 +176,7 @@
       "ul": "Unordered list"
     },
     "window": {
+      "manager": "Notes",
       "close": "Close",
       "collapseSidebar": "Collapse sidebar",
       "expandSidebar": "Expand sidebar",
@@ -292,9 +314,18 @@
     },
     "theme": {
       "dark": "Dark",
-      "label": "Theme",
+      "label": "Appearance",
       "light": "Light",
       "system": "System"
+    },
+    "accent": {
+      "label": "Accent color",
+      "description": "Applies to the launcher and all separate windows. Changes save automatically.",
+      "green": "Bamboo",
+      "blue": "Blue",
+      "purple": "Purple",
+      "orange": "Orange",
+      "rose": "Rose"
     },
     "tileColor": {
       "custom": "Custom",
@@ -525,7 +556,7 @@
     "welcome": {
       "title": "Welcome to spark233",
       "description": "Find actions and enter plugin workspaces here. Notes, search, and other tools are provided by their plugins.",
-      "keys": "Type a keyword, choose with ↑ ↓, and press Enter. Keep typing inside a mode, or press Esc to return. Enable or disable each plugin in plugin management.",
+      "keys": "Type a keyword, choose with ↑ ↓, and press Enter. Keep typing inside a mode, or press Esc to return. Enable or disable each plugin in the plugin marketplace.",
       "complete": "Finish setup and get started"
     },
     "error": "Unable to complete this action",
@@ -607,9 +638,20 @@
     "ai": "AI translation",
     "saveNote": "Save as note",
     "selection": "Original image and text selections",
-    "textLabel": "Recognized text — edit or select part of the text"
+    "textLabel": "Recognized text — edit or select part of the text",
+    "history": "Recent OCR",
+    "historyHelp": "Keep the latest 20 unedited results. Edited drafts remain until explicitly deleted.",
+    "draft": "Edited draft",
+    "noSessions": "No OCR sessions yet. Use Recent OCR to recover drafts.",
+    "removeSession": "Delete this OCR session?",
+    "removeSessionHelp": "The image, recognized text and draft will be permanently deleted.",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "fit": "Fit",
+    "selectionHelp": "Drag to select characters; Shift extends, Ctrl+A selects all. Hold Space or the middle button to pan. Older results and edited rows use line selection."
   },
   "screenshot": {
+    "refresh": "Refresh screenshot history",
     "close": "Close window",
     "history": "Screenshot history",
     "back": "Back to launcher",
@@ -648,6 +690,8 @@
     "permissions": "Granted capabilities"
   },
   "translation": {
+    "searchHistory": "Search history",
+    "searchHistoryEmpty": "No lookup history yet",
     "tooLong": "The source exceeds 20,000 characters. Split it into smaller passages. The full source has been preserved.",
     "title": "Dictionary and translation",
     "close": "Close window",
@@ -707,10 +751,12 @@
     "keyHint": "Leave blank to keep the saved key. A local service without authentication may leave this empty.",
     "clearKey": "Clear saved key",
     "saveConfig": "Save configuration",
-    "noteSaved": "Saved as a note"
+    "noteSaved": "Saved as a note",
+    "historySaveFailed": "Translation returned, but history could not be saved. Copy it or save a note.",
+    "historyIncomplete": "Older history stored up to 2,000 characters. This entry may be incomplete."
   },
   "plugins": {
-    "actionUnavailable": "This action is unavailable. Enable or recover the corresponding plugin in plugin management.",
+    "actionUnavailable": "This action is unavailable. Enable or recover the corresponding plugin in the plugin marketplace.",
     "catalog": {
       "title": "Official offline plugin catalog",
       "description": "Official plugins bundled with the installer. Works offline.",
@@ -730,7 +776,7 @@
       "releasing": "Stopping",
       "released": "Stopped"
     },
-    "title": "Plugin management",
+    "title": "Plugin marketplace",
     "description": "Plugins install after you confirm; updates wait for your approval.",
     "error": "Operation did not complete",
     "errorHint": "Expand the details to see the cause, then retry the affected action.",
@@ -773,6 +819,12 @@
     "installed": "Installed plugins",
     "checking": "Checking for plugin updates",
     "checkUpdates": "Check for updates",
+    "updateStatus": {
+      "title": "Update check notice",
+      "notPublished": "Update packages not found: {{count}}. Installed plugins remain available.",
+      "failed": "Some online update information could not be retrieved. Installed plugins remain available.",
+      "check": "Update check"
+    },
     "lastChecked": "Last checked",
     "loading": "Loading plugin status",
     "empty": {
@@ -1004,13 +1056,15 @@
     "pages": {
       "general": "General",
       "entries": "Launcher entries",
-      "plugins": "Plugins",
+      "plugins": "Plugin settings",
+      "marketplace": "Plugin marketplace",
       "backup": "Data & backups",
       "diagnostics": "Diagnostics",
       "shortcuts": "Keyboard shortcuts",
       "tray": "System tray"
     },
     "autoSave": "Changes save automatically",
+    "saved": "Changes saved",
     "unsaved": "Unsaved changes",
     "unsavedDescription": "Save before continuing, discard changes, or cancel to stay here.",
     "save": "Save changes",
@@ -1023,10 +1077,22 @@
     "maximize": "Maximize or restore",
     "backGeneral": "Back to general"
   },
+  "pluginMarket": {
+    "tabs": {
+      "discover": "Discover",
+      "installed": "Installed",
+      "tasks": "Install progress"
+    },
+    "noTasks": "No installation or update tasks",
+    "configurePlugin": "Configure plugin",
+    "managePlugin": "Manage plugin"
+  },
   "pluginConfig": {
+    "title": "Plugin settings",
+    "description": "Configure installed plugins, their features and matching rules.",
     "loading": "Loading settings…",
     "loadFirst": "Load settings first",
-    "noSettings": "This plugin has no editable settings. See its features and information.",
+    "noSettings": "This plugin has no editable settings. See its features or matching rules.",
     "explicitSave": "Changes apply only after Save changes",
     "saved": "Settings saved",
     "secretSet": "A key is configured. Leave blank to keep it, or save a new value to replace it.",
@@ -1036,7 +1102,7 @@
     "findPlugin": "Search plugins",
     "installAndTasks": "Install & tasks",
     "declaredRules": "Read-only rules declared by the plugin. Manage personal aliases in Launcher entries.",
-    "openSettings": "Configure in plugin management",
+    "openSettings": "Open plugin settings",
     "tabs": {
       "config": "Settings",
       "functions": "Features",
@@ -1080,10 +1146,21 @@
     "hideHint": "Hide to tray and keep content"
   },
   "commandSettings": {
+    "mainProgram": "Main application",
+    "pluginNavigation": "Shortcut groups",
+    "hostDescription": "Set global shortcuts for the launcher and application.",
+    "pluginDescription": "Set shortcuts for this plugin's actions. Switching plugins keeps unsaved changes.",
+    "bindingCount": "Assigned {{assigned}} / {{total}}",
+    "staleBindings": "Stale bindings",
+    "staleDescription": "The plugin was uninstalled or the action was removed. Clear old bindings and save to release their shortcuts.",
+    "clearBinding": "Clear binding",
+    "noStaleBindings": "No stale shortcut bindings.",
+    "noPlugins": "No matching plugins.",
+    "noActions": "This plugin has no actions that support shortcut bindings.",
     "manageShortcuts": "Manage shortcuts",
-    "shortcutsDescription": "Manage global shortcuts for host and plugin actions. Save to apply; disabling a plugin releases its bindings and keeps your preferences.",
+    "shortcutsDescription": "Choose the main application or a plugin, then set global shortcuts for its actions. Save to apply all changes; disabling a plugin releases its bindings and keeps your preferences.",
     "trayDescription": "Choose plugin actions for the system tray and arrange plugins and actions. Disabled plugins are removed from the menu.",
-    "search": "Search plugins, actions or shortcuts",
+    "search": "Search actions or shortcuts in this group",
     "allPlugins": "Show all plugins",
     "conflict": "This shortcut is assigned to {{action}}",
     "unavailable": "Unavailable · preferences retained",
@@ -1095,5 +1172,25 @@
     "moveUp": "Move {{title}} up",
     "moveDown": "Move {{title}} down",
     "showItem": "Show {{title}}"
+  },
+  "noteHistory": {
+    "title": "Version history",
+    "description": "Keep up to 30 previous versions or about 64 MiB. Restoring saves the current content as a version and preserves the current category.",
+    "preview": "Previous content preview",
+    "empty": "No previous versions yet. Editing and saving retains the previous content.",
+    "restore": "Restore this version"
+  },
+  "backupSchedule": {
+    "title": "Scheduled backups",
+    "enabled": "Enable scheduled backups",
+    "description": "Create consistent snapshots while the app is running; overdue backups run after the next launch. Unfinished saves cancel the backup. Failed backups retry later. Only snapshots created by this schedule are pruned.",
+    "noDirectory": "No backup destination selected",
+    "choose": "Choose backup destination",
+    "interval": "Interval (days, 1–30)",
+    "keep": "Snapshots to keep (1–100)",
+    "lastSuccess": "Last success",
+    "never": "Never",
+    "run": "Back up now",
+    "refresh": "Refresh status"
   }
 }

@@ -680,10 +680,7 @@ export function NotePad({
         throw new Error(t("notepad.error.copyUnsupported", { defaultValue: "当前环境不支持复制" }));
       }
       await clipboard.writeText(content);
-      // 复制不能清除磁贴勾选产生的未保存状态，否则自动保存会被取消。
-      setStatus((current) =>
-        current === "dirty" || current === "saveFailed" ? current : "copied",
-      );
+      showToast(t("notifications.copied"), "success");
     } catch (error) {
       showToast(getErrorMessage(error));
     }

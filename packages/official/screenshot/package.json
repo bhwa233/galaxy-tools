@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-screenshot",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "spark233 native screenshot and optional OCR transfer",
   "license": "MIT",
   "files": [
@@ -8,7 +8,9 @@
     "legal/**",
     "build.mjs",
     "README.md",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "assets/**",
+    "config/**"
   ],
   "type": "module",
   "scripts": {
@@ -16,12 +18,18 @@
     "build:native": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
   "spark233": {
     "schemaVersion": 1,
     "id": "spark233.screenshot",
     "displayName": "截图",
     "api": "^1.1.0",
-    "host": ">=1.2.0 <2",
+    "host": ">=1.3.0 <2",
     "platforms": [
       "win32"
     ],
@@ -53,7 +61,11 @@
           "en-US": {
             "title": "Screenshot history"
           }
-        }
+        },
+        "launcher": {
+          "role": "entry"
+        },
+        "window": "history"
       },
       {
         "id": "capture",
@@ -67,6 +79,9 @@
           "en-US": {
             "title": "Take screenshot"
           }
+        },
+        "launcher": {
+          "role": "action"
         }
       },
       {
@@ -84,6 +99,9 @@
           "en-US": {
             "title": "Capture and recognize text"
           }
+        },
+        "launcher": {
+          "role": "action"
         }
       },
       {
@@ -96,6 +114,9 @@
           "en-US": {
             "title": "Cancel screenshot"
           }
+        },
+        "launcher": {
+          "role": "hidden"
         }
       }
     ],
@@ -115,6 +136,93 @@
         "commandId": "capture",
         "order": 0
       }
-    ]
+    ],
+    "ui": {
+      "theme": "^1.0.0",
+      "icon": {
+        "png": "assets/icon.png",
+        "ico": "assets/icon.ico",
+        "monochrome": true,
+        "themes": {
+          "green": {
+            "light": {
+              "png": "assets/theme-icons/green-light/icon.png",
+              "ico": "assets/theme-icons/green-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/green-dark/icon.png",
+              "ico": "assets/theme-icons/green-dark/icon.ico"
+            }
+          },
+          "blue": {
+            "light": {
+              "png": "assets/theme-icons/blue-light/icon.png",
+              "ico": "assets/theme-icons/blue-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/blue-dark/icon.png",
+              "ico": "assets/theme-icons/blue-dark/icon.ico"
+            }
+          },
+          "purple": {
+            "light": {
+              "png": "assets/theme-icons/purple-light/icon.png",
+              "ico": "assets/theme-icons/purple-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/purple-dark/icon.png",
+              "ico": "assets/theme-icons/purple-dark/icon.ico"
+            }
+          },
+          "orange": {
+            "light": {
+              "png": "assets/theme-icons/orange-light/icon.png",
+              "ico": "assets/theme-icons/orange-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/orange-dark/icon.png",
+              "ico": "assets/theme-icons/orange-dark/icon.ico"
+            }
+          },
+          "rose": {
+            "light": {
+              "png": "assets/theme-icons/rose-light/icon.png",
+              "ico": "assets/theme-icons/rose-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/rose-dark/icon.png",
+              "ico": "assets/theme-icons/rose-dark/icon.ico"
+            }
+          }
+        }
+      },
+      "windows": {
+        "history": {
+          "entry": "renderer/index.html",
+          "title": "截图历史",
+          "translations": {
+            "en-US": {
+              "title": "Screenshot history"
+            }
+          },
+          "size": {
+            "width": 1040,
+            "height": 700
+          },
+          "minSize": {
+            "width": 640,
+            "height": 420
+          },
+          "resizable": true,
+          "maximizable": true,
+          "taskbar": true,
+          "reuse": "singleton",
+          "presentation": "standard",
+          "legacyLabels": [
+            "screenshot-history"
+          ]
+        }
+      }
+    }
   }
 }

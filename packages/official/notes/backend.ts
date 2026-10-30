@@ -36,6 +36,9 @@ const schemas = {
   initialize: z.object({ locale: z.string().max(20).optional() }),
   "note.list": z.object({ category: z.string().optional() }),
   "note.get": z.object({ id }),
+  "note.history": z.object({ id }),
+  "note.revision": z.object({ id, versionId: z.uuid() }),
+  "note.restore": z.object({ id, versionId: z.uuid(), expectedRevision: z.string().length(64) }),
   "note.save": z.object({ request: save, id: id.optional() }),
   "note.append": z.object({ id, content: text }),
   "note.delete": z.object({ id }),
@@ -185,6 +188,12 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
         return store
           .list()
           .filter((note) => request.category === undefined || note.category === request.category);
+      case "note.history":
+        return store.history(request.id);
+      case "note.revision":
+        return store.revision(request.id, request.versionId);
+      case "note.restore":
+        return store.restoreRevision(request.id, request.versionId, request.expectedRevision);
       case "note.get":
         return store.get(request.id);
       case "note.save":
@@ -353,6 +362,7 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
           "note.save",
           "note.append",
           "note.delete",
+          "note.restore",
           "note.setEditorMode",
           "note.move",
           "note.createFromImage",

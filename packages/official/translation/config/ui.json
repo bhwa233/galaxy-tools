@@ -1,0 +1,20 @@
+{
+  "defaultView": "translation",
+  "navigation": [
+    {
+      "id": "dictionary",
+      "icon": "book",
+      "label": "translation.dictionary"
+    },
+    {
+      "id": "translation",
+      "icon": "languages",
+      "label": "translation.ai"
+    },
+    {
+      "id": "search-history",
+      "icon": "history",
+      "label": "translation.searchHistory"
+    }
+  ]
+}

@@ -61,7 +61,7 @@ export function HistoryDrawer({
     );
   return (
     <aside
-      className={cn("flex w-56 shrink-0 flex-col gap-2 rounded-lg border bg-card p-2", className)}
+      className={cn("flex w-56 shrink-0 flex-col gap-2 border-r bg-background p-2", className)}
       aria-label={t("translation.historyTitle", { defaultValue: "历史" })}
     >
       <div className="flex items-center gap-1">

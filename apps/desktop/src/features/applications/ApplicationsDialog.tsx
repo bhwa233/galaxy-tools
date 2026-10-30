@@ -1,3 +1,4 @@
+import { showToast } from "../../components/Toast";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +43,7 @@ export function ApplicationsDialog({
   embedded = false,
 }: ApplicationsDialogProps) {
   const { t } = useTranslation("applications");
+  const { t: notificationText } = useTranslation();
   const [baseline, setBaseline] = useState<{
     entries: CustomApplicationEntry[];
     arguments: Record<string, string>;
@@ -188,6 +190,7 @@ export function ApplicationsDialog({
         setEntries(saved.entries);
         setArgumentsById(args);
         setBaseline({ entries: saved.entries, arguments: args });
+        showToast(notificationText("notifications.saved"), "success");
         if (!embedded) onOpenChange(false);
       } else if (action === "cwd") {
         const directory = await pickApplicationDirectory();
@@ -247,12 +250,6 @@ export function ApplicationsDialog({
             void drop(event);
           }}
           showCloseButton={!operating.current}
-          onEscapeKeyDown={(event) => {
-            if (operating.current) event.preventDefault();
-          }}
-          onInteractOutside={(event) => {
-            if (operating.current) event.preventDefault();
-          }}
         >
           <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>{t("title")}</DialogTitle>

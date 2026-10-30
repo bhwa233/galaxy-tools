@@ -60,6 +60,22 @@ export function createNoteCommands(
     if (Object.hasOwn(noteCommands, command))
       return noteCommands[command as keyof typeof noteCommands](args);
     switch (command) {
+      case "notes_history_restore": {
+        const id = text(args.id);
+        if (
+          [...ctx.layouts.values()].some(
+            (entry) => entry.noteId === id && ctx.windows.has(entry.label),
+          )
+        )
+          throw new AppError("noteInUse", "请先关闭该便签的独立窗口再恢复历史版本");
+        const note = await data.restoreRevision(
+          id,
+          text(args.versionId),
+          text(args.expectedRevision),
+        );
+        ctx.changed();
+        return note;
+      }
       case "notes_create": {
         const note = await data.save(args.request as SaveNoteRequest);
         if ((layout.view === "notepad" || layout.view === "tile") && !layout.noteId)
@@ -218,9 +234,12 @@ export function createNoteCommands(
     notes_delete: run,
     notes_export_markdown: run,
     notes_get: run,
+    notes_history: run,
+    notes_history_restore: run,
     notes_import_markdown: run,
     notes_list: run,
     notes_move_category: run,
+    notes_revision: run,
     notes_set_editor_mode: run,
     notes_update: run,
     open_note_in_editor: run,

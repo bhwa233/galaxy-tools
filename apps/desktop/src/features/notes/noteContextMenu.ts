@@ -6,6 +6,7 @@ export type NoteContextMenuAction =
   | "pin"
   | "reminder"
   | "hide"
+  | "history"
   | "export"
   | "move"
   | "delete";
@@ -27,6 +28,7 @@ export function getNoteContextMenuItems(
     ...(state?.presence === "desktop" || state?.presence === "capsule"
       ? [{ action: "hide" as const, label: translate("noteState.hide") }]
       : []),
+    { action: "history", label: translate("noteHistory.title") },
     {
       action: "export",
       label: translate("noteMenu.export", { defaultValue: "导出 Markdown" }),

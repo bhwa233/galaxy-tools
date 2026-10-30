@@ -1,3 +1,4 @@
+import uiConfiguration from "../../../../../packages/official/search/config/ui.json";
 import type { SearchWorkspacePage, SearchWorkspaceRow } from "../../../shared/desktop-contract.js";
 
 export type SearchMode = "files" | "content";
@@ -29,18 +30,10 @@ export type CategoryLabelKey =
   | "categoryAudio"
   | "categoryArchive";
 
-export const categories: Array<{ id: CategoryId; label: CategoryLabelKey }> = [
-  { id: "all", label: "categoryAll" },
-  { id: "folder", label: "categoryFolder" },
-  { id: "excel", label: "categoryExcel" },
-  { id: "word", label: "categoryWord" },
-  { id: "ppt", label: "categoryPpt" },
-  { id: "pdf", label: "categoryPdf" },
-  { id: "image", label: "categoryImage" },
-  { id: "video", label: "categoryVideo" },
-  { id: "audio", label: "categoryAudio" },
-  { id: "archive", label: "categoryArchive" },
-];
+export const categories = uiConfiguration.categories as Array<{
+  id: CategoryId;
+  label: CategoryLabelKey;
+}>;
 
 export type SortLabelKey =
   | "sortRelevance"
@@ -57,17 +50,9 @@ export interface SortOption {
   desc: boolean;
   label: SortLabelKey;
 }
-export const sortOptions: SortOption[] = [
-  { id: "relevance", field: undefined, desc: false, label: "sortRelevance" },
-  { id: "name-asc", field: "name", desc: false, label: "sortNameAsc" },
-  { id: "name-desc", field: "name", desc: true, label: "sortNameDesc" },
-  { id: "mtime-desc", field: "mtime", desc: true, label: "sortModifiedDesc" },
-  { id: "mtime-asc", field: "mtime", desc: false, label: "sortModifiedAsc" },
-  { id: "size-desc", field: "size", desc: true, label: "sortSizeDesc" },
-  { id: "size-asc", field: "size", desc: false, label: "sortSizeAsc" },
-];
+export const sortOptions = uiConfiguration.sortOptions as SortOption[];
 /** First click on a header picks the direction that reads naturally. */
-const defaultDescending: Record<SortField, boolean> = { name: false, mtime: true, size: true };
+const defaultDescending: Record<SortField, boolean> = uiConfiguration.defaultDescending;
 
 export function sortOptionId(field: SortField | undefined, desc: boolean): string {
   if (!field) return "relevance";

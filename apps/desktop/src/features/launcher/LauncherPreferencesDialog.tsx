@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { SettingsFooter } from "../settings/SettingsFooter";
 import { ArrowDownIcon, ArrowUpIcon, PinIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -386,25 +387,26 @@ export function LauncherPreferencesDialog({
             )}
           </ul>
         </div>
-        <p
-          role="status"
-          className="flex min-h-5 shrink-0 items-center gap-2 text-xs text-muted-foreground"
-        >
-          {busy ? (
-            <>
-              <Spinner />
-              {t("launcher.preferences.saving")}
-            </>
-          ) : saved ? (
-            t(
-              saved === "preference"
-                ? "launcher.preferences.saved"
-                : saved === "cleared"
-                  ? "launcher.learning.cleared"
-                  : "launcher.learning.saved",
-            )
-          ) : null}
-        </p>
+        {(busy || saved) && (
+          <SettingsFooter
+            status={
+              busy ? (
+                <>
+                  <Spinner />
+                  {t("launcher.preferences.saving")}
+                </>
+              ) : saved ? (
+                t(
+                  saved === "preference"
+                    ? "launcher.preferences.saved"
+                    : saved === "cleared"
+                      ? "launcher.learning.cleared"
+                      : "launcher.learning.saved",
+                )
+              ) : null
+            }
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

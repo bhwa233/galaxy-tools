@@ -1,3 +1,4 @@
+import { showToast } from "./Toast";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApplicationsDialog } from "../features/applications/ApplicationsDialog";
@@ -14,7 +15,7 @@ import {
   isValidGlobalShortcut,
   shortcutPlatform,
 } from "../features/settings/shortcutRecorder";
-import { applyTheme, watchSystemTheme } from "../features/settings/theme";
+import { applyAccentColor, applyTheme, watchSystemTheme } from "../features/settings/theme";
 import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
 import type {
   AppConfig,
@@ -23,6 +24,7 @@ import type {
   ImageDisplayMode,
   McpPermission,
   ThemeOption,
+  ThemeAccent,
   TileColorMode,
   ViewMode,
 } from "../features/settings/types";
@@ -32,6 +34,8 @@ import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
 import { invoke } from "../platform/desktop";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 import { Button } from "./ui/button";
+import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { FieldSet, FieldLegend, FieldDescription } from "./ui/field";
 
 const HARMONY_FONT_LICENSE_URL = new URL("../assets/fonts/LICENSE_Fonts", import.meta.url).href;
 
@@ -62,7 +66,6 @@ export function SettingsPanel({
     ],
     [t],
   );
-  const [mcpCopied, setMcpCopied] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [applicationsOpen, setApplicationsOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -74,10 +77,9 @@ export function SettingsPanel({
       const launch = await invoke("app_mcp_command");
       const snippet = JSON.stringify({ mcpServers: { spark233: launch } }, null, 2);
       await invoke("clipboard_write", { text: snippet });
-      setMcpCopied(true);
-      setTimeout(() => setMcpCopied(false), 1500);
+      showToast(t("notifications.copied"), "success");
     } catch {
-      /* 剪贴板失败时静默，用户可从 Docs/mcp.md 手动复制 */
+      showToast(t("notifications.copyFailed"));
     }
   };
   const tileColorModes = useMemo<Array<{ value: TileColorMode; label: string }>>(
@@ -111,6 +113,13 @@ export function SettingsPanel({
     ],
     [t],
   );
+  const accentOptions: Array<{ value: ThemeAccent; label: string }> = [
+    { value: "green", label: t("settings.accent.green") },
+    { value: "blue", label: t("settings.accent.blue") },
+    { value: "purple", label: t("settings.accent.purple") },
+    { value: "orange", label: t("settings.accent.orange") },
+    { value: "rose", label: t("settings.accent.rose") },
+  ];
   const backgroundFits = useMemo<Array<{ value: BackgroundFit; label: string }>>(
     () => [
       { value: "cover", label: t("settings.background.fit.cover", { defaultValue: "填充" }) },
@@ -204,7 +213,7 @@ export function SettingsPanel({
             {presentation === "panel" && (
               <section className="flex flex-col gap-2">
                 <Button variant="outline" onClick={() => setPluginsOpen(true)}>
-                  {t("plugins.title", { defaultValue: "插件管理" })}
+                  {t("plugins.title", { defaultValue: "插件市场" })}
                 </Button>
                 <Button variant="outline" onClick={() => setApplicationsOpen(true)}>
                   {applicationsText("title")}
@@ -229,6 +238,34 @@ export function SettingsPanel({
                 }}
               />
             </section>
+
+            <FieldSet>
+              <FieldLegend variant="label">{t("settings.accent.label")}</FieldLegend>
+              <ToggleGroup
+                variant="outline"
+                className="flex-wrap"
+                aria-label={t("settings.accent.label")}
+                value={[config.accentColor ?? "green"]}
+                onValueChange={([value]) => {
+                  const selected = accentOptions.find((option) => option.value === value);
+                  if (!selected) return;
+                  setConfigValue("accentColor", selected.value);
+                  applyAccentColor(selected.value);
+                }}
+              >
+                {accentOptions.map((option) => (
+                  <ToggleGroupItem key={option.value} value={option.value}>
+                    <span
+                      aria-hidden="true"
+                      className="mr-1 inline-block size-3 rounded-full"
+                      style={{ backgroundColor: `var(--spark233-swatch-${option.value})` }}
+                    />
+                    {option.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <FieldDescription>{t("settings.accent.description")}</FieldDescription>
+            </FieldSet>
 
             <section className="space-y-2">
               <label className="block text-[11px] font-body text-ink-faint">
@@ -293,9 +330,7 @@ export function SettingsPanel({
                     onClick={() => void copyMcpConfig()}
                     className="w-full h-8 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
                   >
-                    {mcpCopied
-                      ? t("settings.mcp.copyDone", { defaultValue: "已复制" })
-                      : t("settings.mcp.copy", { defaultValue: "复制客户端配置" })}
+                    {t("settings.mcp.copy", { defaultValue: "复制客户端配置" })}
                   </button>
                 </>
               )}

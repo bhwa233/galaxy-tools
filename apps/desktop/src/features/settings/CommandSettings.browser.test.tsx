@@ -73,6 +73,7 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
     desktop.emit("shortcut-hook-key", { key, ctrl, alt, shift: false, meta: false });
   };
   try {
+    await page.getByRole("button", { name: /^测试插件 已设置/ }).click();
     await expect
       .element(page.getByRole("button", { name: "测试插件 · 打开测试功能", exact: true }))
       .toBeVisible();
@@ -95,6 +96,7 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
     await page.getByRole("button", { name: "托盘菜单", exact: true }).click();
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
     await expect
       .element(
         page

@@ -45,10 +45,12 @@ export interface PluginMigrationContext extends PluginDataMigration {
 export interface PluginMigrationResult {
   dataVersion: number;
 }
+export type ThemeAccent = "green" | "blue" | "purple" | "orange" | "rose";
 export interface PluginTheme {
   version: "1.0.0";
   preference: "system" | "light" | "dark";
   effective: "light" | "dark";
+  accent?: ThemeAccent;
 }
 export interface PluginSessionContext {
   owner: PluginOwner;

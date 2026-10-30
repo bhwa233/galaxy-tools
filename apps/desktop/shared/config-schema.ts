@@ -24,6 +24,7 @@ export const configPatchSchema = z
     tileColor: z.string().max(100).transform(normalizeTileColor).optional(),
     tileColorMode: z.enum(["system", "custom"]).optional(),
     theme: z.enum(["system", "light", "dark"]).optional(),
+    accentColor: z.enum(["green", "blue", "purple", "orange", "rose"]).optional(),
     fontSize: z.number().min(8).max(30).optional(),
     surfaceFontSize: z.number().min(8).max(30).optional(),
     tabIndentSize: z.number().int().min(1).max(8).optional(),
