@@ -48,15 +48,19 @@ Electron 重写后，更新链路只移植了渲染层：`apps/desktop/src/featu
 - asar 内容核对：包含 `dist-electron/electron/update/service.js`、`dist-electron/electron/update/settings.js` 与 `node_modules/electron-updater/**`（更新器随包分发）；`spark233.exe` 文件版本 0.0.1，ProductVersion 0.0.1.0。
 - 本机网络对 electron-builder 二进制下载不稳（GitHub release-assets 超时 600s）：用 `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/` 重跑后成功（CI 不需要该环境变量）。
 
+## CI 发布（2026-10-31）
+
+- tag `v0.0.1`（commit `a14d22f`）触发 run [41177800343](https://github.com/bhwa233/galaxy-tools/actions/runs/41177800343)：原生载荷构建 → `pnpm test` 全绿（294 条）→ `pnpm dist:win --publish always` 成功。
+- Release <https://github.com/bhwa233/galaxy-tools/releases/tag/v0.0.1>（非草稿、非预发布）资产：`spark233-0.0.1-x64.exe`（211,449,585 bytes）、`spark233-0.0.1-x64.exe.blockmap`（221,770）、`latest.yml`（341，sha512 `KznvvQxZ2X5nTGm4SZOtjhpKYa9ehr0vuA1aKm5agHG4Bem3ok3uszKlzUkamrzhO2gUOhwObTG/xeiky71k3g==` 与发布 exe 一致）；发行说明取自 `Docs/release-note/0.0.1.md`。
+- 首次尝试（run 41176749277）在 `pnpm test` 失败，修了两处：CI runner 临时目录是 8.3 短名（`RUNNER~1`），`clipboard.ts` 用 `fs.realpathSync`（保留别名）与 `canonical()`（native 展开）比较，误判“Clipboard executable escaped its validated package”，改用 `canonical()`；同时把 Vitest 超时提到 15s、CI 下 `maxWorkers: 4`，消除 Windows runner 上字典/会话测试的 5s 超时。
+- electron-builder 26 的 GitHub 发布器在并发上传时创建了两个同 tag release（一个只有 blockmap）：已删除重复项并把 blockmap 补传到正式 release。后续版本发布需在 Actions 里确认只留下一个 `v*` release。
+
 ## 待实机验收
 
 1. ✅ 产物生成（Setup、`latest.yml`、`.blockmap`、`app-update.yml` 均已核对）。
-2. 一键安装（验证静默安装、开始菜单/桌面快捷方式、文件关联）。
-3. 发布 tag `v*` 触发 `--publish always`，GitHub Release 出现三件套。
+2. ✅ 发布 tag `v*` 触发 `--publish always`：Release `v0.0.1` 三件套齐全（见上节）。
+3. 一键安装（验证静默安装、开始菜单/桌面快捷方式、文件关联）。
 4. 旧版本安装 → 新版本检查/下载/安装 → 重启后版本更新；保存失败（窗口未保存）时取消更新；断网/哈希不匹配的错误码展示。
-5. 一键安装（验证静默安装、开始菜单/桌面快捷方式、文件关联）。
-6. 发布 tag `v*` 触发 `--publish always`，GitHub Release 出现三件套。
-7. 旧版本安装 → 新版本检查/下载/安装 → 重启后版本更新；保存失败（窗口未保存）时取消更新；断网/哈希不匹配的错误码展示。
 
 ## 已知限制
 
