@@ -18,12 +18,10 @@ const defaultOut = path.join(project, "local-build/native-payloads");
 const stampName = "native-payloads.json";
 const allowed = [
   /^packages\/official\/(?:screenshot|ocr|clipboard|applications|search)\/native\//,
-  /^packages\/official\/ocr\/legal\//,
 ];
 const roots = [
   "packages/official/screenshot/native",
   "packages/official/ocr/native",
-  "packages/official/ocr/legal",
   "packages/official/clipboard/native",
   "packages/official/applications/native",
   "packages/official/search/native",
