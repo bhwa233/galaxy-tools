@@ -29,6 +29,18 @@ npm.cmd --prefix "$env:LOCALAPPDATA/spark233/toolchains/pnpm-v12.16.1" rebuild p
 
 `pnpm dev` 准备 SDK、Electron 和官方资源，再启动桌面应用。开发配置、插件和数据存放在 `local-build/spark233/dev`，与正式用户数据隔离。前端由 Vite 热更新；官方插件、SDK 和 Electron 源码变更会重新构建并通过正常保存流程重启应用。保存失败或构建失败时保留当前实例。截图和 OCR 原生源码变更需要先准备完整的 Windows 原生构建依赖（见 `scripts/prepare-windows-resources.ps1`）。`pnpm dev:web` 仅启动前端，桌面功能需要 preload 桥接。源码可放在 WSL，但 Windows GUI 使用 Windows Node/Electron；两种系统的 `node_modules` 分开管理。
 
+### 预编译原生插件资源
+
+没有原生工具链的开发机不必安装 MSVC/CMake/Ninja/PowerShell 7。CI 在 `prepare-windows-resources.ps1` 之后运行 `node scripts/native-payloads.mjs pack`，把截图、OCR、剪贴板、应用与搜索的已构建产物连同校验清单打包上传为 `spark233-native-payloads`；本地用同一份清单下载并校验：
+
+```sh
+pnpm native:fetch --from <release-or-artifact-url>
+pnpm native:check
+pnpm dev   # 命中预编译资源时跳过原生构建
+```
+
+`SPARK233_NATIVE_PAYLOAD_URL` 指向同一地址时，`pnpm dev` 会在缺少资源时自动拉取。清单校验每个文件的 SHA-256，且只接受 `packages/official/*/native` 与 `packages/official/ocr/legal` 下的路径；任何内容变化都必须重新下载或在本机重新构建。缺少原生资源的插件在开发模式下会跳过并提示，打包仍要求完整资源。修改原生源码后需要本机工具链或重跑 CI 产出新的资源包。
+
 ## 验证
 
 依次运行检查，避免同时启动多个重任务：

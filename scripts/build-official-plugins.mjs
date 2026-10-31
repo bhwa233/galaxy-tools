@@ -125,6 +125,17 @@ async function powershell() {
     "PowerShell 7 is required. Install it on PATH or in LOCALAPPDATA/spark233/toolchains/powershell-7.x.x, then retry pnpm dev.",
   );
 }
+// A development machine may ship without the native toolchain; prebuilt
+// payloads make the toolchain optional, so distinguish "cannot build" from
+// "the recipe is broken".
+async function hasNativeToolchain() {
+  try {
+    await powershell();
+    return true;
+  } catch {
+    return false;
+  }
+}
 // Electron's TypeScript path helpers are not built yet. Use native filesystem
 // resolution here, limited to generated directories before recursive cleanup.
 async function outputPath(relative) {
@@ -228,6 +239,13 @@ async function prepareResources(source, metadata) {
     }
   }
   if (missingNative) {
+    if (process.env.SPARK233_DEV_SKIP_MISSING_NATIVE === "1" && !(await hasNativeToolchain())) {
+      console.warn(
+        `Skipping ${id}: its prebuilt native payload is missing and this machine has no native toolchain. ` +
+          "Run `pnpm native:fetch --from <release-url>` to enable it.",
+      );
+      return false;
+    }
     if (process.platform !== "win32")
       throw new Error(
         `${id} native payload missing. Build Windows x64 resources on Windows before packaging.`,
@@ -327,6 +345,7 @@ async function prepareResources(source, metadata) {
           `Missing search resource ${entry}; run pwsh -File scripts/native-search/build.ps1`,
         );
   }
+  return true;
 }
 async function copyAllowlist(source, destination, metadata) {
   if (!Array.isArray(metadata.files) || !metadata.files.length)
@@ -511,7 +530,8 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   if (selectedPlugin && metadata.spark233.id !== selectedPlugin) continue;
   if (!expectedIds.has(metadata.spark233.id))
     throw new Error(`Unexpected official plugin ${metadata.spark233.id}`);
-  await prepareResources(source, metadata);
+  if ((await prepareResources(source, metadata)) === false) continue;
+
   if (metadata.spark233.id === "spark233.clipboard")
     run(process.execPath, [path.join(source, "build.mjs"), "--backend-only"]);
   if (metadata.spark233.id === "spark233.notes")
@@ -614,14 +634,17 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   }
 }
 const expectedCount = selectedPlugin ? 1 : expectedIds.size;
+// A development run may skip plugins whose prebuilt native payload is absent.
+const developmentSkip = process.env.SPARK233_DEV_SKIP_MISSING_NATIVE === "1" && !!devBuild;
+const minimumCount = developmentSkip ? 1 : expectedCount;
 if (
-  index.length !== expectedCount ||
-  new Set(index.map((entry) => entry.pluginId)).size !== expectedCount
+  index.length < minimumCount ||
+  new Set(index.map((entry) => entry.pluginId)).size !== index.length
 )
   throw new Error(
     selectedPlugin
       ? "The selected official plugin package is missing"
-      : "The offline distribution requires exactly seven official plugin packages",
+      : `The offline distribution requires exactly ${expectedCount} official plugin packages`,
   );
 if (!selectedPlugin && !buildOptions.output && !process.env.SPARK233_DEV_PLUGIN_OUTPUT)
   for (const name of await fs.readdir(output))

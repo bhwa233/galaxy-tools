@@ -5,6 +5,9 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
+// Some harnesses and shells export ELECTRON_RUN_AS_NODE=1 to run Electron as
+// plain Node. The development launcher must always start the real application.
+delete process.env.ELECTRON_RUN_AS_NODE;
 const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
 const projectRoot = path.resolve(desktopRoot, "../..");
 const devRoot = path.join(projectRoot, "local-build", "spark233", "dev");
@@ -57,7 +60,14 @@ function buildPlugins() {
     stdio: "inherit",
     windowsHide: true,
     cwd: projectRoot,
-    env: { ...process.env, ...devEnvironment, SPARK233_DEV_PLUGIN_BUILD: String(Date.now()) },
+    env: {
+      ...process.env,
+      ...devEnvironment,
+      // A development machine without the MSVC toolchain still starts; plugins
+      // whose prebuilt payload is absent stay out instead of failing the run.
+      SPARK233_DEV_SKIP_MISSING_NATIVE: "1",
+      SPARK233_DEV_PLUGIN_BUILD: String(Date.now()),
+    },
   });
 }
 function buildCapturePlugins() {
@@ -103,6 +113,56 @@ function buildCapturePlugins() {
       },
     );
 }
+const nativePayloadsScript = path.join(projectRoot, "scripts/native-payloads.mjs");
+function nativePayloadsReady() {
+  try {
+    execFileSync(process.execPath, [nativePayloadsScript, "has"], {
+      stdio: "ignore",
+      windowsHide: true,
+      cwd: projectRoot,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function hasToolchainPowerShell() {
+  const toolchains = path.join(process.env.LOCALAPPDATA, "spark233", "toolchains");
+  try {
+    return readdirSync(toolchains).some((name) => /^powershell-7\./.test(name));
+  } catch {
+    return false;
+  }
+}
+/**
+ * Prefer prebuilt payloads so a development machine needs no native toolchain.
+ * CI packs them with scripts/native-payloads.mjs; machines that have the MSVC
+ * toolchain keep building from source, which is required when native sources
+ * change.
+ */
+function prepareNative() {
+  if (nativePayloadsReady()) {
+    console.log("Using prebuilt native payloads.");
+    return;
+  }
+  if (hasToolchainPowerShell()) {
+    buildCapturePlugins();
+    return;
+  }
+  const source = process.env.SPARK233_NATIVE_PAYLOAD_URL;
+  if (source) {
+    console.log(`Downloading prebuilt native payloads from ${source}`);
+    execFileSync(process.execPath, [nativePayloadsScript, "fetch", "--from", source], {
+      stdio: "inherit",
+      windowsHide: true,
+      cwd: projectRoot,
+    });
+    return;
+  }
+  console.warn(
+    "Native toolchain and prebuilt payloads are unavailable; screenshot, OCR, clipboard, applications and search plugins are skipped. Run `pnpm native:fetch --from <release-url>` to enable them.",
+  );
+}
 const compiler = run(nativeCompiler ? compilerBin : process.execPath, [
   ...(nativeCompiler ? [] : [compilerBin]),
   "-p",
@@ -115,7 +175,7 @@ compiler.on("exit", async (code) => {
   try {
     // Installed notes carry their renderer; development uses the same seven
     // bundled package preparation as the production install path.
-    buildCapturePlugins();
+    prepareNative();
     execFileSync(process.execPath, [viteBin, "build"], {
       stdio: "inherit",
       windowsHide: true,
@@ -193,7 +253,7 @@ compiler.on("exit", async (code) => {
     try {
       console.log("Rebuilding local plugins for development...");
       if (captureDirty) {
-        buildCapturePlugins();
+        prepareNative();
         captureDirty = false;
       }
       execFileSync(compilerCommand, [...compilerPrefix, "-p", "packages/sdk/tsconfig.json"], {

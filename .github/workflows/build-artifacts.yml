@@ -18,6 +18,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pwsh -NoProfile -File scripts/prepare-windows-resources.ps1
+      - run: node scripts/native-payloads.mjs pack --out local-build/native-payloads
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spark233-native-payloads
+          path: |
+            local-build/native-payloads/*.tar.gz
+            local-build/native-payloads/native-payloads.json
+          if-no-files-found: error
       - run: pnpm test
       - run: pnpm dist:win --publish never
       - uses: actions/upload-artifact@v4

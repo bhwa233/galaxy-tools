@@ -1,0 +1,28 @@
+name: Native payloads
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  payloads:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pwsh -NoProfile -File scripts/prepare-windows-resources.ps1
+      - run: node scripts/native-payloads.mjs pack --out local-build/native-payloads
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spark233-native-payloads
+          path: |
+            local-build/native-payloads/*.tar.gz
+            local-build/native-payloads/native-payloads.json
+          if-no-files-found: error
