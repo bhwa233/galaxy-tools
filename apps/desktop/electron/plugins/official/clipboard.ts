@@ -262,7 +262,9 @@ class ClipboardController implements ClipboardRuntime {
     )
       throw new Error("Clipboard package/data paths must be absolute and host resolved");
     const root = canonical(options.pluginRoot),
-      executable = fs.realpathSync(options.descriptor.path);
+      // Same resolver as root: fs.realpathSync keeps 8.3 aliases (RUNNER~1) and
+      // would report a temp-dir helper as an escape on CI runners.
+      executable = canonical(options.descriptor.path);
     if (
       !inside(root, executable) ||
       !fs.statSync(executable).isFile() ||

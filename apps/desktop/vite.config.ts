@@ -120,6 +120,13 @@ export default defineConfig(async () => ({
     },
   },
   test: {
+    // GitHub Windows runners are slower than this machine: worker/session tests
+    // that need ~3s locally exceed Vitest 5s default there.
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
+    // CI runners have fewer cores than this machine; uncapped workers make the
+    // dictionary/session tests contend and intermittently fail.
+    maxWorkers: process.env.CI ? 4 : undefined,
     include: [
       ...configDefaults.include,
       ...configDefaults.include.map((pattern) => `../../packages/${pattern}`),
