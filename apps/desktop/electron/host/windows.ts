@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, nativeTheme } from "electron";
 import type { NativeImage, Rectangle } from "electron";
 
 export interface HostWindowOptions {
@@ -23,6 +23,14 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     title: options.title,
     frame: false,
     transparent: options.label !== "launcher",
+    // The launcher is opaque, so give the compositor a themed backdrop: when a
+    // frame is not ready yet the window still appears instead of flashing white.
+    backgroundColor:
+      options.label === "launcher"
+        ? nativeTheme.shouldUseDarkColors
+          ? "#1a1917"
+          : "#ffffff"
+        : undefined,
     show: false,
     resizable: options.resizable ?? true,
     maximizable: options.maximizable ?? true,

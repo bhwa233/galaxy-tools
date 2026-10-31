@@ -9,65 +9,81 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+const flush = async () => {
+  for (let index = 0; index < 4; index += 1) await Promise.resolve();
+};
+
 describe("native selection handoff to the existing launcher", () => {
-  it("captures the paste target alongside selection reading before showing the launcher", async () => {
+  it("shows the panel before the selection read finishes, then patches the text", async () => {
     const selection = deferred<string>();
-    const target = deferred<void>();
-    const read = vi.fn(() => selection.promise);
-    const prepare = vi.fn(() => target.promise);
+    const read = vi.fn<(signal: AbortSignal, target: number) => Promise<string>>(
+      () => selection.promise,
+    );
+    const target = vi.fn(async () => 1234);
     const present = vi.fn();
-    const launcher = new SelectionLauncher({ read, prepare, present });
+    const patch = vi.fn();
+    const launcher = new SelectionLauncher({ target, read, present, patch });
     const opening = launcher.open();
+    await flush();
+    // The panel is already up while the UIA read is still pending.
+    expect(present).toHaveBeenCalledOnce();
+    expect(present.mock.calls[0][0]).toBe("");
     expect(read).toHaveBeenCalledOnce();
-    expect(prepare).toHaveBeenCalledOnce();
+    expect(read.mock.calls[0][1]).toBe(1234);
+    expect(patch).not.toHaveBeenCalled();
     selection.resolve("selected");
-    await Promise.resolve();
-    expect(present).not.toHaveBeenCalled();
-    target.resolve();
     await opening;
-    expect(present.mock.calls[0][0]).toBe("selected");
+    expect(patch).toHaveBeenCalledOnce();
+    expect(patch.mock.calls[0][0]).toBe("selected");
   });
-  it("keeps focus at the source until capture finishes and prevents late A from replacing B", async () => {
+
+  it("never overwrites the newer press with a late selection from the previous one", async () => {
     const a = deferred<string>();
     const b = deferred<string>();
     const read = vi
-      .fn<(signal: AbortSignal) => Promise<string>>()
+      .fn<(signal: AbortSignal, target: number) => Promise<string>>()
       .mockReturnValueOnce(a.promise)
       .mockReturnValueOnce(b.promise);
     const present = vi.fn();
-    const launcher = new SelectionLauncher({ read, present });
+    const patch = vi.fn();
+    const launcher = new SelectionLauncher({ target: async () => 0, read, present, patch });
     const first = launcher.open();
-    expect(present).not.toHaveBeenCalled();
+    await flush();
+    expect(read.mock.calls[0][0].aborted).toBe(false);
     const second = launcher.open();
     expect(read.mock.calls[0][0].aborted).toBe(true);
+    expect(read.mock.calls[0][1]).toBe(0);
     b.resolve("完整选区。\n" + "a".repeat(9000));
     await second;
-    expect(present).toHaveBeenCalledOnce();
-    expect(present.mock.calls[0][0]).toBe("完整选区。\n" + "a".repeat(9000));
+    expect(patch).toHaveBeenCalledOnce();
+    expect(patch.mock.calls[0][0]).toBe("完整选区。\n" + "a".repeat(9000));
     a.resolve("已经过期的选区");
     await first;
-    expect(present).toHaveBeenCalledOnce();
+    expect(patch).toHaveBeenCalledOnce();
   });
 
   it("opens empty input on read failure and cancels pending reads on ordinary opening or shutdown", async () => {
     const late = deferred<string>();
     const read = vi
-      .fn<(signal: AbortSignal) => Promise<string>>()
+      .fn<(signal: AbortSignal, target: number) => Promise<string>>()
       .mockResolvedValueOnce("old selection")
       .mockRejectedValueOnce(new Error("UIA unavailable"))
       .mockReturnValue(late.promise);
     const present = vi.fn();
-    const launcher = new SelectionLauncher({ read, present });
+    const patch = vi.fn();
+    const launcher = new SelectionLauncher({ target: async () => 0, read, present, patch });
     await launcher.open();
     await launcher.open();
-    expect(present.mock.calls.map(([text]) => text)).toEqual(["old selection", ""]);
+    expect(present.mock.calls.map(([text]) => text)).toEqual(["", ""]);
+    expect(patch.mock.calls.map(([text]) => text)).toEqual(["old selection"]);
     const pending = launcher.open();
     launcher.cancel();
     late.resolve("late selection");
     await pending;
-    expect(present).toHaveBeenCalledTimes(2);
+    expect(patch).toHaveBeenCalledTimes(1);
     launcher.stop();
     await launcher.open();
-    expect(read).toHaveBeenCalledTimes(3);
+    // Cancelling before the target resolves skips the read entirely.
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });

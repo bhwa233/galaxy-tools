@@ -20,6 +20,7 @@ class SelectionReader {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
     [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
     [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     static IntPtr Focus(IntPtr window) {
         uint pid; uint thread=GetWindowThreadProcessId(window,out pid);
@@ -90,25 +91,37 @@ class SelectionReader {
         }
         return result??"";
     }
-    static string Read(int ownPid) {
-        IntPtr window=GetForegroundWindow(); uint pid; GetWindowThreadProcessId(window,out pid);
-        if(window==IntPtr.Zero || pid==0 || pid==ownPid) return "";
+    static string Read(int ownPid, IntPtr target) {
+        // The panel may already own the foreground when this read starts, so a
+        // caller that sampled the source window beforehand passes it in. Without
+        // an explicit target the read stays strictly foreground-scoped.
+        IntPtr window=target!=IntPtr.Zero?target:GetForegroundWindow();
+        uint pid; GetWindowThreadProcessId(window,out pid);
+        if(window==IntPtr.Zero || pid==0 || (int)pid==ownPid) return "";
+        if(!IsWindow(window)) return "";
         long identity=Identity(pid);
         // RegisterHotKey fires on keydown. Allow Alt/menu focus to settle while
         // keeping the external source window foreground throughout the read.
         var settling=Stopwatch.StartNew();
         while(Modifiers() && settling.ElapsedMilliseconds<500) {
-            if(GetForegroundWindow()!=window) return "";
+            if(target==IntPtr.Zero && GetForegroundWindow()!=window) return "";
             Thread.Sleep(10);
         }
-        if(GetForegroundWindow()!=window) return "";
+        if(target==IntPtr.Zero && GetForegroundWindow()!=window) return "";
         IntPtr focus=Focus(window);
-        if(focus==IntPtr.Zero) return "";
-        var element=AutomationElement.FocusedElement;
+        // Showing the panel hands focus to it, so the source thread may no longer
+        // report a focused child. With an explicit target, scan the window itself
+        // for the text provider that still holds the selection.
+        if(focus==IntPtr.Zero) {
+            if(target==IntPtr.Zero) return "";
+            focus=window;
+        }
+        var element=target!=IntPtr.Zero?AutomationElement.FromHandle(focus):AutomationElement.FocusedElement;
         if(element==null) return "";
         string text=SelectedDocument(element,focus,window);
         uint currentPid; GetWindowThreadProcessId(window,out currentPid);
-        if(GetForegroundWindow()!=window || Focus(window)!=focus || currentPid!=pid || Identity(pid)!=identity) return "";
+        if(currentPid!=pid || Identity(pid)!=identity || !IsWindow(window)) return "";
+        if(target==IntPtr.Zero && (GetForegroundWindow()!=window || Focus(window)!=focus)) return "";
         return text;
     }
     [STAThread] static int Main(string[] args) {
@@ -118,7 +131,7 @@ class SelectionReader {
         if(args.Length==2 && args[0]=="--server" && Int32.TryParse(args[1],out hostPid))
             return Serve(hostPid);
         string text=""; int ownPid;
-        try { if(args.Length==1 && Int32.TryParse(args[0],out ownPid)) text=Read(ownPid); } catch { }
+        try { if(args.Length==1 && Int32.TryParse(args[0],out ownPid)) text=Read(ownPid,IntPtr.Zero); } catch { }
         Console.Write(new JavaScriptSerializer {MaxJsonLength=524288}.Serialize(new {text=text}));
         return 0;
     }
@@ -142,14 +155,24 @@ class SelectionReader {
             try {
                 if(line.Length>4096) return 1;
                 var request=serializer.Deserialize<Dictionary<string,object>>(line);
-                object idValue,operation; Guid id;
-                if(request==null || request.Count!=2 ||
-                    !request.TryGetValue("id",out idValue) || !(idValue is string) ||
+                object idValue,operation,targetValue; Guid id;
+                if(request==null || (request.Count!=2 && request.Count!=3)) return 1;
+                if(!request.TryGetValue("id",out idValue) || !(idValue is string) ||
                     !Guid.TryParse((string)idValue,out id) ||
-                    !request.TryGetValue("operation",out operation) || !Object.Equals(operation,"read"))
-                    return 1;
+                    !request.TryGetValue("operation",out operation)) return 1;
+                long target=0;
+                if(request.Count==3) {
+                    if(!request.TryGetValue("targetWindow",out targetValue)) return 1;
+                    try { target=Convert.ToInt64(targetValue); } catch { return 1; }
+                }
+                if(Object.Equals(operation,"foreground")) {
+                    Console.WriteLine(serializer.Serialize(new {id=(string)idValue,window=(long)GetForegroundWindow()}));
+                    Console.Out.Flush();
+                    continue;
+                }
+                if(!Object.Equals(operation,"read")) return 1;
                 string text="";
-                try { text=Read(hostPid); } catch { }
+                try { text=Read(hostPid,new IntPtr(target)); } catch { }
                 Console.WriteLine(serializer.Serialize(new {id=(string)idValue,text=text}));
                 Console.Out.Flush();
             } catch { return 1; }

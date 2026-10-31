@@ -13,12 +13,14 @@ const selection = z.strictObject({
     .max(65536)
     .refine((text) => Buffer.byteLength(text, "utf8") <= 65536),
 });
+const foreground = z.strictObject({ id: z.uuid(), window: z.number().int().nonnegative() });
 interface SelectionWorker {
   child: ChildProcessWithoutNullStreams;
   ready: Promise<void>;
   exited: Promise<void>;
   active: boolean;
   finish?: (text: string) => void;
+  foreground?: (window: number) => void;
 }
 
 /** Reuses windows-runtime's in-box compiler and the host's cache primitives.
@@ -37,13 +39,46 @@ export class NativeSelectionReader {
     if (process.platform === "win32") await this.getWorker();
   }
 
-  async read(signal: AbortSignal): Promise<string> {
+  async read(signal: AbortSignal, target = 0): Promise<string> {
     if (process.platform !== "win32" || signal.aborted || this.abort.signal.aborted) return "";
     try {
-      return await this.capture(AbortSignal.any([signal, this.abort.signal]));
+      return await this.capture(AbortSignal.any([signal, this.abort.signal]), target);
     } catch {
       return "";
     }
+  }
+
+  /** Samples the foreground window before the launcher takes focus. Returns 0
+   * unless a warm helper answers almost immediately: a cold helper must not
+   * delay the panel, and the read then degrades to an empty input. */
+  async target(signal: AbortSignal): Promise<number> {
+    if (process.platform !== "win32" || signal.aborted || this.abort.signal.aborted) return 0;
+    const worker = this.worker;
+    if (!worker?.active || worker.finish || worker.foreground) return 0;
+    const id = randomUUID();
+    return new Promise<number>((resolve) => {
+      const settle = (window: number) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", fail);
+        worker.foreground = undefined;
+        this.requests.delete(worker);
+        resolve(window);
+      };
+      // A slow sample only costs accuracy: never kill the warm helper for it,
+      // otherwise every missed deadline turns the next read into a cold start.
+      const timeout = () => settle(0);
+      const fail = () => {
+        settle(0);
+        this.retire(worker);
+      };
+      const timer = setTimeout(timeout, 120);
+      worker.foreground = (window) => settle(window);
+      this.requests.set(worker, { id, kind: "foreground" });
+      signal.addEventListener("abort", fail, { once: true });
+      worker.child.stdin.write(JSON.stringify({ id, operation: "foreground" }) + "\n", (error) => {
+        if (error) fail();
+      });
+    });
   }
 
   async stop(): Promise<void> {
@@ -80,10 +115,10 @@ export class NativeSelectionReader {
     );
   }
 
-  private async capture(signal: AbortSignal): Promise<string> {
+  private async capture(signal: AbortSignal, target: number): Promise<string> {
     let worker = await this.getWorker();
     if (signal.aborted) return "";
-    if (worker.finish) {
+    if (worker.finish || worker.foreground) {
       this.retire(worker);
       worker = await this.getWorker();
       if (signal.aborted) return "";
@@ -98,16 +133,21 @@ export class NativeSelectionReader {
         worker.finish = undefined;
         resolve(signal.aborted ? "" : text);
       };
-      this.requests.set(worker, id);
+      this.requests.set(worker, { id, kind: "read" });
       signal.addEventListener("abort", cancel, { once: true });
       if (signal.aborted) return cancel();
-      worker.child.stdin.write(JSON.stringify({ id, operation: "read" }) + "\n", (error) => {
+      const request =
+        target > 0 ? { id, operation: "read", targetWindow: target } : { id, operation: "read" };
+      worker.child.stdin.write(JSON.stringify(request) + "\n", (error) => {
         if (error) this.retire(worker);
       });
     });
   }
 
-  private readonly requests = new Map<SelectionWorker, string>();
+  private readonly requests = new Map<
+    SelectionWorker,
+    { id: string; kind: "read" | "foreground" }
+  >();
 
   private retire(worker: SelectionWorker): void {
     worker.active = false;
@@ -182,10 +222,19 @@ export class NativeSelectionReader {
             clearTimeout(timeout);
             ready();
           } else {
-            const result = selection.safeParse(message);
-            if (!result.success || result.data.id !== this.requests.get(worker)) return fail();
-            this.requests.delete(worker);
-            worker.finish?.(result.data.text);
+            const request = this.requests.get(worker);
+            if (!request) return fail();
+            if (request.kind === "read") {
+              const result = selection.safeParse(message);
+              if (!result.success || result.data.id !== request.id) return fail();
+              this.requests.delete(worker);
+              worker.finish?.(result.data.text);
+            } else {
+              const result = foreground.safeParse(message);
+              if (!result.success || result.data.id !== request.id) return fail();
+              this.requests.delete(worker);
+              worker.foreground?.(result.data.window);
+            }
           }
         } catch {
           return fail();

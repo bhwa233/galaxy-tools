@@ -6,6 +6,7 @@ import { NativeSelectionReader } from "../selection-native.js";
 import { SelectionLauncher } from "../selection-launcher.js";
 import { AppError } from "../persistence.js";
 import type { Layout, RuntimeContext } from "../runtime.js";
+import { markPresented, presentationCount } from "./presentation-epoch.js";
 
 /** launcher-runtime owns this domain; shared state remains in the composition root. */
 export function createLauncherRuntime(
@@ -43,17 +44,60 @@ export function createLauncherRuntime(
   >,
 ) {
   let reader: NativeSelectionReader | undefined;
-  const selectionLauncher = new SelectionLauncher({
-    read: (signal) => getReader().read(signal),
-    prepare: () => prepareLauncher(),
-    present: async (text, revision, signal) => {
-      if (signal.aborted) return;
-      if (ctx.maintenance || ctx.hostShutdown.isQuitting) return;
-      ctx.clearLauncherContext();
-      const win = ctx.launcherExecutions.exit(() => openLauncherWindow());
+  let settling: Promise<void> | undefined;
+  const timelineEnabled = process.env.SPARK233_LAUNCHER_TIMELINE === "1";
+  function timeline(event: string, started: number): void {
+    if (timelineEnabled)
+      console.info("launcher-timeline", event, Math.round(performance.now() - started));
+  }
+  /** The first handoff owns the fresh input; a late UIA patch only fills an
+   * input the user has not started editing. */
+  function deliverLauncherInput(
+    win: BrowserWindow,
+    text: string,
+    revision: number,
+    initial: boolean,
+  ): void {
+    if (win.isDestroyed()) return;
+    if (initial) {
       const payload = { kind: "launcher-input", result: { text, revision } };
       ctx.workspaceRequests.set("launcher", payload);
       if (ctx.ready.has(win.id)) ctx.emit("open-workspace", payload, win);
+      return;
+    }
+    const payload = { text, revision };
+    if (ctx.ready.has(win.id)) ctx.emit("launcher-input-updated", payload, win);
+    else ctx.workspaceRequests.set("launcher", { kind: "launcher-input", result: payload });
+  }
+  const selectionLauncher = new SelectionLauncher({
+    target: async (signal) => {
+      const started = performance.now();
+      const target = await getReader().target(signal);
+      if (timelineEnabled) timeline(`selection-target ${target}`, started);
+      return target;
+    },
+    read: async (signal, target) => {
+      const started = performance.now();
+      const text = await getReader().read(signal, target);
+      if (timelineEnabled)
+        timeline(`selection-read target=${target} chars=${text.length}`, started);
+      return text;
+    },
+    present: (text, revision, signal) => {
+      if (signal.aborted) return;
+      if (ctx.maintenance || ctx.hostShutdown.isQuitting) return;
+      const started = performance.now();
+      ctx.clearLauncherContext();
+      const win = ctx.launcherExecutions.exit(() => openLauncherWindow());
+      timeline("selection-shown", started);
+      deliverLauncherInput(win, text, revision, true);
+    },
+    patch: (text, revision, signal) => {
+      if (signal.aborted) return;
+      const win = ctx.windows.get("launcher");
+      if (win) deliverLauncherInput(win, text, revision, false);
+      if (timelineEnabled)
+        console.info("launcher-timeline", "selection-patch", text.length, revision);
     },
   });
   function getReader(): NativeSelectionReader {
@@ -117,7 +161,24 @@ export function createLauncherRuntime(
     )
       ctx.launcherHides.set(id, { caller, ...execution.query });
     else ctx.launcherHides.delete(id);
-    win.hide();
+    if (ctx.windows.get("launcher") !== win || !ctx.ready.has(id)) {
+      win.hide();
+      return;
+    }
+    // Paint the cleared home frame before the window leaves the screen: a hidden
+    // renderer is throttled, so without this the compositor would keep showing
+    // the frame captured before the close.
+    const presented = presentationCount(win);
+    const started = performance.now();
+    ctx.emit("launcher-reset", undefined, win);
+    win.webContents.setBackgroundThrottling(false);
+    const settle = () => {
+      win.webContents.setBackgroundThrottling(true);
+      if (presentationCount(win) !== presented) return;
+      win.hide();
+      if (timelineEnabled) timeline("launcher-hidden", started);
+    };
+    setTimeout(settle, 40);
   }
 
   function revokeLauncherCaller(id: number): void {
@@ -156,9 +217,30 @@ export function createLauncherRuntime(
     }));
   }
 
-  async function presentLauncher(): Promise<BrowserWindow> {
-    await prepareLauncher();
-    return openLauncherWindow();
+  /** Show first: the panel never waits for a pending close, clipboard capture
+   * or UIA work. Those settle in the background with their own diagnostics. */
+  function presentLauncher(): Promise<BrowserWindow> {
+    assertHostAvailable();
+    const started = performance.now();
+    // Fire the paste-target capture before showing; awaiting it (150 ms cap)
+    // would delay the panel, and after show() the captured target would be the
+    // launcher itself.
+    if (ctx.clipboardRuntime && !hostWindowFocused())
+      void ctx.clipboardRuntime
+        .rememberTarget()
+        .catch((error: unknown) => console.error("clipboard-target", error));
+    const win = openLauncherWindow();
+    timeline("launcher-shown", started);
+    settleLauncherPreparation();
+    return Promise.resolve(win);
+  }
+
+  function settleLauncherPreparation(): void {
+    void (settling ??= prepareLauncher()
+      .catch((error: unknown) => console.error("launcher-prepare", error))
+      .finally(() => {
+        settling = undefined;
+      }));
   }
 
   function assertHostAvailable(): void {
@@ -174,17 +256,12 @@ export function createLauncherRuntime(
       );
   }
 
+  /** Background follow-up to a show that already happened. It only waits for a
+   * closing launcher to finish releasing so a stale release cannot hide the
+   * window we just presented. */
   async function prepareLauncher(): Promise<void> {
-    assertHostAvailable();
     const closing = ctx.windows.get("launcher");
     if (closing) await ctx.releasing.get(closing.id);
-    if (ctx.clipboardRuntime && !hostWindowFocused()) {
-      try {
-        await ctx.clipboardRuntime.rememberTarget();
-      } catch (error) {
-        console.error("clipboard-target", error);
-      }
-    }
   }
 
   function hostWindowFocused(): boolean {
@@ -230,6 +307,7 @@ export function createLauncherRuntime(
     }
     layout.visible = true;
     const win = ctx.createWindow(layout);
+    markPresented(win);
     if (!wasVisible && ctx.ready.has(win.id)) ctx.emit("launcher-shown", undefined, win);
     return win;
   }

@@ -346,12 +346,12 @@ export function createDesktopWindows(
       applyWindowPresentation(existing, layout);
       ctx.windowPresentations.set(existing, presentation);
       layout.visible = true;
-      // Repeated shortcut events can reuse a window before its renderer is ready.
-      // Keep the initial presentation in desktop_ready to avoid a blank first show.
-      if (ctx.ready.has(existing.id)) {
-        if (!existing.isVisible()) existing.show();
-        if (!existing.isFocused()) existing.focus();
-      }
+      // Show-first: a reused window already carries a renderer, so waiting for
+      // desktop_ready would make the hotkey pay for the renderer's own latency
+      // (and hide the panel entirely after a reload). The themed background
+      // colour covers the first frames until the content paints.
+      if (!existing.isVisible()) existing.show();
+      if (!existing.isFocused()) existing.focus();
       return existing;
     }
     layout.bounds = safeBounds(layout.bounds, layout.view === "main");

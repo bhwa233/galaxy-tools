@@ -2,6 +2,7 @@ import { BrowserWindow } from "electron";
 import { randomUUID } from "node:crypto";
 import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
+import { presentationCount } from "./presentation-epoch.js";
 
 /** window-close owns this domain; shared state remains in the composition root. */
 export function createWindowClose(
@@ -22,6 +23,10 @@ export function createWindowClose(
     | "hostShutdown"
   >,
 ) {
+  // Keeps only the most recently closed plugin workspace warm; any other
+  // business window is destroyed as before.
+  let retained: BrowserWindow | undefined;
+
   async function prepare(win: BrowserWindow): Promise<boolean> {
     if (win.isDestroyed()) return true;
     // A dead renderer cannot acknowledge saving. Its plugin has already been
@@ -61,10 +66,14 @@ export function createWindowClose(
     const existing = ctx.releasing.get(win.id);
     if (existing) return existing;
     const operation = (async () => {
+      // A save acknowledgement may take seconds. If the user re-opens the same
+      // window while we wait, the stale close must not hide it or flip layout.
+      const presented = presentationCount(win);
       if (!(await prepare(win)))
         throw new AppError("saveFailed", "保存未完成，已保留窗口，请先保存再收起");
       const layout = ctx.layouts.get(ctx.labelOf(win));
       if (!layout || win.isDestroyed()) return;
+      if (presentationCount(win) !== presented) return;
       ctx.remember(win);
       if (fold && layout.view !== "main" && layout.noteId) await ctx.capsules.fold(layout);
       else {
@@ -75,8 +84,15 @@ export function createWindowClose(
       ctx.hideHostWindow(win);
       if (layout.noteId) ctx.emit("tile-window-closed", layout.noteId);
       // The search panel keeps its renderer warm; business workspaces still
-      // release only after the save acknowledgement above.
-      if (layout.label !== "launcher") win.destroy();
+      // release only after the save acknowledgement above. The most recently
+      // closed workspace keeps its renderer and plugin backend alive so that
+      // re-opening it does not pay a full reload.
+      if (layout.label !== "launcher") {
+        if (layout.pluginId && !layout.compact) {
+          if (retained && retained !== win && !retained.isDestroyed()) retained.destroy();
+          retained = win;
+        } else win.destroy();
+      }
       ctx.capsules.refresh();
       ctx.refreshTray();
     })();
