@@ -1,6 +1,8 @@
 name: Native payloads
 on:
   workflow_dispatch:
+  push:
+    tags: ["native-payloads-*"]
 permissions:
   contents: read
 jobs:
