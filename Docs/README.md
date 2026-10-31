@@ -10,6 +10,7 @@
 | 快捷键与托盘菜单   | [实现与验证](evidence/spark233-shortcuts-tray-management.md)、[插件声明合同](../packages/sdk/README.md#global-shortcuts-and-system-tray-actions) |
 | Windows 窗口与胶囊 | [胶囊行为](edge-capsules.md)、[迁移背景](electron-migration.md)                                                                                  |
 | 开发、测试与打包   | [项目 README](../README.md)、[PR 检查](../.github/workflows/pulls.yml)、[独立打包](../.github/workflows/build-artifacts.yml)                     |
+| 应用内更新与发行   | [实现记录](evidence/update-0.0.1-2026-10-31.md)、[v0.0.1 发行说明](release-note/0.0.1.md)                                                        |
 | 本轮功能优化       | [确认范围与实施顺序（2026-10-30）](functional-improvement-plan-2026-10-30.md)                                                                    |
 | 2026-10-28 修复    | [审查清单及落实记录](optimization-review-2026-10-28.md)                                                                                          |
 | 历史方案和验收记录 | [2026-10 归档](archive/2026-10/)、[证据记录](evidence/)、[上游文档](upstream/)                                                                   |

@@ -160,9 +160,9 @@ the host does not silently replace installed plugin data or modify user profiles
 
 ## Plugin presentation (host API 1.3)
 
-New declarations require `spark233.host: ">=1.3.0 <2"` or a narrower compatible
-range. Older manifests without them remain valid. SDK npm and host API versions
-are independent.
+New declarations require `spark233.host: ">=0.0.1 <1"` or a narrower compatible
+0.x host range. Older manifests without them remain valid. SDK npm and host API
+versions are independent.
 
 | Field                                | Contract                                                                                                                                                                                                                            |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

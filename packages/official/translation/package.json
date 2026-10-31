@@ -36,7 +36,7 @@
     "id": "spark233.translation",
     "displayName": "词典与翻译",
     "api": "^1.0.0",
-    "host": ">=1.3.0 <2",
+    "host": ">=0.0.1 <1",
     "platforms": [
       "win32"
     ],

@@ -50,7 +50,7 @@ import {
   ContextMenuGroup,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { getCurrentWindow, invoke, listen } from "../../platform/desktop";
+import { droppedPaths, getCurrentWindow, invoke, listen } from "../../platform/desktop";
 import { LauncherItemActions } from "./LauncherItemActions";
 import { openSettingsWindow } from "../settings/api";
 import {
@@ -151,10 +151,29 @@ export function Launcher() {
   const finishingOnboarding = useRef(false);
   const workspaceGeneration = useRef(0);
   const inputRevision = useRef(0);
+  // A late UIA patch must never overwrite text the user already typed.
+  const userEdited = useRef(false);
 
   const focusInput = useCallback(() => {
     if (panelVisibleRef.current) requestAnimationFrame(() => input.current?.focus());
   }, []);
+  // Nothing survives a close: the next open always starts from home. Running on
+  // the pre-hide event lets the renderer paint the home frame while the window
+  // is still mapped, so the first frame after show is never the stale one.
+  const resetHome = useEffectEvent(() => {
+    queryGeneration.current++;
+    userEdited.current = false;
+    setQuery("");
+    setMode(undefined);
+    setDirectory(undefined);
+    setError(undefined);
+    setQueryError(undefined);
+    setStateError(undefined);
+    setResult(undefined);
+    setSelected("");
+    setLoading(false);
+    setActionItem(undefined);
+  });
   const acceptWorkspace = useEffectEvent((value: { kind: string; result?: unknown }) => {
     if (
       value.kind === "launcher-input" &&
@@ -167,6 +186,7 @@ export function Launcher() {
     ) {
       if (value.result.revision <= inputRevision.current) return;
       inputRevision.current = value.result.revision;
+      userEdited.current = false;
       queryGeneration.current++;
       // Even unchanged text replaces the query invalidated by this handoff.
       setHandoffRevision((revision) => revision + 1);
@@ -254,19 +274,31 @@ export function Launcher() {
       listen("launcher-shown", () => {
         panelVisibleRef.current = true;
         setPanelVisible(true);
+        userEdited.current = false;
         focusInput();
+      }),
+      listen("launcher-input-updated", ({ payload }) => {
+        if (payload.revision < inputRevision.current) return;
+        if (userEdited.current) return;
+        inputRevision.current = payload.revision;
+        queryGeneration.current++;
+        setHandoffRevision((revision) => revision + 1);
+        setQuery(payload.text);
+        setResult(undefined);
+        setSelected("");
+        setError(undefined);
+        setQueryError(undefined);
+        setActionItem(undefined);
+        focusInput();
+      }),
+      listen("launcher-reset", () => {
+        resetHome();
       }),
       listen("launcher-visibility-changed", ({ payload }) => {
         panelVisibleRef.current = payload.visible;
         setPanelVisible(payload.visible);
         if (payload.visible) focusInput();
-        else {
-          queryGeneration.current++;
-          setResult(undefined);
-          setSelected("");
-          setLoading(false);
-          setActionItem(undefined);
-        }
+        else resetHome();
       }),
       listen("open-workspace", (event) => {
         const generation = ++workspaceGeneration.current;
@@ -307,6 +339,26 @@ export function Launcher() {
         })
         .catch((value) => setError(message(value)));
     });
+    // Explorer copies files as CF_HDROP, so a paste carries File handles instead
+    // of text. Treat them exactly like a drop: grant, then feed the launcher
+    // context so pasted files provide the same entry points as dragged ones.
+    const paste = (event: ClipboardEvent) => {
+      if (!panelVisibleRef.current) return;
+      const files = Array.from(event.clipboardData?.files ?? []);
+      if (!files.length) return;
+      event.preventDefault();
+      const generation = ++stateGeneration.current;
+      void droppedPaths(files)
+        .then((paths) => setLauncherContextFiles(paths))
+        .then((next) => {
+          if (!mounted.current || generation !== stateGeneration.current) return;
+          stateSnapshot.current = next;
+          setState(next);
+          focusInput();
+        })
+        .catch((value) => setError(message(value)));
+    };
+    document.addEventListener("paste", paste);
     for (const subscription of subscriptions)
       void subscription.catch((value: unknown) => {
         if (mounted.current) setError(message(value));
@@ -315,6 +367,7 @@ export function Launcher() {
       mounted.current = false;
       queryGeneration.current++;
       stateGeneration.current++;
+      document.removeEventListener("paste", paste);
       for (const subscription of subscriptions)
         void subscription.then((stop) => stop()).catch(() => {});
       void drop.then((stop) => stop()).catch(() => {});
@@ -1031,6 +1084,7 @@ export function Launcher() {
           ref={input}
           value={query}
           onValueChange={(value) => {
+            userEdited.current = true;
             workspaceGeneration.current++;
             setQuery(value);
             setError(undefined);

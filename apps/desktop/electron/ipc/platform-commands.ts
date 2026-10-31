@@ -5,7 +5,7 @@ import type { RuntimeContext } from "../runtime.js";
 import { externalUrl } from "../security.js";
 import { text } from "./arguments.js";
 import type { CommandHandler, CommandInvocation } from "./invocation.js";
-export function createPlatformCommands(_ctx: Pick<RuntimeContext, never>) {
+export function createPlatformCommands(ctx: Pick<RuntimeContext, "updateService">) {
   async function run({ win, command, args, grants }: CommandInvocation): Promise<unknown> {
     switch (command) {
       case "app_version":
@@ -20,12 +20,28 @@ export function createPlatformCommands(_ctx: Pick<RuntimeContext, never>) {
           args: app.isPackaged ? ["--mcp"] : [app.getAppPath(), "--mcp"],
         };
       case "update_status":
-        return {
-          status: "idle",
-          currentVersion: app.getVersion(),
-          channel: "stable",
-          installKind: "unknown",
-        };
+        return ctx.updateService.status();
+      case "update_check":
+        return ctx.updateService.check(args.manual);
+      case "update_download":
+        return ctx.updateService.download(args.source);
+      case "update_install":
+        return ctx.updateService.install();
+      case "update_cancel":
+        ctx.updateService.cancel();
+        return;
+      case "update_settings_get":
+        return ctx.updateService.settingsGet();
+      case "update_settings_save":
+        return ctx.updateService.settingsSave(args.settings);
+      case "update_mirror_chyan_cdk_get":
+        return ctx.updateService.mirrorChyanCdk();
+      case "update_mirror_chyan_cdk_set":
+        ctx.updateService.setMirrorChyanCdk(args.cdk);
+        return;
+      case "update_mirror_chyan_cdk_clear":
+        ctx.updateService.clearMirrorChyanCdk();
+        return;
       case "update_install_prepare_report":
         return;
       case "dialog_open":

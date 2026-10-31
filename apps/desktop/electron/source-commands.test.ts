@@ -38,8 +38,8 @@ async function fixture(
       schemaVersion: 1,
       id: pluginId,
       displayName: "Owned source actions",
-      api: "^1.2.0",
-      host: ">=1.3.0 <2",
+      api: "^1.0.0",
+      host: ">=0.0.1 <1",
       platforms: [process.platform],
       architectures: [process.arch],
       entry: "index.html",
@@ -128,7 +128,7 @@ async function fixture(
       stagingRoot: path.join(root, "staging"),
       cacheRoot: path.join(root, "cache"),
     },
-    environment: defaultHostEnvironment("1.3.0"),
+    environment: defaultHostEnvironment("0.0.1"),
     createRuntime: async () => {
       factories++;
       factoryStarted.resolve();

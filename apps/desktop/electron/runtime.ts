@@ -44,6 +44,7 @@ import { parseCliArgs, type CliCommand } from "./cli-args.js";
 import { HostConfigStore, persistedConfigSchema } from "./host-config.js";
 import { ShortcutManager } from "./host/shortcuts.js";
 import { ShutdownCoordinator } from "./host/shutdown.js";
+import { createUpdateService, type UpdateService } from "./update/service.js";
 import { TrayController } from "./host/tray.js";
 import { createCommandPinyinMatcher } from "./launcher-command-matcher.js";
 import { LauncherController } from "./launcher.js";
@@ -187,6 +188,7 @@ export interface RuntimeContext {
   readonly TEXT_FILE: typeof TEXT_FILE;
   readonly translationSettings: typeof translationSettings;
   tray: typeof tray;
+  readonly updateService: typeof updateService;
   readonly ui: typeof ui;
   readonly windowPresentations: typeof windowPresentations;
   readonly windows: typeof windows;
@@ -683,6 +685,12 @@ const runtimeContext: RuntimeContext = {
   set tray(value: typeof tray) {
     tray = value;
   },
+  get updateService(): typeof updateService {
+    return updateService;
+  },
+  set updateService(value: typeof updateService) {
+    updateService = value;
+  },
   get ui(): typeof ui {
     return ui;
   },
@@ -978,6 +986,9 @@ let lastBalloonReminder: ReminderItem | undefined;
 let stopFullscreen = () => {};
 const releasing = new Map<number, Promise<void>>();
 let exiting = false;
+let updateService: UpdateService;
+let updateInstallApply: (() => void) | undefined;
+let updateInstallCommitted = false;
 let layoutTimer: ReturnType<typeof setTimeout> | undefined;
 let startupFile: string | null = null;
 let shortcutWarning: string | undefined;
@@ -1031,6 +1042,13 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   },
   onCommit: () => {
     exiting = true;
+    if (updateInstallApply) {
+      const apply = updateInstallApply;
+      updateInstallApply = undefined;
+      updateInstallCommitted = true;
+      apply();
+      return;
+    }
     app.quit();
   },
   onError: async (error) => {
@@ -1095,6 +1113,20 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   },
   getLocale: () => hostConfig?.value.locale ?? "zh-CN",
 });
+/**
+ * Installs a downloaded update only after the shutdown coordinator confirmed
+ * that every window saved. Failure leaves the app running with the update
+ * still pending.
+ */
+async function requestUpdateInstall(apply: () => void): Promise<void> {
+  updateInstallApply = apply;
+  updateInstallCommitted = false;
+  await hostShutdown.request();
+  const committed = updateInstallCommitted;
+  updateInstallApply = undefined;
+  updateInstallCommitted = false;
+  if (!committed) throw new AppError("installSaveFailed", "有窗口未完成保存，已取消更新");
+}
 if (!app.isPackaged && devUrl && process.env.SPARK233_DEV_PLUGINS === "1") {
   process.on("message", (message) => {
     if (message !== "spark233-dev-reload") return;
@@ -1209,6 +1241,7 @@ app.on("before-quit", (event) => {
   }
 });
 app.on("will-quit", () => {
+  updateService?.dispose();
   backupScheduler?.stop();
   hostShortcuts.dispose();
   stopFullscreen();
@@ -1255,6 +1288,15 @@ export function startDesktopHost(): void {
         path.join(configDir, "private-data-roots.json"),
         [configDir, backupRecoveryDir, hostConfig.value.dataDir],
       );
+      updateService = createUpdateService({
+        configDir: hostConfigDir,
+        hostVersion: app.getVersion(),
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        emit: (name, payload) => emit(name, payload),
+        requestInstall: (apply) => requestUpdateInstall(apply),
+      });
+      updateService.start();
       launcher = new LauncherController({
         commandMatcher,
         getWarnings: () => (shortcutWarning ? [shortcutWarning] : []),

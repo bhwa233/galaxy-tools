@@ -39,6 +39,9 @@ export async function listen<E extends keyof Events>(
 export async function emit<E extends keyof Events>(name: E, payload?: Events[E]): Promise<void> {
   await bridge().emit(name, payload);
 }
+export function droppedPaths(files: File[]): Promise<string[]> {
+  return bridge().droppedPaths(files);
+}
 export function droppedApplicationEntries(files: File[]): Promise<CustomApplicationTarget[]> {
   return bridge().droppedApplicationEntries(files);
 }

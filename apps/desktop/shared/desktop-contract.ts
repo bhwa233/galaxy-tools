@@ -310,6 +310,8 @@ export interface Events {
   "launcher-status-changed": undefined;
   "search-scope-changed": undefined;
   "launcher-shown": undefined;
+  "launcher-reset": undefined;
+  "launcher-input-updated": { text: string; revision: number };
   "launcher-visibility-changed": { visible: boolean };
   "ocr-result": JsonValue;
   "screenshot-result": {

@@ -31,12 +31,12 @@
 
 - [ ] **P2.5** 插件全生命周期：发现、安装、启用、激活、关闭、停用、更新、卸载，停用须完整释放规则/事件/快捷键/窗口/后台/模型。**剩余**：七个业务活动工作区的完整启停更新验收。
 - [ ] **P2.6** 必需依赖、可选能力与兼容版本检查；关闭 OCR 不自动启用，其他插件撤下对应动作。**剩余**：截图遮罩内的降级实际验收。
-- [ ] **P2.9** 自动检查更新、用户确认、保存停机、包切换、启动检查、数据迁移与匹配回滚，覆盖崩溃断电恢复与新版新增数据保护。**剩余**：最后实机升级与断电体验。
+- [ ] **P2.9** 自动检查更新、用户确认、保存停机、包切换、启动检查、数据迁移与匹配回滚，覆盖崩溃断电恢复与新版新增数据保护。**已实现**（2026-10-31）：`apps/desktop/electron/update/service.ts`（electron-updater 6.8.12 状态机 + GitHub Releases 唯一源 + 自动检查定时器 + 自动下载）、`update/settings.ts`（`configDir/update.json`，强制 GitHub-only）、`platform-commands.ts` 全部 `update_*` 委托、`runtime.ts` 用 `ShutdownCoordinator.onCommit` + `requestUpdateInstall` 做安装前保存屏障、NSIS 改 `oneClick:true`、`build.publish` 指向公开仓库 `bhwa233/galaxy-tools`、CI tag `v*` 触发 `--publish always`。**剩余**：实机验收（一键安装 → 发版 tag → 升级重启 → 断电/取消保存）；打包产物已核对 `release-electron/spark233-0.0.1-x64.exe`、`latest.yml`、`.blockmap`、`app-update.yml`（见 `Docs/evidence/update-0.0.1-2026-10-31.md`）。**已知限制（不在一期）**：不签名（SmartScreen 告警，靠 `latest.yml` 的 sha512 校验完整性）、不支持降级（已装 1.3.0 的机器需卸载重装）、不做自动回滚、不做 Mirror酱（合同与 i18n 保留，主进程 no-op）、oneClick 静默安装跳过 `search-service.nsh` 的服务注册（可用应用内“搜索服务”入口提权安装）。事件沿用 `update://checking|checked|download-finished|install-finished|error|auto-check-error`。
 
 ## P3：身份、便签插件化与启动器（8）
 
 - [ ] **P3.2** 拆分宿主与便签设置，统一快捷键、文件关联、CLI 和 MCP 的 spark233 命名。**剩余**：安装后的文件关联注册（目标机）。
-- [ ] **P3.4** Rubick 式输入框、候选与快捷键导航，支持关键词/别名/拼音/文本规则/图片/文件上下文。**剩余**：拖放、物理快捷键、IME。
+- [ ] **P3.4** Rubick 式输入框、候选与快捷键导航，支持关键词/别名/拼音/文本规则/图片/文件上下文。**剩余**：物理快捷键、IME。**拖放判定不做**：启动器失焦即隐藏（`launcher-presentation.ts:11` 的 `shouldHideLauncher`、`desktop-windows.ts:516`），从资源管理器按下鼠标那一刻窗口已隐藏，拖拽路径不可达。**替代已实现**（2026-10-31）：启动器内 Ctrl+V 粘贴剪贴板文件——`Launcher.tsx` 的 `paste` 监听把 `clipboardData.files` 交给 `platform/desktop.ts` 的 `droppedPaths`（`spark233:drop` 授权）再走 `launcher_context_files`，与拖放共用同一条上下文链路。
 - [ ] **P3.7** 中文输入法、弹层、原生对话框与多窗口焦点，避免被误判为失焦退出。**剩余**：真实 IME、原生对话框、多窗口焦点。
 - [ ] **P3.8** React + shadcn 统一竹绿色主题的自研界面，复用列表/工具栏/快捷键提示/空状态/错误反馈。**剩余**：完整工作区可读性、缩放、辅助技术。
 - [ ] **P3.9** 整体替换产品名、包名、appId、默认数据目录、服务与通信命名空间、安装包与快捷方式，不保留旧身份别名。**剩余**：安装后快捷方式与文件关联（目标机）。
@@ -55,24 +55,24 @@
 - [ ] **P4.9** 部分选字（宿主前端图文双向选区）。**剩余**：字符级拖选、图区 Ctrl+A、跨行连续选择、缩放后坐标映射。⚠️ 原文"保留 ImageReader 原图与文字区双向选择"已过时——原生 ImgViewer 由 `adapt.ps1:78-86` 的 `--spark233-batch` 有意绕过，选字改由 `apps/desktop/src/features/ocr/OcrWorkspace.tsx` 承担（`:43` 行状态、`:77` `selectLine`、`:216-245` SVG box 覆盖）。
 - [ ] **P4.10** 选中文字发送词典、AI 或便签，缺失目标插件时清晰反馈。**剩余**：真实跨插件选字动作、缺失目标反馈。
 - [ ] **P4.12** 宿主管理 ImageReader 进程与 ScreenCapture 子进程链，关闭/停用/更新不遗留窗口、模型或临时图片。**剩余**：未保存标注拒停、活动更新交互。
-- [ ] **P4.13** 框选、窗口识别、调整、矩形/椭圆/箭头/画笔/文字/马赛克、撤销重做、复制、保存、取消。**剩余**：最终实际验收。**注意**：录屏与 GIF（`--enter=video`）不属本条但同样从未验收，见 P4.20。
+- [ ] **P4.13** 框选、窗口识别、调整、矩形/椭圆/箭头/画笔/文字/马赛克、撤销重做、复制、保存、取消。**剩余**：最终实际验收。**注意**：录屏与 GIF 已判定不做，见 P4.20。
 - [ ] **P4.14** 当前选区点击取字即可识别，不要求重新框选或手动保存；全部和部分复制可用。**剩余**：最终遮罩点击、部分复制。
 - [ ] **P4.15** 取消不改写原剪贴板，其他程序同时复制时不误收旧图。**剩余**：实机验收。
 - [ ] **P4.17** 单屏与多屏/DPI 代表配置下实际检查保存图片与选字坐标。**剩余**：目标机验收。
 - [ ] **P4.18** 更新截图或 OCR 插件时另一插件版本与能力状态一致，未保存会话按规则处理。**剩余**：活动会话独立升级交互。
 - [ ] **P4.19** ~~建立截图历史~~ **判定不做**（已被剪贴板插件覆盖），改为验证"截图→剪贴板→图库"链路。**剩余**：确认 ScreenCapture 写剪贴板的格式落在 `PNG`/`CF_DIB`(8)/`CF_DIBV5`(17) 内——`clipboard-history.ts:154-157` **不认 `CF_BITMAP`**(2)，若只写 CF_BITMAP 则漏记；并清理死事件 `emit("screenshot-result")`（`main.ts:1182`，无消费者）。详见[截图补强 TODO](archive/2026-10/screenshot-enhancement-todo.md) 第 1 节。
-- [ ] **P4.20** **待决策**：GIF 编码路径。upstream gifski 实现已在 `adapt.ps1:62-71` 整段删除（注释 include + 删 `createGif` 函数体 + 调用点改 `createGif2`），当前走 cgif；gifski 为 Rust 库且 `sources.lock.json` 未收录。**剩余**：三选一——恢复 gifski（需引入 Rust 构建树）/ 优化 cgif 参数 / 主输出改 MP4-WebP；录屏本身无任何验收记录。详见[截图补强 TODO](archive/2026-10/screenshot-enhancement-todo.md) 第 2 节。
+- [ ] **P4.20** ~~GIF 编码路径~~ **判定不做**（2026-10-31 用户决定）：录屏、GIF、钉图、长截图都不在一期范围，截图插件只保留 `capture` / `ocr` / `history` / `cancel` 四条命令。上游 gifski 已在 `adapt.ps1:62-71` 删除，不再恢复；`archive/2026-10/screenshot-enhancement-todo.md` 第 2 节据此关闭。
 
 ## P5：应用与 Pulse 搜索（8）
 
-- [ ] **P5.1** 应用搜索索引开始菜单、Store/注册应用和自定义入口，保留参数与工作目录，支持拼音缩写。**剩余**：自定义入口 UI、真实应用操作。
+- [ ] **P5.1** 应用搜索索引开始菜单、Store/注册应用和自定义入口，保留参数与工作目录，支持拼音缩写。**剩余**：真实应用操作。自定义入口已完成：编辑器在 `ApplicationsDialog.tsx`，入口在 `SettingsPanel.tsx:218`，主进程 `application-commands.ts:22-120`，拖入走 `preload.cts:26-30`。
 - [ ] **P5.3** 服务安装升级授权，日常宿主以普通权限使用，保留调用者可见性与权限过滤。**剩余**：实际 UAC/SYSTEM 安装升级（目标机）。
 - [ ] **P5.4** 关键词进入文件搜索模式，文件名与 Instant 按需正文查询，默认跟随在线固定/移动 NTFS 卷。**剩余**：真实全卷范围、完整物理操作。
 - [ ] **P5.5** MFT/USN 增量、目录改名删除、漏事件补偿、重建和非 NTFS/网络盘覆盖。**剩余**：实机验证。
 - [ ] **P5.6** Instant 正文召回、中文短词、英文混排、路径与代码符号；区分即时路径与可选 FTS5 索引路径。**剩余**：真实服务范围的召回质量。
 - [ ] **P5.9** 默认集成并启用文件名服务，自动纳入 NTFS 卷并排除系统/临时目录/node_modules，拒绝授权可重试。**剩余**：默认服务安装、卷覆盖、拒绝后重试。
 - [ ] **P5.10** 正文仅承诺文本/Markdown/代码，验证大小/编码/云占位/离线跳过策略；范围撤销后清理派生内容。**剩余**：云占位、离线文件、目录继承 ACL、跨账号服务路径。
-- [ ] **P5.12** 文件、文件夹快捷入口：自定义目标扩展到普通文档与目录，支持拖入添加、自定义名称、编辑移除。**剩余**：实际 Shell 窗口操作。见[快捷入口续记](evidence/spark233-custom-targets-followup.md)。
+- [ ] **P5.12** 文件、文件夹快捷入口：自定义目标扩展到普通文档与目录，支持拖入添加、自定义名称、编辑移除。**剩余**：实际 Shell 窗口操作（入口编辑器已含拖入、改名、编辑移除）。见[快捷入口续记](evidence/spark233-custom-targets-followup.md)。
 
 ## P6：剪贴板、词典与 AI 翻译（9）
 

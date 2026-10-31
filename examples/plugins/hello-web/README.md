@@ -13,4 +13,5 @@
 宿主 API 1.3 起，示例在 `package.json` 声明 `ui.icon`、`ui.windows.main`，以及
 `open` 命令的 `window`、`launcher.role`。原生标题为 Hello Web，图标来自包内
 `assets/icon.png` / `icon.ico`；HTML 标题不会覆盖原生标题。
-宿主从声明发现入口，无需向启动器增加插件 ID 或页面分支。
+宿主从声明发现入口，无需向启动器增加插件 ID 或页面分支。包清单的 `host`
+范围声明为 `>=0.0.1 <1`，即当前 0.x 宿主线。

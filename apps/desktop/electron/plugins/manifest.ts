@@ -73,6 +73,11 @@ export function validatePluginMetadata(
     !semver.satisfies(environment.apiVersion, manifest.api) ||
     !semver.satisfies(environment.version, manifest.host)
   ) {
+    console.error("plugin-incompatible-debug", {
+      environment,
+      api: manifest.api,
+      host: manifest.host,
+    });
     throw new AppError("incompatiblePlugin", "插件与当前宿主版本不兼容");
   }
   if (
@@ -81,9 +86,9 @@ export function validatePluginMetadata(
       manifest.commands.some(
         (command) => command.launcher || command.window || command.progress,
       )) &&
-    !semver.subset(manifest.host, ">=1.3.0")
+    !semver.subset(manifest.host, ">=0.0.1")
   )
-    throw new AppError("incompatiblePlugin", "插件窗口声明需要声明最低宿主版本 1.3.0");
+    throw new AppError("incompatiblePlugin", "插件窗口声明需要声明最低宿主版本 0.0.1");
   if (
     !manifest.platforms.some((platform) => platform === environment.platform) ||
     !manifest.architectures.some((arch) => arch === environment.arch)
