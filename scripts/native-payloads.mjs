@@ -152,14 +152,15 @@ async function fetchPayloads({ from, out }) {
 }
 async function check({ quiet } = {}) {
   const stampPath = path.join(defaultOut, stampName);
-  let stamp;
+  let manifest;
   try {
-    stamp = JSON.parse(await fs.readFile(stampPath, "utf8"));
+    manifest = readManifest(JSON.parse(await fs.readFile(stampPath, "utf8")));
   } catch {
-    if (!quiet) console.log("No native payload stamp. Run pnpm native:fetch or build the plugins locally.");
+    if (!quiet)
+      console.log("No usable native payload stamp. Run pnpm native:fetch or build the plugins locally.");
     return false;
   }
-  for (const entry of readManifest(stamp).files) {
+  for (const entry of manifest.files) {
     let content;
     try {
       content = await fs.readFile(path.join(project, ...entry.path.split("/")));
@@ -172,7 +173,7 @@ async function check({ quiet } = {}) {
       return false;
     }
   }
-  if (!quiet) console.log(`Native payloads verified (${stamp.files.length} files, ${stamp.commit})`);
+  if (!quiet) console.log(`Native payloads verified (${manifest.files.length} files, ${manifest.commit})`);
   return true;
 }
 const { values, positionals } = parseArgs({

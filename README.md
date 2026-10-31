@@ -39,7 +39,13 @@ pnpm native:check
 pnpm dev   # 命中预编译资源时跳过原生构建
 ```
 
-`SPARK233_NATIVE_PAYLOAD_URL` 指向同一地址时，`pnpm dev` 会在缺少资源时自动拉取。清单校验每个文件的 SHA-256，且只接受 `packages/official/*/native` 与 `packages/official/ocr/legal` 下的路径；任何内容变化都必须重新下载或在本机重新构建。缺少原生资源的插件在开发模式下会跳过并提示，打包仍要求完整资源。修改原生源码后需要本机工具链或重跑 CI 产出新的资源包。
+`SPARK233_NATIVE_PAYLOAD_URL` 指向同一地址时，`pnpm dev` 会在缺少资源时自动拉取。标签 `native-payloads-*` 的构建会把资源包与清单发布为同名 Release，可以固定版本引用：
+
+```sh
+pnpm native:fetch --from https://github.com/bhwa233/galaxy-tools/releases/download/native-payloads-20261031c
+```
+
+清单校验每个文件的 SHA-256，且只接受 `packages/official/*/native` 下的路径；任何内容变化都必须重新下载或在本机重新构建。缺少原生资源的插件在开发模式下会跳过并提示，打包仍要求完整资源。修改原生源码后需要本机工具链或重跑 CI 产出新的资源包。
 
 ## 验证
 

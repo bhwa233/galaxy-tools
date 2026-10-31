@@ -23,14 +23,17 @@
 ## 验证（2026-10-31）
 
 - CI：`Native payloads` 运行 [41166974894](https://github.com/bhwa233/galaxy-tools/actions/runs/41166974894) 成功，耗时 9 分 32 秒；产物包含 `native-payloads.json`（5,345 字节）与 `spark233-native-payloads-4e1b49052dba.tar.gz`（20,580,072 字节）。
-- 本地：`pnpm native:fetch --from local-build/ci-payloads` 安装 26 个文件，`pnpm native:check` 通过（提交 `4e1b490`）。
-- `pnpm dev`：日志为 `Using prebuilt native payloads.`，随后 `Prepared 7 independent official plugin packages`，Vite 于 `http://127.0.0.1:1129/` 就绪，Electron 进程正常运行，无工具链也能启动。
+- 发布：运行 [41168401891](https://github.com/bhwa233/galaxy-tools/actions/runs/41168401891)（标签 `native-payloads-20261031c`）成功，耗时 9 分 14 秒，产出 [Release native-payloads-20261031c](https://github.com/bhwa233/galaxy-tools/releases/tag/native-payloads-20261031c)：`native-payloads.json`（4,006 字节）与 `spark233-native-payloads-4e80378e2c21.tar.gz`（20,507,396 字节）。
+- 公网拉取：`pnpm native:fetch --from https://github.com/bhwa233/galaxy-tools/releases/download/native-payloads-20261031c` 安装 19 个文件并通过校验（提交 `4e80378`，工作区未出现额外改动）。
+- 本地：`pnpm native:fetch --from local-build/ci-payloads` 安装 26 个文件，`pnpm native:check` 通过（提交 `4e1b490`，含当时尚未剔除的 `ocr/legal`）。
+- `pnpm dev`：日志为 `Using prebuilt native payloads.`，随后 `Prepared 7 independent official plugin packages`，Vite 于 `http://127.0.0.1:1129/` 与 `http://127.0.0.1:2804/` 就绪，Electron 进程正常运行，无工具链也能启动。
 - 安全回归：构造 `packages/official/../../evil.txt` 清单被拒绝且仓库外无写入；篡改压缩包一个字节被 `does not match its manifest` 拒绝；删除 `applications/native` 后重新 `fetch` 可恢复。
 - `pnpm lint`：0 error（153 个既有 warning），locale 检查通过。
 
 ## 边界与后续
 
 - 修改任一原生源码后，`resources.json` 内的源码哈希会失配，开发构建会跳过该插件；需要重跑 CI 生成新载荷或在具备工具链的机器上重建。
+- `pnpm native:check` 在清单缺失、不可解析或指向已移出载荷的旧路径时退出 1 并提示重新 `fetch`，不会把过期载荷当成可用。
 - 载荷不包含翻译词典（`packages/official/translation/data/ecdict.sqlite`，约 102 MB），词典仍由 `scripts/dictionary/build.py` 生成。
 - 本机 dev 配置中的启动器快捷键改为 `Ctrl+Alt+Space`（`Alt+Space` 被其它程序占用）。
 - 长期方向仍是把原生能力上收宿主，届时按插件分发原生载荷的机制可以整体退役。
