@@ -292,6 +292,7 @@ export const EditorPane = memo(function EditorPane({
                 size="sm"
                 variant={viewMode === option.value ? "secondary" : "ghost"}
                 aria-pressed={viewMode === option.value}
+                data-note-view-mode={option.value}
                 onClick={() => setViewMode(option.value)}
               >
                 {option.label}

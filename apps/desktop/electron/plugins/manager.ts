@@ -17,6 +17,7 @@ import {
   type StopReason,
   type PluginDataMigration,
   type PluginCommand,
+  type WidgetBinding,
 } from "@spark233/sdk";
 import { AppError, atomicWrite, canonical, confined, inside, readJson } from "../persistence.js";
 import { validatePluginDirectory, type HostEnvironment } from "./manifest.js";
@@ -101,6 +102,22 @@ type Journal = z.infer<typeof journalSchema>;
 export interface ManagedPluginRuntime {
   activate(activation: PluginActivation): Promise<JsonValue | undefined>;
   query?(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
+  /** Explicitly headless: never fall back to activate, which may open a window. */
+  executeWidget?(request: {
+    mode: "query" | "action";
+    activation: PluginActivation;
+    entryId?: string;
+    signal: AbortSignal;
+  }): Promise<JsonValue | undefined>;
+}
+export interface WidgetExecution {
+  binding: WidgetBinding;
+  actionId: string;
+  origin: "widget" | "subscription";
+  mode: "query" | "action";
+  commandId: string;
+  input?: JsonValue;
+  signal: AbortSignal;
 }
 export interface PluginManagerOptions {
   stateFile: string;
@@ -113,6 +130,7 @@ export interface PluginManagerOptions {
     metadata: PluginPackageMetadata,
     scope: PluginResourceScope,
     startupCheckOnly: boolean,
+    purpose?: "widget",
   ) => Promise<ManagedPluginRuntime>;
   onChange?: () => void;
   onDiagnostic?: (event: DiagnosticEvent) => void;
@@ -792,6 +810,7 @@ export class PluginManager {
     record: PluginInstallation,
     startupCheckOnly = false,
     internal = false,
+    purpose?: "widget",
   ): Promise<ManagedPluginRuntime> {
     if (!internal && this.exclusive)
       return Promise.reject(new AppError("pluginBusy", "插件正在全局维护"));
@@ -838,6 +857,7 @@ export class PluginManager {
           metadata,
           scope,
           startupCheckOnly,
+          purpose,
         );
         const crashed = this.pendingCrashes.get(record.pluginId);
         if (
@@ -1015,6 +1035,92 @@ export class PluginManager {
   }
   activate(pluginId: string, activation: PluginActivation): Promise<JsonValue | undefined> {
     return this.dispatch(pluginId, activation, false).then(({ value }) => value);
+  }
+  async ensureWidgetOwner(pluginId: string): Promise<PluginOwner> {
+    const record = this.record(pluginId);
+    if (!record.enabled || record.lastError)
+      throw new AppError("pluginDisabled", "插件已停用或存在错误");
+    const metadata = this.metadata(record);
+    if (!Object.keys(metadata.spark233.ui?.widgets ?? {}).length)
+      throw new AppError("invalidPlugin", "插件未声明桌面卡片");
+    this.assertDispatch(metadata);
+    const runtime = await this.start(record, false, false, "widget");
+    const instance = this.instances.get(pluginId);
+    if (
+      this.find(pluginId) !== record ||
+      !instance ||
+      instance.runtime !== runtime ||
+      instance.scope.state !== "active"
+    )
+      throw new AppError("pluginStopping", "桌面卡片所属插件实例已变化");
+    return { ...instance.scope.owner };
+  }
+  async executeWidgetOwned(
+    request: WidgetExecution,
+  ): Promise<{ owner: PluginOwner; value: JsonValue | undefined }> {
+    request.signal.throwIfAborted();
+    const { binding } = request;
+    if (
+      !["widget", "subscription"].includes(request.origin) ||
+      binding.pluginId !== binding.owner.pluginId ||
+      !this.isOwnerCurrent(binding.owner)
+    )
+      throw new AppError("pluginStopping", "桌面卡片所属插件实例已失效");
+    const metadata = this.describe(binding.pluginId),
+      widget = metadata.spark233.ui?.widgets?.[binding.widgetDefinitionId];
+    const action = widget?.actions[request.actionId];
+    const command =
+      action && metadata.spark233.commands.find((c) => c.id === action.commandId && !c.internal);
+    if (
+      !widget ||
+      !action ||
+      action.mode === "open-main" ||
+      action.mode !== request.mode ||
+      action.commandId !== request.commandId ||
+      !widget.commands.includes(action.commandId) ||
+      !command ||
+      command.window ||
+      command.sourceApplications ||
+      command.match === "window" ||
+      command.inputs.some((i) => i === "files" || i === "image" || i === "window") ||
+      (request.origin === "widget" && !widget.interactive) ||
+      (request.origin === "subscription" && action.mode !== "query")
+    )
+      throw new AppError("permissionDenied", "桌面卡片动作未获授权或不是无窗命令");
+    this.assertDispatch(metadata, command);
+    const instance = this.instances.get(binding.pluginId)!;
+    if (!instance.runtime.executeWidget)
+      throw new AppError("unknownPluginCommand", "插件运行时不支持无窗桌面动作");
+    const controller = new AbortController();
+    const signal = AbortSignal.any([request.signal, controller.signal, AbortSignal.timeout(10000)]);
+    const release = instance.scope.own("task", {
+      prepareStop: () => {
+        controller.abort();
+        return { ok: true };
+      },
+      dispose: () => controller.abort(),
+    });
+    try {
+      signal.throwIfAborted();
+      const value = await instance.runtime.executeWidget({
+        mode: request.mode,
+        entryId: action.entryId,
+        signal,
+        activation: {
+          commandId: action.commandId,
+          parameters: { widgetInstanceId: binding.widgetInstanceId, input: request.input ?? null },
+        },
+      });
+      signal.throwIfAborted();
+      if (
+        !this.isOwnerCurrent(binding.owner, action.commandId) ||
+        this.instances.get(binding.pluginId) !== instance
+      )
+        throw new AppError("pluginStopping", "桌面卡片结果所属实例已失效");
+      return { owner: { ...binding.owner }, value };
+    } finally {
+      await release();
+    }
   }
   /** Host-only activation receipt; the exact executed owner is also returned
    * for cold commands, without changing any renderer/plugin protocol. */

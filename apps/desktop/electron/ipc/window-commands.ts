@@ -44,6 +44,11 @@ export function createWindowCommands(
           win.show();
           win.focus();
         }
+        // Show-first can reveal a preloaded launcher before its listeners mount.
+        // Reconcile actual visibility at readiness so it can start querying;
+        // hidden preloads still remain hidden and receive visible:false.
+        if (layout.label === "launcher")
+          ctx.emit("launcher-visibility-changed", { visible: win.isVisible() }, win);
         return;
       }
       case "surface_state": {

@@ -1,0 +1,305 @@
+.desktop-layer-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--font-body, sans-serif);
+  background: transparent;
+  user-select: none;
+}
+.desktop-layer-root * {
+  box-sizing: border-box;
+}
+.layer-render-card {
+  position: absolute;
+  overflow: hidden;
+}
+.layer-desktop-interactive {
+  cursor: pointer;
+  touch-action: none;
+}
+.layer-desktop-interactive:active {
+  cursor: grabbing;
+}
+.declarative-card {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.declarative-card-intrinsic,
+.declarative-card-intrinsic > .layer-stack {
+  height: auto;
+}
+.layer-action-error {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  left: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--destructive);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.declarative-card-background {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+.layer-stack {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.layer-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.layer-number {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.layer-number small {
+  font-size: 12px;
+}
+.layer-progress {
+  width: 100%;
+  height: 8px;
+  align-self: center;
+  accent-color: currentColor;
+}
+.layer-sparkline {
+  display: block;
+  width: 100%;
+  min-width: 40px;
+  height: 36px;
+}
+.layer-card-fault {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.layer-card-fault svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.layer-widget-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+.layer-screenshot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+  cursor: move;
+}
+.layer-screenshot-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.layer-screenshot-toolbar {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  left: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 16%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  cursor: default;
+}
+.layer-screenshot:hover .layer-screenshot-toolbar,
+.layer-screenshot:focus-within .layer-screenshot-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+.layer-screenshot-toolbar button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+.layer-screenshot-scale {
+  padding: 0 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.layer-web-blocked {
+  position: absolute;
+  inset: 0;
+  cursor: default;
+}
+.layer-open-main-confirmation {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--card);
+  color: var(--card-foreground);
+  font-size: 12px;
+}
+.layer-editor-card {
+  position: absolute;
+  border: 2px solid var(--primary);
+  border-radius: var(--radius-lg, 12px);
+  touch-action: none;
+}
+.layer-editor-handle {
+  display: flex;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: 24px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  cursor: move;
+  touch-action: none;
+}
+.layer-editor-handle span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.layer-editor-resize {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.layer-editor-toolbar {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  display: flex;
+  max-width: calc(100% - 32px);
+  transform: translateX(-50%);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 20px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.layer-editor-message {
+  overflow: hidden;
+  max-width: 280px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.layer-editor-error {
+  color: var(--destructive);
+}
+.layer-note-label {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  gap: 6px;
+  padding: 4px 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--card-foreground);
+  font-size: 13px;
+}
+.layer-note-label span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.layer-render-card .capsule-host {
+  width: 100%;
+  height: 100%;
+}
+.layer-rank-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.layer-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.layer-rank-row > img,
+.layer-rank-row > svg {
+  flex: 0 0 18px;
+}
+.layer-rank-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.layer-rank-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

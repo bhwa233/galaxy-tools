@@ -12,7 +12,10 @@ export function patchConfig(
   patch: AppConfigPatch,
   options?: {
     expectedCommandShortcuts?: Record<string, string>;
-    expectedShortcuts?: Pick<AppConfig, "globalShortcut" | "toggleVisibilityShortcut">;
+    expectedShortcuts?: Pick<
+      AppConfig,
+      "globalShortcut" | "toggleVisibilityShortcut" | "desktopOverlayShortcut"
+    >;
   },
 ): Promise<AppConfig> {
   return invoke("config_patch", { patch, ...options });

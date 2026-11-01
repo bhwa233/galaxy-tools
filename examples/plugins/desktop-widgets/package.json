@@ -1,0 +1,102 @@
+{
+  "name": "@spark233/example-desktop-widgets",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prebuilt clock cards for the spark233 desktop widget API",
+  "license": "MIT",
+  "files": [
+    "widgets/**",
+    "README.md"
+  ],
+  "type": "module",
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "example.desktop-widgets",
+    "displayName": "桌面时钟示例",
+    "translations": {
+      "en-US": {
+        "displayName": "Desktop clock examples"
+      }
+    },
+    "api": ">=1.4.0 <2.0.0",
+    "host": ">=0.0.1 <1",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64",
+      "arm64"
+    ],
+    "activation": "on-command",
+    "capabilities": [],
+    "commands": [],
+    "ui": {
+      "theme": "^1.0.0",
+      "widgets": {
+        "clock": {
+          "kind": "declarative",
+          "template": "widgets/clock.json",
+          "title": "简洁时钟",
+          "translations": {
+            "en-US": {
+              "title": "Simple clock"
+            }
+          },
+          "size": {
+            "width": 220,
+            "height": 92
+          },
+          "group": "top",
+          "clickThrough": true,
+          "interactive": false,
+          "refreshMs": 1000,
+          "data": {
+            "time": {
+              "source": "host",
+              "provider": "host.clock",
+              "format": "text"
+            }
+          },
+          "commands": [],
+          "actions": {}
+        },
+        "clock-web": {
+          "kind": "web",
+          "entry": "widgets/clock-web/index.html",
+          "title": "交互时钟",
+          "translations": {
+            "en-US": {
+              "title": "Interactive clock"
+            }
+          },
+          "size": {
+            "width": 260,
+            "height": 116
+          },
+          "minSize": {
+            "width": 220,
+            "height": 100
+          },
+          "maxSize": {
+            "width": 400,
+            "height": 220
+          },
+          "resizable": true,
+          "group": "top",
+          "clickThrough": false,
+          "interactive": true,
+          "refreshMs": 1000,
+          "data": {
+            "timestamp": {
+              "source": "host",
+              "provider": "host.clock",
+              "format": "number"
+            }
+          },
+          "commands": [],
+          "actions": {}
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ import { app, screen, type BrowserWindow } from "electron";
 import type { NoteLayoutState } from "./note-window-state.js";
 import type { NoteWindowSnapshot } from "../src/features/windows/noteWindowState.js";
 import type { Capsules } from "./capsules.js";
+import { contains } from "./capsule-layout.js";
 import type { NotesDataClient } from "./plugins/official/notes-data-client.js";
 import type { AppConfig } from "../src/features/settings/types.js";
 
@@ -35,6 +36,7 @@ export interface SmokeContext {
   showMain: () => BrowserWindow;
   showLauncher: () => Promise<BrowserWindow>;
   pauseForBackup: () => Promise<() => void>;
+  prepare: (win: BrowserWindow) => Promise<boolean>;
   hideAndRelease: (win: BrowserWindow) => Promise<void>;
   foldAndRelease: (win: BrowserWindow) => Promise<void>;
   capsules: Capsules;
@@ -46,10 +48,21 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
   const checks: Record<string, unknown> = {};
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   async function clickCapsule(win: BrowserWindow, selector: string, movement = 0) {
-    const point = await win.webContents.executeJavaScript(`(() => {
-      const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-      return { x: Math.round(rect.x + 20), y: Math.round(rect.y + rect.height / 2) };
-    })()`);
+    let point: { x: number; y: number } | undefined;
+    // desktop_ready precedes the asynchronous CapsuleHost snapshot commit.
+    // Native input must wait for its actual target, not only window readiness.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (win.isDestroyed()) throw new Error(`Capsule window closed before input: ${selector}`);
+      point = await win.webContents.executeJavaScript(`(() => {
+        const rect = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect();
+        return rect?.width && rect.height
+          ? { x: Math.round(rect.x + 20), y: Math.round(rect.y + rect.height / 2) }
+          : undefined;
+      })()`);
+      if (point) break;
+      await wait(50);
+    }
+    if (!point) throw new Error(`Capsule input target did not render: ${selector}`);
     win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
     await wait(50);
     if (movement) {
@@ -101,6 +114,21 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       }))()`);
       throw new Error(failure);
     };
+    await untilRenderer(
+      "!!window.spark233Desktop",
+      "Launcher bridge did not initialize before maintenance",
+    );
+    // Every run uses a new isolated profile. Exercise the real onboarding
+    // command before testing the normal command catalog and maintenance flow.
+    const onboarding = await launcher.webContents.executeJavaScript(`(async () => {
+      const state = await window.spark233Desktop.invoke('launcher_state');
+      if (!state.ok || !state.value.firstRun) return state;
+      return window.spark233Desktop.invoke('launcher_complete_onboarding');
+    })()`);
+    if (!onboarding.ok || onboarding.value.firstRun)
+      throw new Error("Isolated launcher onboarding did not complete");
+    checks.launcherOnboardingCompleted = true;
+    context.emit("launcher-status-changed", undefined, launcher);
     await untilRenderer(settledCommands, "Launcher commands did not settle before maintenance");
     const maintenance: Record<string, unknown> = {};
     checks.launcherMaintenance = maintenance;
@@ -281,7 +309,9 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
   try {
     if (
       process.argv.includes("--smoke-launcher-maintenance") ||
-      process.argv.includes("--smoke-notes-final-save")
+      process.argv.includes("--smoke-notes-final-save") ||
+      process.argv.includes("--smoke-note-modes") ||
+      process.argv.includes("--smoke-note-list")
     ) {
       if (process.argv.includes("--smoke-launcher-maintenance")) {
         if (!(await notes.list()).length)
@@ -293,6 +323,27 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
         await verifyLauncherMaintenance();
       }
       if (process.argv.includes("--smoke-notes-final-save")) await verifyFinalPluginSave();
+      if (process.argv.includes("--smoke-note-modes")) {
+        if (!(await notes.list()).length)
+          await notes.save({
+            title: "Smoke note modes fixture",
+            content: "Controlled source",
+            category: "",
+          });
+        const main = showMain();
+        await hydrated(main);
+        checks.noteModes = await verifyNoteModes(context, main);
+      }
+      if (process.argv.includes("--smoke-note-list")) {
+        const note = await notes.save({
+          title: "Unified list lifecycle fixture",
+          content: "Controlled shared source",
+          category: "",
+        });
+        const main = showMain();
+        await hydrated(main);
+        checks.unifiedList = (await verifyUnifiedNoteList(context, main, note)).checks;
+      }
       fs.mkdirSync(path.dirname(context.output), { recursive: true });
       fs.writeFileSync(
         context.output,
@@ -592,10 +643,22 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     // a probe, so retry positioning the test host rather than assuming the cursor stayed still.
     for (let attempt = 0; attempt < 12; attempt++) {
       cursor = screen.getCursorScreenPoint();
-      queueWin.setPosition(cursor.x - item.rect.x - 20, cursor.y - item.rect.y - 16);
-      await queueWin.webContents.executeJavaScript(
-        "window.spark233Desktop.invoke('capsule_hover',{id:" + JSON.stringify(note.id) + "})",
-      );
+      const actualBounds = queueWin.getBounds();
+      if (
+        attempt === 0 ||
+        !contains(
+          { ...item.rect, x: actualBounds.x + item.rect.x, y: actualBounds.y + item.rect.y },
+          cursor,
+          2,
+        )
+      ) {
+        queueWin.setPosition(cursor.x - item.rect.x - 20, cursor.y - item.rect.y - 16);
+        await queueWin.webContents.executeJavaScript(
+          "window.spark233Desktop.invoke('capsule_hover',{id:" + JSON.stringify(note.id) + "})",
+        );
+      }
+      // Keep the one hover request alive while its real backend read completes.
+      // Re-entering on every poll would invalidate each in-flight preview.
       await wait(350);
       preview = context.capsules.surfaces.get("preview");
       if (preview?.ready && preview.win.isVisible()) break;

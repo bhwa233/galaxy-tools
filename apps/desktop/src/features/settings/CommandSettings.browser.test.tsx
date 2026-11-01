@@ -8,6 +8,7 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
   const previousUrl = location.href;
   history.replaceState(null, "", "?view=settings&page=shortcuts");
   let fail = true;
+  let pluginName = "测试插件";
   let config = {
     theme: "system",
     locale: "zh-CN",
@@ -19,12 +20,23 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
   };
   const desktop = installDesktopBridge({
     config_get: () => config,
+    update_status: () => ({ status: "idle", currentVersion: "0.0.1", channel: "stable" }),
+    update_settings_get: () => ({
+      autoCheck: false,
+      autoDownload: false,
+      checkIntervalHours: 24,
+      checkSourcePreference: "githubFirst",
+      downloadSourcePreference: "githubFirst",
+      channel: "stable",
+      allowPrerelease: false,
+      hasMirrorChyanCdk: false,
+    }),
     launcher_state: () => ({ firstRun: false, pluginsReady: true, commands: [], preferences: [] }),
     plugins_list: () => ({
       plugins: [
         {
           pluginId: "fixture.plugin",
-          displayName: "测试插件",
+          displayName: pluginName,
           enabled: true,
           status: "enabled",
           version: "1.0.0",
@@ -126,6 +138,40 @@ it("keeps shortcut drafts on registration failure, identifies conflicts and pers
     await page.screenshot({
       path: "../../../../../local-build/browser-ui/screenshots/tray-management.png",
     });
+
+    // Switching settings categories used to discard the loaded plugin list and
+    // repeat the blocking first-load screen on every shortcuts/tray visit.
+    const pluginReads = () =>
+      desktop.calls.filter((call) => call.command === "plugins_list").length;
+    expect(pluginReads()).toBe(1);
+    await page.getByRole("button", { name: "常规设置", exact: true }).click();
+    await expect
+      .element(page.getByRole("heading", { name: "常规设置", exact: true }))
+      .toBeVisible();
+    await page.getByRole("button", { name: "快捷键管理", exact: true }).click();
+    await page.getByRole("button", { name: /^测试插件 已设置/ }).click();
+    await expect
+      .element(page.getByRole("button", { name: "测试插件 · 打开测试功能", exact: true }))
+      .toBeVisible();
+    await page.getByRole("button", { name: "托盘菜单", exact: true }).click();
+    await expect
+      .element(page.getByRole("checkbox", { name: "显示 打开测试功能", exact: true }))
+      .toBeVisible();
+    expect(pluginReads()).toBe(1);
+
+    await page.getByRole("button", { name: "常规设置", exact: true }).click();
+    await expect
+      .element(page.getByRole("heading", { name: "常规设置", exact: true }))
+      .toBeVisible();
+    pluginName = "已更新插件";
+    desktop.emit("plugins-changed");
+    await expect.poll(pluginReads).toBe(2);
+    await page.getByRole("button", { name: "快捷键管理", exact: true }).click();
+    await page.getByRole("button", { name: /^已更新插件 已设置/ }).click();
+    await expect
+      .element(page.getByRole("button", { name: "已更新插件 · 打开测试功能", exact: true }))
+      .toBeVisible();
+    expect(pluginReads()).toBe(2);
   } finally {
     await view.unmount();
     desktop.restore();

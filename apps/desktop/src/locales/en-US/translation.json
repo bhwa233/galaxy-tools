@@ -510,6 +510,7 @@
       "registryPluginHint": "Plugins installed from npm are checked automatically. Updates require your confirmation."
     },
     "visibilityShortcut": "Show/Hide window shortcut",
+    "desktopOverlayShortcut": "Show/hide desktop plugin bar",
     "background": {
       "label": "Background image",
       "default": "Default background",
@@ -1056,6 +1057,7 @@
     "pages": {
       "general": "General",
       "entries": "Launcher entries",
+      "desktop": "Desktop cards",
       "plugins": "Plugin settings",
       "marketplace": "Plugin marketplace",
       "backup": "Data & backups",
@@ -1076,6 +1078,16 @@
     "minimize": "Minimize",
     "maximize": "Maximize or restore",
     "backGeneral": "Back to general"
+  },
+  "desktopSettings": {
+    "enabled": "Desktop plugin layer",
+    "enabledDescription": "Turning this off keeps cards and layout.",
+    "webEnabled": "Web cards",
+    "notesEnabled": "Desktop note capsules",
+    "notesDescription": "Turning this off restores the previous display mode.",
+    "retry": "Retry",
+    "retrying": "Retrying…",
+    "retryCard": "Reload card: {{title}}"
   },
   "pluginMarket": {
     "tabs": {
@@ -1172,6 +1184,9 @@
     "moveUp": "Move {{title}} up",
     "moveDown": "Move {{title}} down",
     "showItem": "Show {{title}}"
+  },
+  "desktopOverlay": {
+    "open": "Open plugin bar"
   },
   "noteHistory": {
     "title": "Version history",

@@ -1,0 +1,49 @@
+/* Controls, theme and window chrome reuse @spark233/ui. Only page layout lives here. */
+@source "./main.tsx";
+
+.quicklinks-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+.quicklinks-alert {
+  margin: 12px 20px 0;
+  width: auto;
+  flex-shrink: 0;
+}
+.quicklinks-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.quicklinks-list-item:hover {
+  background: var(--muted);
+}
+.quicklinks-list-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.quicklinks-selected {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.quicklinks-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.quicklinks-field > small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+}
+@media (max-width: 860px) {
+  .quicklinks-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+}

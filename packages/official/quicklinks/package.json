@@ -1,0 +1,194 @@
+{
+  "name": "@spark233/plugin-quicklinks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Keyword web searches and parameterized URL or application quicklinks",
+  "license": "MIT",
+  "files": [
+    "backend.mjs",
+    "renderer/**",
+    "assets/**",
+    "README.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.quicklinks",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@spark233/sdk": "workspace:*",
+    "@spark233/ui": "workspace:*",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "lucide-react": "1.64.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.quicklinks",
+    "displayName": "快捷搜索与快开",
+    "translations": {
+      "en-US": {
+        "displayName": "Quick search & quicklinks"
+      }
+    },
+    "api": ">=1.5.0 <2.0.0",
+    "host": ">=0.0.1 <1",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-command",
+    "entry": "renderer/index.html",
+    "backend": {
+      "entry": "backend.mjs"
+    },
+    "capabilities": [
+      "node.backend",
+      "commands"
+    ],
+    "commands": [
+      {
+        "id": "workspace",
+        "title": "快捷搜索与快开",
+        "description": "管理网站搜索、应用链接和程序参数模板",
+        "keywords": [
+          "快捷搜索",
+          "网页搜索",
+          "快开",
+          "quicklinks",
+          "web",
+          "search"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Quick search & quicklinks",
+            "description": "Manage web searches, deep links and program templates"
+          }
+        },
+        "launcher": {
+          "role": "entry"
+        },
+        "window": "main"
+      },
+      {
+        "id": "search",
+        "title": "快捷搜索与快开",
+        "keywords": [
+          "网页",
+          "快开",
+          "web",
+          "quicklinks"
+        ],
+        "translations": {
+          "en-US": {
+            "title": "Quick search & quicklinks"
+          }
+        },
+        "search": "default",
+        "mode": "quicklinks",
+        "launcher": {
+          "role": "keyword-only"
+        }
+      },
+      {
+        "id": "settings.get",
+        "title": "读取快捷入口",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "settings.save",
+        "title": "保存快捷入口",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "resolve",
+        "title": "预览快捷入口",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "run",
+        "title": "打开快捷入口",
+        "inputs": [
+          "text"
+        ],
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "pick-program",
+        "title": "选择程序",
+        "launcher": {
+          "role": "hidden"
+        }
+      }
+    ],
+    "modes": [
+      {
+        "id": "quicklinks",
+        "title": "快捷搜索与快开",
+        "placeholder": "输入关键词和内容，如 bd 天气…",
+        "translations": {
+          "en-US": {
+            "title": "Quicklinks",
+            "placeholder": "Enter a keyword and query, e.g. bd weather…"
+          }
+        }
+      }
+    ],
+    "tray": [
+      {
+        "id": "workspace",
+        "commandId": "workspace",
+        "order": 0
+      }
+    ],
+    "ui": {
+      "theme": "^1.0.0",
+      "icon": {
+        "png": "assets/icon.png",
+        "ico": "assets/icon.ico",
+        "monochrome": true
+      },
+      "windows": {
+        "main": {
+          "entry": "renderer/index.html",
+          "title": "快捷搜索与快开",
+          "translations": {
+            "en-US": {
+              "title": "Quick search & quicklinks"
+            }
+          },
+          "size": {
+            "width": 1000,
+            "height": 720
+          },
+          "minSize": {
+            "width": 780,
+            "height": 560
+          },
+          "resizable": true,
+          "maximizable": true,
+          "taskbar": true,
+          "reuse": "singleton",
+          "presentation": "standard",
+          "titleBar": "custom"
+        }
+      }
+    }
+  }
+}

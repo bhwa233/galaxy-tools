@@ -8,12 +8,19 @@ export type BackgroundFit = "cover" | "contain" | "repeat";
 export type ImageDisplayMode = "show" | "click" | "hidden";
 export type McpPermission = "read" | "append" | "full";
 
+export interface DesktopLayerPreferences {
+  enabled: boolean;
+  webEnabled: boolean;
+  notesEnabled: boolean;
+}
+
 export interface AppConfig {
   locale: string;
   dataDir: string;
   globalShortcut: string;
   commandShortcuts?: Record<string, string>;
   trayMenu?: { hidden: string[]; order: string[] };
+  desktopLayer?: DesktopLayerPreferences;
   closeToTray: boolean;
   autostart: boolean;
   defaultViewMode: string;
@@ -41,6 +48,7 @@ export interface AppConfig {
   surfaceWidth?: number;
   surfaceHeight?: number;
   toggleVisibilityShortcut: string;
+  desktopOverlayShortcut?: string;
   openAtCursor: boolean;
   backgroundImagePath?: string;
   backgroundFit?: BackgroundFit;
@@ -52,7 +60,9 @@ export interface AppConfig {
 }
 
 /** The data root changes only through the coordinated migration transaction. */
-export type AppConfigPatch = Partial<Omit<AppConfig, "dataDir">>;
+export type AppConfigPatch = Partial<Omit<AppConfig, "dataDir" | "desktopLayer">> & {
+  desktopLayer?: Partial<DesktopLayerPreferences>;
+};
 
 export interface ShortcutCheckResult {
   available: boolean;
@@ -65,6 +75,7 @@ export type SettingsPage =
   | "shortcuts"
   | "tray"
   | "entries"
+  | "desktop"
   | "plugins"
   | "marketplace"
   | "backup"

@@ -45,6 +45,17 @@ it("keeps the latest accent choice while an earlier settings save is pending", a
   let saves = 0;
   const desktop = installDesktopBridge({
     config_get: () => config,
+    update_status: () => ({ status: "idle", currentVersion: "0.0.1", channel: "stable" }),
+    update_settings_get: () => ({
+      autoCheck: false,
+      autoDownload: false,
+      checkIntervalHours: 24,
+      checkSourcePreference: "githubFirst",
+      downloadSourcePreference: "githubFirst",
+      channel: "stable",
+      allowPrerelease: false,
+      hasMirrorChyanCdk: false,
+    }),
     launcher_state: () => ({ firstRun: false, pluginsReady: true, commands: [], preferences: [] }),
     config_patch: async (args) => {
       if (++saves === 1) await first;
@@ -125,6 +136,7 @@ it("fills the settings viewport and protects a plugin draft when changing settin
     await expect.element(page.getByRole("button", { name: "启用", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "配置此插件", exact: true }).click();
     await expect.element(input).toHaveValue("fixture-model");
+    expect(desktop.calls.filter((call) => call.command === "plugins_list")).toHaveLength(1);
   } finally {
     await view.unmount();
     desktop.restore();

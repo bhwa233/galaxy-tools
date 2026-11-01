@@ -3,8 +3,59 @@ import type { BrowserWindow } from "electron";
 import { createCommandRegistry } from "./registry.js";
 import { createSettingsCommands } from "./settings-commands.js";
 import type { CommandInvocation } from "./invocation.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { HostConfigStore } from "../host-config.js";
 
 describe("host command boundary", () => {
+  it("keeps desktop activation host-only and rolls persisted flags back when applying the layer fails", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-desktop-toggle-"));
+    try {
+      const hostConfig = new HostConfigStore(directory, path.join(directory, "notes"));
+      hostConfig.save({
+        ...hostConfig.value,
+        desktopLayer: { enabled: false, webEnabled: false, notesEnabled: false },
+      });
+      const syncDesktopLayer = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("layer refused"))
+        .mockResolvedValue(undefined);
+      const handlers = createSettingsCommands({
+        hostConfig,
+        isAdminView: (layout: { pluginId?: string }) => !layout.pluginId,
+        syncDesktopLayer,
+        notesActive: false,
+      } as unknown as Parameters<typeof createSettingsCommands>[0]);
+      const invocation = {
+        win: { id: 1 },
+        command: "config_patch",
+        layout: { label: "settings" },
+        args: { patch: { desktopLayer: { enabled: true } } },
+      } as unknown as Extract<CommandInvocation, { command: "config_patch" }>;
+      await expect(
+        handlers.config_patch({
+          ...invocation,
+          layout: { label: "plugin", pluginId: "fixture.plugin" },
+        } as CommandInvocation),
+      ).rejects.toMatchObject({ code: "permissionDenied" });
+      await expect(
+        handlers.config_patch({
+          ...invocation,
+          args: { patch: { desktopLayer: { notesEnabled: true } } },
+        }),
+      ).rejects.toMatchObject({ code: "layer.disabled" });
+      expect(syncDesktopLayer).not.toHaveBeenCalled();
+      await expect(handlers.config_patch(invocation)).rejects.toThrow("layer refused");
+      expect(syncDesktopLayer).toHaveBeenCalledTimes(2);
+      expect(
+        new HostConfigStore(directory, path.join(directory, "notes")).value.desktopLayer,
+      ).toEqual({ enabled: false, webEnabled: false, notesEnabled: false });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps marketplace navigation restricted to host windows while allowing a plugin's own settings", async () => {
     const openHostSettings = vi.fn().mockResolvedValue(true);
     const handlers = createSettingsCommands({

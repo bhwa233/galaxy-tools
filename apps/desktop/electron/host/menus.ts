@@ -33,6 +33,8 @@ export function createMenus(
     | "openNoteWithAnchor"
     | "lastBalloonReminder"
     | "tray"
+    | "desktopLayer"
+    | "toggleDesktopOverlay"
   >,
 ) {
   async function globalMenu(): Promise<Electron.Menu> {
@@ -52,9 +54,27 @@ export function createMenus(
     return Menu.buildFromTemplate([
       { label: ctx.ui("打开启动器", "Open launcher"), click: ctx.requestLauncher },
       {
+        label: ctx.ui("桌面插件栏", "Desktop plugin bar"),
+        click: () => void ctx.toggleDesktopOverlay().catch(ctx.reportError),
+      },
+      {
         label: ctx.ui("设置", "Settings"),
         click: () => {
           void ctx.openHostSettings({ page: "general" }).catch(ctx.reportError);
+        },
+      },
+      { type: "separator" },
+      {
+        label: ctx.ui("桌面卡片", "Desktop cards"),
+        click: () => {
+          void ctx.openHostSettings({ page: "desktop" }).catch(ctx.reportError);
+        },
+      },
+      {
+        label: ctx.ui("调整桌面卡片", "Arrange desktop cards"),
+        enabled: !!ctx.hostConfig.value.desktopLayer?.enabled && !ctx.maintenance,
+        click: () => {
+          void ctx.desktopLayer?.beginEdit().catch(ctx.reportError);
         },
       },
       { type: "separator" },
@@ -63,7 +83,10 @@ export function createMenus(
         preferences: () => ctx.hostConfig.value.trayMenu,
         available: (pluginId, commandId) =>
           !!ctx.pluginHost?.manager
-            .commands()
+            // Menu construction is display-only. Revalidating every package's
+            // resources for each item blocks backend replies on notes changes;
+            // actual clicks still cross activateHostCommand's fresh dispatch.
+            .commands(true)
             .some((entry) => entry.pluginId === pluginId && entry.command.id === commandId),
         state: (pluginId, id) => ctx.pluginHost?.trayStates.get(pluginId, id) ?? {},
         blocked: () => ctx.maintenance || ctx.hostShutdown.isQuitting,

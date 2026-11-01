@@ -8,7 +8,7 @@ import { create, extract } from "tar";
 
 /**
  * Prebuilt native payloads keep the development environment free of MSVC,
- * CMake, Ninja, PowerShell 7 and OpenCV/ONNX. CI builds the five native
+ * CMake, Ninja, .NET SDK, PowerShell 7 and OpenCV/ONNX. CI builds the six native
  * plugins once, packs their staged outputs, and developers fetch the pack
  * instead of compiling it. Everything here is repository-relative so a pack
  * produced on a CI runner lands at the same paths locally.
@@ -17,7 +17,7 @@ const project = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const defaultOut = path.join(project, "local-build/native-payloads");
 const stampName = "native-payloads.json";
 const allowed = [
-  /^packages\/official\/(?:screenshot|ocr|clipboard|applications|search)\/native\//,
+  /^packages\/official\/(?:screenshot|ocr|clipboard|applications|search|traffic)\/native\//,
 ];
 const roots = [
   "packages/official/screenshot/native",
@@ -25,6 +25,7 @@ const roots = [
   "packages/official/clipboard/native",
   "packages/official/applications/native",
   "packages/official/search/native",
+  "packages/official/traffic/native",
 ];
 const hash = (content) => createHash("sha256").update(content).digest("hex");
 function assertRelative(value) {
@@ -92,7 +93,10 @@ async function pack({ out }) {
     );
   const manifest = await describe(files);
   await fs.mkdir(out, { recursive: true });
-  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: project,
+    encoding: "utf8",
+  }).trim();
   const bundleName = `spark233-native-payloads-${commit.slice(0, 12)}.tar.gz`;
   const bundlePath = path.join(out, bundleName);
   await create({ gzip: true, file: bundlePath, cwd: project, portable: true }, files);
@@ -157,7 +161,9 @@ async function check({ quiet } = {}) {
     manifest = readManifest(JSON.parse(await fs.readFile(stampPath, "utf8")));
   } catch {
     if (!quiet)
-      console.log("No usable native payload stamp. Run pnpm native:fetch or build the plugins locally.");
+      console.log(
+        "No usable native payload stamp. Run pnpm native:fetch or build the plugins locally.",
+      );
     return false;
   }
   for (const entry of manifest.files) {
@@ -173,7 +179,8 @@ async function check({ quiet } = {}) {
       return false;
     }
   }
-  if (!quiet) console.log(`Native payloads verified (${manifest.files.length} files, ${manifest.commit})`);
+  if (!quiet)
+    console.log(`Native payloads verified (${manifest.files.length} files, ${manifest.commit})`);
   return true;
 }
 const { values, positionals } = parseArgs({
@@ -190,6 +197,8 @@ else if (command === "fetch") {
 } else if (command === "check") process.exitCode = (await check()) ? 0 : 1;
 else if (command === "has") process.exitCode = (await check({ quiet: true })) ? 0 : 1;
 else {
-  console.log("Usage: node scripts/native-payloads.mjs <pack|fetch|check|has> [--out <dir>] [--from <url|dir>]");
+  console.log(
+    "Usage: node scripts/native-payloads.mjs <pack|fetch|check|has> [--out <dir>] [--from <url|dir>]",
+  );
   process.exitCode = 1;
 }

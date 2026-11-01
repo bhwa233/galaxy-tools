@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { readFileSync, readdirSync, watch } from "node:fs";
+import { readFileSync, readdirSync, lstatSync, realpathSync, unlinkSync, watch } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,9 +37,14 @@ function run(file, args, env = {}, ipc = false) {
 }
 function stop(code = 0) {
   if (activeElectron) {
+    if (stopping) return;
     if (activeElectron.connected) {
       stopping = true;
-      activeElectron.send("spark233-dev-reload");
+      activeElectron.send("spark233-dev-reload", (error) => {
+        if (!error) return;
+        stopping = false;
+        console.error("Cannot request a safe application shutdown; keep the process open.", error);
+      });
     } else console.error("Cannot request a safe application shutdown; keep the process open.");
     return;
   }
@@ -212,6 +217,46 @@ compiler.on("exit", async (code) => {
   let dirty = false;
   let captureDirty = false;
   let timer;
+  function cleanupDevPluginArchives() {
+    if (building) return;
+    const root = devEnvironment.SPARK233_DEV_PLUGIN_OUTPUT;
+    const expected = path.join(devRoot, "plugins");
+    if (path.resolve(root) !== expected || lstatSync(root).isSymbolicLink())
+      throw new Error("Development archive cleanup escaped dev/plugins");
+    const canonicalRoot = realpathSync.native(root);
+    if (path.dirname(canonicalRoot) !== realpathSync.native(devRoot))
+      throw new Error("Development archive cleanup follows a redirected directory");
+    const indexFile = path.join(root, "index.json");
+    if (lstatSync(indexFile).isSymbolicLink())
+      throw new Error("Development archive index is a symlink");
+    const indexText = readFileSync(indexFile, "utf8");
+    const index = JSON.parse(indexText);
+    if (
+      !Array.isArray(index.plugins) ||
+      index.plugins.some(
+        (entry) => typeof entry.file !== "string" || path.basename(entry.file) !== entry.file,
+      )
+    )
+      throw new Error("Development archive index is invalid");
+    const keep = new Set(index.plugins.map((entry) => entry.file));
+    const names = readdirSync(root);
+    const publishing = () =>
+      building || readdirSync(root).some((name) => /^\.dev-build-\d+-\d+\.active$/.test(name));
+    if (publishing()) return;
+    for (const name of names) {
+      if (!/^[a-z0-9-]+-\d+\.\d+\.\d{13,15}\.tgz$/.test(name) || keep.has(name)) continue;
+      // Fail closed if another publisher starts or replaces the index while
+      // this old Electron exit is being handled. Cleanup can wait a restart.
+      if (publishing() || readFileSync(indexFile, "utf8") !== indexText) return;
+      const file = path.join(root, name);
+      if (
+        lstatSync(file).isSymbolicLink() ||
+        path.dirname(realpathSync.native(file)) !== canonicalRoot
+      )
+        throw new Error("Development archive cleanup follows a redirected file");
+      if (lstatSync(file).isFile()) unlinkSync(file);
+    }
+  }
   function startElectron() {
     electron = run(
       require("electron"),
@@ -236,6 +281,11 @@ compiler.on("exit", async (code) => {
       activeElectron = undefined;
       if (restarting && !stopping && exitCode === 0) {
         restarting = false;
+        try {
+          cleanupDevPluginArchives();
+        } catch (error) {
+          console.error("Development archive cleanup skipped", error);
+        }
         startElectron();
         if (dirty) schedule();
       } else stop(exitCode ?? 0);
@@ -247,7 +297,7 @@ compiler.on("exit", async (code) => {
     timer = setTimeout(rebuild, 500);
   }
   function rebuild() {
-    if (building || restarting) return;
+    if (building || restarting || stopping) return;
     dirty = false;
     building = true;
     try {
@@ -272,8 +322,13 @@ compiler.on("exit", async (code) => {
         windowsHide: true,
       });
       buildPlugins();
+      if (!electron.connected) throw new Error("The application's development IPC channel is closed");
       restarting = true;
-      electron.send("spark233-dev-reload");
+      electron.send("spark233-dev-reload", (error) => {
+        if (!error) return;
+        restarting = false;
+        console.error("Development reload failed; the current application remains open.", error);
+      });
     } catch (error) {
       console.error("Development rebuild failed; the current application remains open.", error);
     } finally {
@@ -299,7 +354,7 @@ compiler.on("exit", async (code) => {
       if (
         /(^|\/)(node_modules|native|legal|data|licenses|dist)(\/|$)/.test(file) ||
         /(?:^|\/)backend-resources\.json$/.test(file) ||
-        /(?:^|\/)(notes|clipboard)\/backend\.mjs$/.test(file) ||
+        /(?:^|\/)(notes|clipboard|traffic|quicklinks)\/backend\.mjs$/.test(file) ||
         /\.test\.[cm]?[jt]sx?$/.test(file)
       )
         return;

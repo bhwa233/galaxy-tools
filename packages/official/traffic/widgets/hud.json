@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "padding": 4,
+  "background": "card",
+  "root": {
+    "type": "stack",
+    "direction": "column",
+    "gap": 4,
+    "align": "start",
+    "children": [
+      {
+        "type": "stack",
+        "direction": "row",
+        "gap": 4,
+        "align": "center",
+        "children": [
+          {
+            "type": "icon",
+            "name": "arrow-up",
+            "size": 16,
+            "tone": "upload"
+          },
+          {
+            "type": "text",
+            "value": {
+              "dataKey": "tx-text"
+            },
+            "size": "body",
+            "tone": "upload",
+            "maxLines": 1
+          }
+        ]
+      },
+      {
+        "type": "stack",
+        "direction": "row",
+        "gap": 4,
+        "align": "center",
+        "children": [
+          {
+            "type": "icon",
+            "name": "arrow-down",
+            "size": 16,
+            "tone": "download"
+          },
+          {
+            "type": "text",
+            "value": {
+              "dataKey": "rx-text"
+            },
+            "size": "body",
+            "tone": "download",
+            "maxLines": 1
+          }
+        ]
+      }
+    ]
+  }
+}

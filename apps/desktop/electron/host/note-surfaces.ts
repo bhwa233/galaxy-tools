@@ -36,6 +36,7 @@ export function createNoteSurfaces(
     | "ready"
     | "launcherPresentationGuard"
     | "pendingManagerOpen"
+    | "notesLayer"
   >,
 ) {
   function noteWindowSnapshot(): NoteWindowSnapshot {
@@ -146,7 +147,12 @@ export function createNoteSurfaces(
     for (const [label, layout] of ctx.layouts)
       if (layout.view !== "launcher") ctx.layouts.delete(label);
     ctx.capsules.queues.clear();
-    const value = await data.getState("layout");
+    const raw = await data.getState("layout");
+    const value = ctx.notesLayer
+      ? await ctx.notesLayer.restore(raw, (layout) =>
+          data.putState("layout", JSON.parse(JSON.stringify(layout))),
+        )
+      : raw;
     if (value !== null) {
       if (typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.windows))
         throw new AppError("invalidLayout", "布局文件格式无效，请检查 electron-layout.json");
@@ -184,18 +190,15 @@ export function createNoteSurfaces(
     // Never replace it with the still-empty startup map, including on early quit.
     if (ctx.backupRecoveryPending || !ctx.layoutsRestored || !ctx.notesActive) return;
     if (ctx.layoutTimer) clearTimeout(ctx.layoutTimer);
-    await data.putState(
-      "layout",
-      JSON.parse(
-        JSON.stringify({
-          version: 2,
-          capsuleQueues: [...(ctx.capsules?.queues.values() ?? [])],
-          windows: [...ctx.layouts.values()].filter(
-            (entry) => entry.view === "main" || entry.noteId,
-          ),
-        }),
-      ),
-    );
+    const layout = {
+      version: 2 as const,
+      capsuleQueues: [...(ctx.capsules?.queues.values() ?? [])],
+      windows: [...ctx.layouts.values()].filter((entry) => entry.view === "main" || entry.noteId),
+    };
+    const write = (value: typeof layout) =>
+      data.putState("layout", JSON.parse(JSON.stringify(value)));
+    if (ctx.notesLayer) await ctx.notesLayer.persist(layout, write);
+    else await write(layout);
     publishNoteStates();
   }
 
@@ -253,6 +256,7 @@ export function createNoteSurfaces(
       visible: true,
       topmost: false,
     };
+    ctx.capsules.assertCanShow({ ...layout, visible: true, folded: false });
     layout.visible = true;
     layout.folded = false;
     const modeChanged = !!view && layout.view !== view;

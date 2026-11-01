@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>spark233.TrafficSetup</AssemblyName><ApplicationManifest>app.manifest</ApplicationManifest></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Core/Traffic.Core.csproj" /><Reference Include="System.ServiceProcess" /></ItemGroup>
+</Project>

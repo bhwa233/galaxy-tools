@@ -119,6 +119,13 @@ export interface SearchActionResponse {
 }
 /** Every command has an explicit result; business plugins return JSON values. */
 interface CommandResults {
+  layer_listTemplates: import("./layer-contract.js").LayerManagementState;
+  layer_create: { widgetInstanceId: string };
+  layer_remove: void;
+  layer_retry: void;
+  layer_update: void;
+  layer_edit: { editSession: string };
+  desktop_overlay_toggle: void;
   app_exec_path: string;
   app_mcp_command: { command: string; args: string[] };
   app_name: string;
@@ -267,7 +274,10 @@ interface ArgumentOverrides {
   config_patch: {
     patch: AppConfigPatch;
     expectedCommandShortcuts?: Record<string, string>;
-    expectedShortcuts?: Pick<AppConfig, "globalShortcut" | "toggleVisibilityShortcut">;
+    expectedShortcuts?: Pick<
+      AppConfig,
+      "globalShortcut" | "toggleVisibilityShortcut" | "desktopOverlayShortcut"
+    >;
   };
   search_scope_save: { excludedRoots: string[] } & Partial<
     Omit<SearchScopeSettings, "excludedRoots">
@@ -301,6 +311,7 @@ export interface Events {
   "config-changed": AppConfig;
   "launcher-query-updated": LauncherQueryResult;
   "notes-changed": undefined;
+  "desktop-pins-changed": undefined;
   "open-note": string | { noteId: string; taskText?: string };
   "open-external-file": string;
   "desktop:prepare-close": { requestId: string };

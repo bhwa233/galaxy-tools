@@ -1,6 +1,6 @@
 # Official spark233 plugin artifacts
 
-These seven packages are assembled locally before distribution. The npm scope
+These nine packages are assembled locally before distribution. The npm scope
 is provisional until account ownership is verified; the build does not publish.
 
 | Plugin ID               | Source directory |
@@ -12,11 +12,18 @@ is provisional until account ownership is verified; the build does not publish.
 | `spark233.clipboard`    | `clipboard`      |
 | `spark233.applications` | `applications`   |
 | `spark233.search`       | `search`         |
+| `spark233.traffic`      | `traffic`        |
+| `spark233.quicklinks`   | `quicklinks`     |
 
-All seven plugins have representative functional cases in the existing Vitest
+The original seven plugins have representative functional cases in the existing Vitest
 runner. Run `pnpm test`, or filter them with
 `pnpm test packages/official apps/desktop/electron/plugins/official`. Coverage and controlled
 OS/provider boundaries are recorded in the [functional test report](../../Docs/archive/2026-10/spark233-plugin-functional-tests-2026-10-27.md).
+
+The traffic plugin adds interface-counter/coverage regression checks plus an
+isolated real-collector and HUD integration run. Its first version measures
+physical interface totals; it does not ship the future privileged per-process
+ETW service. See [traffic/README.md](traffic/README.md).
 
 Select the repository's Node/pnpm runtime, install its lockfile dependencies and
 build the current shared UI source once:
@@ -42,9 +49,9 @@ one-package integrity index and file/size records. A single build preserves the
 standard `dist-plugins/index.json`. `--output` selects a dedicated output folder.
 
 `pnpm plugins:build` assembles the complete offline distribution and requires
-exactly seven plugins. Native payloads and the fixed dictionary are validated or
+the nine declared plugins. Native payloads and the fixed dictionary are validated or
 prepared through their existing build entry points. Notes and clipboard business code is
-bundled into each package’s `backend.mjs` before assembly. No npm install lifecycle scripts run
+bundled into each package’s `backend.mjs` before assembly; traffic's backend is bundled the same way. No npm install lifecycle scripts run
 on the user's computer.
 
 The full default build also prepares `dist-host/command-matcher`: the existing

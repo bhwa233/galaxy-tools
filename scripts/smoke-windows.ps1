@@ -1,11 +1,13 @@
 #Requires -Version 7.0
-param([string]$ElectronExe, [switch]$LauncherMaintenanceOnly)
+param([string]$ElectronExe, [switch]$LauncherMaintenanceOnly, [switch]$NoteModesOnly, [switch]$NoteListOnly)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $desktop = Join-Path $repo 'apps/desktop'
 if (-not $ElectronExe) { $ElectronExe = Join-Path $desktop 'node_modules/electron/dist/electron.exe' }
 if (-not (Test-Path -LiteralPath $ElectronExe)) { throw 'Install Windows Electron first: pnpm electron:install' }
 $run = Join-Path $repo ('local-build/electron-smoke/' + [Guid]::NewGuid().ToString())
+# Whole-suite budget; focused runs and individual save/IPC/window deadlines stay unchanged.
+$smokeTimeoutSeconds = if ($LauncherMaintenanceOnly -or $NoteModesOnly -or $NoteListOnly) { 300 } else { 600 }
 New-Item -ItemType Directory -Path $run -Force | Out-Null
 $names = @('SPARK233_CONFIG_DIR', 'SPARK233_DATA_DIR', 'SPARK233_SMOKE')
 $previous = @{}
@@ -14,18 +16,22 @@ try {
   $env:SPARK233_CONFIG_DIR = Join-Path $run 'config'
   $env:SPARK233_DATA_DIR = Join-Path $run 'data'
   $env:SPARK233_SMOKE = '1'
-  # Keep all seven plugins installed, but never record the user's desktop clipboard.
+  # This compatibility smoke exercises legacy capsule windows explicitly. The
+  # separate shared-layer smoke covers default-on notes/widgets/screenshot pins.
+  # Keep every plugin installed, but never record the user's desktop clipboard.
   # The native helper starts paused until it receives this isolated persisted policy.
   Push-Location -LiteralPath $repo
   try {
     @'
-import fs from "node:fs"; import path from "node:path"; import { defaultConfig } from "./apps/desktop/dist-electron/electron/host-config.js"; const hostDir = path.join(process.env.SPARK233_CONFIG_DIR, "host"); fs.mkdirSync(hostDir, {recursive:true}); fs.writeFileSync(path.join(hostDir,"config.json"), JSON.stringify({...defaultConfig(process.env.SPARK233_DATA_DIR),globalShortcut:"",toggleVisibilityShortcut:""})); import { ClipboardHistory } from "./apps/desktop/dist-electron/electron/plugins/official/clipboard-history.js"; const history = new ClipboardHistory(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/data/spark233.clipboard")); history.saveSettings({paused:true}); history.close(); fs.writeFileSync(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/state.json"), JSON.stringify({schemaVersion:1,plugins:{},dataVersions:{"spark233.clipboard":{dataVersion:1,pluginVersion:"0.1.0",packageName:"@spark233/plugin-clipboard"}}}));
+import fs from "node:fs"; import path from "node:path"; import { defaultConfig } from "./apps/desktop/dist-electron/electron/host-config.js"; const hostDir = path.join(process.env.SPARK233_CONFIG_DIR, "host"); fs.mkdirSync(hostDir, {recursive:true}); fs.writeFileSync(path.join(hostDir,"config.json"), JSON.stringify({...defaultConfig(process.env.SPARK233_DATA_DIR),desktopLayer:{enabled:false,webEnabled:false,notesEnabled:false},globalShortcut:"",toggleVisibilityShortcut:""})); import { ClipboardHistory } from "./apps/desktop/dist-electron/electron/plugins/official/clipboard-history.js"; const history = new ClipboardHistory(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/data/spark233.clipboard")); history.saveSettings({paused:true}); history.close(); fs.writeFileSync(path.join(process.env.SPARK233_CONFIG_DIR, "plugins/state.json"), JSON.stringify({schemaVersion:1,plugins:{},dataVersions:{"spark233.clipboard":{dataVersion:1,pluginVersion:"0.1.0",packageName:"@spark233/plugin-clipboard"}}}));
 '@ | & node --input-type=module
     if ($LASTEXITCODE -ne 0) { throw 'Could not pause the isolated clipboard recorder before smoke startup' }
   } finally { Pop-Location }
   $report = Join-Path $run 'report.json'
   $applicationArgs = @(('"' + $desktop + '"'), ('"--smoke-output=' + $report + '"'))
   if ($LauncherMaintenanceOnly) { $applicationArgs += "--smoke-launcher-maintenance" }
+  if ($NoteModesOnly) { $applicationArgs += "--smoke-note-modes" }
+  if ($NoteListOnly) { $applicationArgs += "--smoke-note-list" }
   $startedAt = [DateTimeOffset]::UtcNow
   $process = Start-Process -FilePath $ElectronExe -ArgumentList $applicationArgs -WorkingDirectory $repo -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $run 'stdout.log') -RedirectStandardError (Join-Path $run 'stderr.log')
   $processEvidenceFile = Join-Path $run 'process.json'
@@ -35,20 +41,20 @@ import fs from "node:fs"; import path from "node:path"; import { defaultConfig }
     exitedAt = $null
     durationSeconds = $null
     exitCode = $null
-    timeoutSeconds = 300
+    timeoutSeconds = $smokeTimeoutSeconds
     timedOut = $false
     executable = $ElectronExe
     report = $report
   }
   $processEvidence | ConvertTo-Json | Set-Content -LiteralPath $processEvidenceFile -Encoding utf8
   Write-Output "Smoke started: PID=$($process.Id), UTC=$($processEvidence.startedAt), evidence: $run"
-  $deadline = (Get-Date).AddSeconds(300)
+  $deadline = (Get-Date).AddSeconds($smokeTimeoutSeconds)
   while (-not $process.WaitForExit(1000)) {
     if ((Get-Date) -ge $deadline) {
       $processEvidence.timedOut = $true
       $processEvidence.durationSeconds = [Math]::Round(([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds, 3)
       $processEvidence | ConvertTo-Json | Set-Content -LiteralPath $processEvidenceFile -Encoding utf8
-      throw "Smoke test timed out after 300 seconds. Isolated process: $($process.Id), evidence: $run"
+      throw "Smoke test timed out after $smokeTimeoutSeconds seconds. Isolated process: $($process.Id), evidence: $run"
     }
   }
   $process.WaitForExit() # Flush redirected output after the bounded wait observes exit.

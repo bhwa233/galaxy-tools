@@ -205,6 +205,13 @@ $mainTool = Join-Path $capture 'Tool/ToolMain.cpp'
 $mainHeader = Join-Path $capture 'Tool/ToolMain.h'
 Edit-Exact $mainHeader 'L"|",L"close"' 'L"|",L"pin",L"close"'
 Edit-Exact $mainHeader 'L"|",L"\ue62d"' 'L"|",L"\ue6a2",L"\ue62d"'
+Edit-Exact $mainTool '#include "../Lang.h"' "#include `"../Lang.h`"`n#include `"../SessionResult.h`""
+Edit-Exact $mainTool 'tip->bind(btn, Lang::get(std::format(L"tool.{}", id)));' @'
+auto label = Lang::get(std::format(L"tool.{}", id));
+            if (id == L"pin" && Spark233Session::enabled() &&
+                Spark233Session::argument(L"--spark233-pin-host") == L"true") label += L" (Ctrl+P)";
+            tip->bind(btn, label);
+'@
 Edit-Exact $mainTool 'else if (btn->id == L"save")' @'
 else if (btn->id == L"pin") {
         tip->hide();
@@ -231,6 +238,78 @@ ptr->createNativeWindow(WS_EX_TOPMOST| WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MIN
 Edit-Exact $pinWindow 'void WinPin::onDown(POINT pos, BOOL isRight)' @'
 void WinPin::pin()
 {
+    if (Spark233Session::enabled() && !hostPinFallback && Spark233Session::argument(L"--spark233-pin-host") == L"true") {
+        if (hostPinPending) return;
+        try {
+            if (editingText) editingText->finishEdit();
+            std::vector<BYTE> composed, original;
+            D2D1_SIZE_U size{}, originalSize{};
+            if (!getImagePixels(composed, size) || !getImagePixels(original, originalSize, false))
+                throw std::runtime_error("Cannot read the editable pin image");
+            if (size.width != originalSize.width || size.height != originalSize.height)
+                throw std::runtime_error("Pin source image dimensions changed");
+            const auto directory = Spark233Session::directory();
+            const auto writeImage = [&](const wchar_t* filename, const std::vector<BYTE>& pixels) {
+                const auto target = directory / filename;
+                const auto partial = std::filesystem::path(target.wstring() + L".partial");
+                Spark233Session::writePng(partial, size.width, size.height, pixels.data());
+                if (!MoveFileExW(partial.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                    throw std::runtime_error("Cannot commit the pin image");
+            };
+            const auto document = Spark233PinDocument::save(*this);
+            writeImage(L"pin.png", composed);
+            writeImage(L"pin-source.png", original);
+            Spark233PinDocument::publish(directory / L"pin-document.json", document);
+            if (hostPinAttempt >= 1000000) throw std::runtime_error("Pin attempt limit reached");
+            ++hostPinAttempt;
+            auto result = Spark233Session::envelope(L"pin");
+            result.SetNamedValue(L"action", winrt::Windows::Data::Json::JsonValue::CreateStringValue(L"pin"));
+            result.SetNamedValue(L"image", winrt::Windows::Data::Json::JsonValue::CreateStringValue(L"pin.png"));
+            result.SetNamedValue(L"source", winrt::Windows::Data::Json::JsonValue::CreateStringValue(L"pin-source.png"));
+            result.SetNamedValue(L"document", winrt::Windows::Data::Json::JsonValue::CreateStringValue(L"pin-document.json"));
+            Spark233PinDocument::number(result, L"attempt", hostPinAttempt);
+            Spark233PinDocument::number(result, L"width", size.width);
+            Spark233PinDocument::number(result, L"height", size.height);
+            Spark233PinDocument::number(result, L"scale", scale);
+            RECT actual{};
+            if (!GetWindowRect(hwnd, &actual)) throw std::runtime_error("Cannot read pin window bounds");
+            Spark233PinDocument::number(result, L"x", actual.left);
+            Spark233PinDocument::number(result, L"y", actual.top);
+            winrt::Windows::Data::Json::JsonObject bounds;
+            Spark233PinDocument::number(bounds, L"x", actual.left);
+            Spark233PinDocument::number(bounds, L"y", actual.top);
+            Spark233PinDocument::number(bounds, L"width", actual.right - actual.left);
+            Spark233PinDocument::number(bounds, L"height", actual.bottom - actual.top);
+            result.SetNamedValue(L"bounds", bounds);
+            const auto ownerText = Spark233Session::argument(L"--spark233-pin-owner-pid");
+            if (ownerText.empty()) throw std::runtime_error("Missing pin host identity");
+            if (!ownerText.empty()) {
+                if (ownerText.find_first_not_of(L"0123456789") != std::wstring::npos)
+                    throw std::runtime_error("Invalid pin host identity");
+                const auto owner = wcstoul(ownerText.c_str(), nullptr, 10);
+                if (!owner || owner == GetCurrentProcessId()) throw std::runtime_error("Invalid pin host identity");
+                hostPinOwner = OpenProcess(SYNCHRONIZE, FALSE, owner);
+                if (!hostPinOwner) {
+                    hostPinFallback = true;
+                    throw std::runtime_error("Pin host no longer exists");
+                }
+            }
+            Spark233PinDocument::publish(directory / L"pin.json", result);
+            hostPinPending = true;
+            shapeHover = nullptr;
+            toolMain->cancelSelect();
+            toolMain->hide();
+            toolSub->hideTools();
+            setTimer(100, hostPinTimer);
+            Spark233Session::trace("pin-awaiting-host");
+            refresh();
+        } catch (...) {
+            if (hostPinOwner) { CloseHandle(hostPinOwner); hostPinOwner = nullptr; }
+            Spark233Session::trace("pin-publish-failed");
+            MessageBoxW(hwnd, L"Cannot hand this editable pin to the desktop. The editor and annotations have been retained.", L"spark233", MB_OK | MB_ICONERROR);
+        }
+        return;
+    }
     if (editingText) editingText->finishEdit();
     shapeHover = nullptr;
     toolMain->cancelSelect();
@@ -240,6 +319,157 @@ void WinPin::pin()
 }
 
 void WinPin::onDown(POINT pos, BOOL isRight)
+'@
+
+# Persist the original bitmap plus the existing editable History objects before
+# handing a read-only pin to the host. No upstream shape is flattened or replaced.
+Copy-Item (Join-Path $PSScriptRoot 'PinDocument.h') (Join-Path $capture 'PinDocument.h')
+foreach ($shapeName in @('ShapeRect', 'ShapeEllipse', 'ShapeArrow', 'ShapeLine', 'ShapeNumber', 'ShapeText', 'ShapeMosaic', 'ShapeEraser')) {
+    $shapeHeader = Join-Path $capture "Shape/$shapeName.h"
+    $shapeAnchor = "class $shapeName : public ShapeBase`r`n{"
+    Edit-Exact $shapeHeader $shapeAnchor ($shapeAnchor + "`r`n    friend struct Spark233PinDocument;")
+}
+Edit-Exact $pinWindow '#include "WinPin.h"' "#include `"WinPin.h`"`n#include `"../SessionResult.h`"`n#include `"../PinDocument.h`""
+Edit-Exact $pinWindow "void WinPin::onCreated()`r`n{" @'
+void WinPin::onCreated()
+{
+    if (Spark233Session::enabled()) {
+        const bool english = Spark233Session::argument(L"--spark233-locale") == L"en-US";
+        SetWindowTextW(hwnd, english ? L"spark233 Screenshot annotations" : L"spark233 截图标注");
+        SetWindowTextW(toolMain->hwnd, english ? L"spark233 Screenshot toolbar" : L"spark233 截图工具栏");
+        if (Spark233Session::argument(L"--spark233-pin-host") == L"true") {
+            // The host closes this temporary editing work surface after pin
+            // handoff. Keep it reachable through Alt+Tab while annotations are
+            // active; permanent pins remain in the host's taskbar-free layer.
+            const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+    }
+'@
+Edit-Exact $pinHeader 'void pin();' @'
+void pin();
+    static void editPinnedDocument();
+'@
+Edit-Exact $pinHeader 'bool dpiChanged{ false };' @'
+bool dpiChanged{ false };
+    bool hostPinPending{ false };
+    bool hostPinFallback{ false };
+    HANDLE hostPinOwner{ nullptr };
+    unsigned hostPinAttempt{ 0 };
+    static constexpr UINT hostPinTimer{ 0x53A1 };
+'@
+Edit-Exact $pinWindow "WinPin::~WinPin()`r`n{" "WinPin::~WinPin()`r`n{`r`n    if (hostPinOwner) CloseHandle(hostPinOwner);"
+Edit-Exact $pinHeader 'bool getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size);' 'bool getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size, bool annotations = true);'
+Edit-Exact $pinWindow 'bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)' 'bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size, bool annotations)'
+$pinText = [IO.File]::ReadAllText($pinWindow)
+$pixelsStart = $pinText.IndexOf('bool WinPin::getImagePixels')
+if ($pixelsStart -lt 0 -or -not $pinText.Substring($pixelsStart).Contains('if (!shape->isUndo)')) { throw 'Upstream pin pixel export anchor changed' }
+[IO.File]::WriteAllText($pinWindow, $pinText.Substring(0, $pixelsStart) + $pinText.Substring($pixelsStart).Replace('if (!shape->isUndo)', 'if (annotations && !shape->isUndo)'))
+
+foreach ($signature in @('void WinPin::onDown(POINT pos, BOOL isRight)', 'void WinPin::onMove(POINT pos)', 'void WinPin::onUp(POINT pos, BOOL isRight)', 'void WinPin::onKey(UINT key)')) {
+    Edit-Exact $pinWindow ($signature + "`r`n{") ($signature + "`r`n{`r`n    if (hostPinPending) return;")
+}
+Edit-Exact $pinWindow "if (ctrl && key == 'Z')" @'
+if (ctrl && key == 'P' && Spark233Session::enabled() &&
+        Spark233Session::argument(L"--spark233-pin-host") == L"true") {
+        pin();
+    }
+    else if (ctrl && key == 'Z')
+'@
+Edit-Exact $pinWindow 'onMouseWheel.add([this](POINT pos, float space) {' @'
+onMouseWheel.add([this](POINT pos, float space) {
+        if (hostPinPending) return;
+'@
+Edit-Exact $pinWindow "void WinPin::onTimerCB(UINT id)`r`n{" @'
+void WinPin::onTimerCB(UINT id)
+{
+    if (id == hostPinTimer && hostPinPending) {
+        const auto session = winrt::to_string(Spark233Session::argument(L"--spark233-session"));
+        const auto identity = session + ":" + std::to_string(GetCurrentProcessId()) + ":" + std::to_string(hostPinAttempt) + ":";
+        std::ifstream file(Spark233Session::directory() / L"pin.ack", std::ios::binary);
+        std::string acknowledgement;
+        if (file) std::getline(file, acknowledgement);
+        if (!acknowledgement.empty() && acknowledgement.back() == '\r') acknowledgement.pop_back();
+        const bool ownerExited = hostPinOwner && WaitForSingleObject(hostPinOwner, 0) == WAIT_OBJECT_0;
+        if (acknowledgement == identity + "accepted") {
+            hostPinPending = false;
+            killTimer(hostPinTimer);
+            if (hostPinOwner) { CloseHandle(hostPinOwner); hostPinOwner = nullptr; }
+            Spark233Session::trace("pin-host-accepted");
+            close();
+        } else if (acknowledgement == identity + "rejected" || ownerExited) {
+            hostPinPending = false;
+            killTimer(hostPinTimer);
+            if (hostPinOwner) { CloseHandle(hostPinOwner); hostPinOwner = nullptr; }
+            if (ownerExited) hostPinFallback = true;
+            layoutTools();
+            toolMain->show();
+            refresh();
+            Spark233Session::trace(ownerExited ? "pin-owner-exited-editor-restored" : "pin-host-rejected-editor-restored");
+        }
+        return;
+    }
+'@
+
+Edit-Exact $pinWindow 'void WinPin::initFromData(int x, int y, int w, int h, std::vector<BYTE>& data)' @'
+void WinPin::editPinnedDocument()
+{
+    const auto directory = Spark233Session::directory();
+    UINT width = 0, height = 0;
+    auto pixels = Spark233PinDocument::decode(directory / L"edit-source.png", width, height);
+    const auto document = Spark233PinDocument::read(directory / L"edit-document.json");
+    const auto boundsFile = directory / L"edit-bounds.json";
+    int left = 100, top = 100;
+    float viewScale = Spark233PinDocument::number(document, L"scale");
+    if (std::filesystem::exists(boundsFile)) {
+        const auto bounds = Spark233PinDocument::read(boundsFile);
+        left = static_cast<int>(Spark233PinDocument::number(bounds, L"x"));
+        top = static_cast<int>(Spark233PinDocument::number(bounds, L"y"));
+        viewScale = std::clamp(std::min(Spark233PinDocument::positive(bounds, L"width") / width,
+            Spark233PinDocument::positive(bounds, L"height") / height), 0.1f, 8.f);
+    }
+    auto ptr = new WinPin(left, top, width, height, &pixels);
+    std::unique_ptr<WinPin> owned{ptr};
+    ptr->createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
+    Spark233PinDocument::restore(*ptr, document);
+    const auto maxScale = std::max(1.f, std::min(8.f, 16000.f / std::max(width, height)));
+    ptr->scale = std::clamp(viewScale, 0.1f, maxScale);
+    ptr->applyWinSize();
+    ptr->setPosition(left, top);
+    ptr->layoutTools();
+    ptr->refresh();
+    winPins.push_back(std::move(owned));
+    Spark233Session::trace("pin-document-opened");
+}
+
+void WinPin::initFromData(int x, int y, int w, int h, std::vector<BYTE>& data)
+'@
+
+Edit-Exact (Join-Path $capture 'App.cpp') '#include "App.h"' "#include `"App.h`"`n#include `"SessionResult.h`""
+Edit-Exact (Join-Path $capture 'App.cpp') '    app.reset(ptr);' @'
+    app.reset(ptr);
+    // WinPin consults App::get() while creating its native windows.
+    // Restore only after the application singleton has been assigned.
+    if (Spark233Session::enabled() && Ling::App::get()->args[L"--spark233-edit-pin"] == L"true")
+        WinPin::editPinnedDocument();
+'@
+Edit-Exact (Join-Path $capture 'App.cpp') '    if (app->args[L"--auto-quit"] == L"true") {' @'
+    if (Spark233Session::enabled() && app->args[L"--spark233-edit-pin"] == L"true") {
+        return;
+    }
+    if (app->args[L"--auto-quit"] == L"true") {
+'@
+Edit-Exact (Join-Path $capture 'main.cpp') '    App::init();' @'
+    try { App::init(); }
+    catch (...) {
+        // Do not enter a fresh capture when an editable document is corrupt.
+        // Returning before the message loop also avoids dispatch to partial UI.
+        Spark233Session::trace(Spark233Session::argument(L"--spark233-edit-pin") == L"true" ?
+            "pin-document-open-failed" : "capture-initialization-failed");
+        return 1;
+    }
 '@
 
 # Headless OCR keeps one TinyOCR engine for a bounded sequence of host tasks.

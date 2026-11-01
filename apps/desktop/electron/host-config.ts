@@ -1,9 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { configPatchSchema, trayMenuSchema } from "../shared/config-schema.js";
+import {
+  configPatchSchema,
+  DEFAULT_DESKTOP_LAYER_PREFERENCES,
+  desktopLayerPreferencesSchema,
+  trayMenuSchema,
+} from "../shared/config-schema.js";
 import { noteSettingsFields } from "../src/features/plugins/settingsFields.js";
-import type { AppConfig } from "../src/features/settings/types.js";
+import type { AppConfig, AppConfigPatch } from "../src/features/settings/types.js";
 import { resolveAppLocale } from "../src/locales/locale-whitelist.js";
 import { AppError, atomicWrite, readJson } from "./persistence.js";
 
@@ -42,6 +47,7 @@ export function defaultConfig(dataDir: string): AppConfig {
     globalShortcut: "Alt+Space",
     commandShortcuts: {},
     trayMenu: { hidden: [], order: [] },
+    desktopLayer: { ...DEFAULT_DESKTOP_LAYER_PREFERENCES },
     closeToTray: true,
     autostart: false,
     defaultViewMode: "edit",
@@ -67,6 +73,7 @@ export function defaultConfig(dataDir: string): AppConfig {
     mcpEnabled: false,
     mcpPermission: "read",
     toggleVisibilityShortcut: "",
+    desktopOverlayShortcut: "Ctrl+Alt+D",
     openAtCursor: true,
     backgroundImagePath: "",
     backgroundFit: "cover",
@@ -86,11 +93,19 @@ export class HostConfigStore {
     defaultDataDir: string,
   ) {
     this.file = path.join(configDir, "config.json");
-    const saved: Partial<AppConfig> = fs.existsSync(this.file)
+    const saved: AppConfigPatch & { dataDir?: string } = fs.existsSync(this.file)
       ? persistedConfigSchema.parse(readJson(this.file))
       : {};
     const dataDir = path.resolve(process.env.SPARK233_DATA_DIR || saved.dataDir || defaultDataDir);
-    this.value = { ...defaultConfig(dataDir), ...saved, dataDir };
+    this.value = {
+      ...defaultConfig(dataDir),
+      ...saved,
+      dataDir,
+      desktopLayer: {
+        ...DEFAULT_DESKTOP_LAYER_PREFERENCES,
+        ...saved.desktopLayer,
+      },
+    };
     const noteFile = path.join(dataDir, ".spark233-preferences.json");
     if (fs.existsSync(noteFile)) {
       const preferences = configPatchSchema.parse(readJson(noteFile));
@@ -104,6 +119,12 @@ export class HostConfigStore {
     this.value.defaultViewMode = this.value.defaultViewMode === "split" ? "split" : "edit";
   }
   save(config: AppConfig): AppConfig {
+    const desktopLayer = desktopLayerPreferencesSchema.safeParse({
+      ...DEFAULT_DESKTOP_LAYER_PREFERENCES,
+      ...this.value.desktopLayer,
+      ...config?.desktopLayer,
+    });
+    if (!desktopLayer.success) throw new AppError("invalidPayload", "桌面卡片设置格式不合法");
     if (config.trayMenu !== undefined && !trayMenuSchema.safeParse(config.trayMenu).success)
       throw new AppError("invalidPayload", "托盘菜单设置格式不合法");
     if (
@@ -129,6 +150,9 @@ export class HostConfigStore {
       !["read", "append", "full"].includes(config.mcpPermission) ||
       typeof config.globalShortcut !== "string" ||
       typeof config.toggleVisibilityShortcut !== "string" ||
+      (config.desktopOverlayShortcut !== undefined &&
+        (typeof config.desktopOverlayShortcut !== "string" ||
+          config.desktopOverlayShortcut.length > 100)) ||
       typeof config.autostart !== "boolean" ||
       typeof config.closeToTray !== "boolean"
     )
@@ -136,6 +160,9 @@ export class HostConfigStore {
     const value = {
       ...this.value,
       ...config,
+      desktopOverlayShortcut:
+        config.desktopOverlayShortcut ?? this.value.desktopOverlayShortcut ?? "Ctrl+Alt+D",
+      desktopLayer: desktopLayer.data,
       locale: resolveAppLocale(config.locale),
       dataDir: path.resolve(config.dataDir),
       defaultViewMode: config.defaultViewMode === "split" ? "split" : "edit",

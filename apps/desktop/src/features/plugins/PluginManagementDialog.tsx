@@ -107,6 +107,8 @@ export interface PluginManagementDialogProps {
   embedded?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialState?: PluginManagementState;
+  loadState?: (refresh?: boolean) => Promise<PluginManagementState>;
 }
 
 // Compose the installed registry primitives and existing desktop IPC boundary;
@@ -119,9 +121,13 @@ export function PluginManagementDialog({
   initialTab = "config",
   mode = "market",
   onNavigate = openSettingsWindow,
+  initialState,
+  loadState = listPlugins,
 }: PluginManagementDialogProps) {
   const { t, i18n } = useTranslation();
-  const [selectedPlugin, setSelectedPlugin] = useState<string | undefined>(pluginId);
+  const [selectedPlugin, setSelectedPlugin] = useState<string | undefined>(
+    pluginId ?? initialState?.plugins[0]?.pluginId,
+  );
   const [pluginFilter, setPluginFilter] = useState("");
   const [detailTab, setDetailTab] = useState(initialTab === "info" ? "config" : initialTab);
   const [marketTab, setMarketTab] = useState<"discover" | "installed" | "tasks">(
@@ -143,7 +149,8 @@ export function PluginManagementDialog({
       /* The editor retains its prompt and error. */
     }
   };
-  const [state, setState] = useState<PluginManagementState | null>(null);
+  const initialSnapshot = useRef(initialState);
+  const [state, setState] = useState<PluginManagementState | null>(initialState ?? null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<string>();
   const [activating, setActivating] = useState<string[]>([]);
@@ -199,22 +206,25 @@ export function PluginManagementDialog({
     return merged;
   }, []);
 
-  const refresh = useCallback(async () => {
-    const current = ++request.current;
-    try {
-      const snapshot = await listPlugins();
-      if (active.current && current === request.current) {
-        setState({ ...snapshot, tasks: mergeTasks(snapshot.tasks ?? []) });
-        setSelectedPlugin((current) =>
-          current && snapshot.plugins.some((plugin) => plugin.pluginId === current)
-            ? current
-            : snapshot.plugins[0]?.pluginId,
-        );
+  const refresh = useCallback(
+    async (force = true) => {
+      const current = ++request.current;
+      try {
+        const snapshot = await loadState(force);
+        if (active.current && current === request.current) {
+          setState({ ...snapshot, tasks: mergeTasks(snapshot.tasks ?? []) });
+          setSelectedPlugin((current) =>
+            current && snapshot.plugins.some((plugin) => plugin.pluginId === current)
+              ? current
+              : snapshot.plugins[0]?.pluginId,
+          );
+        }
+      } catch (value) {
+        if (active.current && current === request.current) setError(errorText(value));
       }
-    } catch (value) {
-      if (active.current && current === request.current) setError(errorText(value));
-    }
-  }, [mergeTasks]);
+    },
+    [mergeTasks, loadState],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -222,9 +232,10 @@ export function PluginManagementDialog({
     const unlisten: (() => void)[] = [];
     let closed = false;
     setError(undefined);
-    setState(null);
+    setState(initialSnapshot.current ?? null);
     taskSnapshots.current.clear();
     setTasks([]);
+    if (initialSnapshot.current) mergeTasks(initialSnapshot.current.tasks ?? []);
     // Install both listeners before requesting the initial state. Each listener
     // cleans itself up even if the dialog closes while subscription is pending.
     const subscribe = async () => {
@@ -256,7 +267,7 @@ export function PluginManagementDialog({
           else unlisten.push(subscription.value);
         } else if (!closed) setError(errorText(subscription.reason));
       }
-      if (!closed) await refresh();
+      if (!closed) await refresh(false);
     };
     void subscribe();
     return () => {
@@ -1289,22 +1300,24 @@ export function PluginManagementDialog({
                             plugin.enabled && <SearchServicePanel settingsFooter />}
                           {mode === "configuration" && detailTab === "functions" && (
                             <div className="flex flex-wrap gap-2">
-                              {plugin.commands.map((command) => (
-                                <Button
-                                  key={command.id}
-                                  variant="outline"
-                                  disabled={
-                                    !plugin.enabled ||
-                                    !!plugin.lastError ||
-                                    activating.includes(plugin.pluginId)
-                                  }
-                                  onClick={() => {
-                                    void launch(plugin.pluginId, command.id);
-                                  }}
-                                >
-                                  {command.title}
-                                </Button>
-                              ))}
+                              {plugin.commands
+                                .filter((command) => command.launcher?.role !== "hidden")
+                                .map((command) => (
+                                  <Button
+                                    key={command.id}
+                                    variant="outline"
+                                    disabled={
+                                      !plugin.enabled ||
+                                      !!plugin.lastError ||
+                                      activating.includes(plugin.pluginId)
+                                    }
+                                    onClick={() => {
+                                      void launch(plugin.pluginId, command.id);
+                                    }}
+                                  >
+                                    {command.title}
+                                  </Button>
+                                ))}
                             </div>
                           )}
                           <div hidden={mode !== "market"} className="flex flex-col gap-3">

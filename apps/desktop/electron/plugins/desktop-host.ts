@@ -10,8 +10,10 @@ import {
   type PluginTheme,
   type PluginPackageMetadata,
   type PluginOwner,
+  type PluginActivation,
   type JsonValue,
   type ResourceHandle,
+  type StopReason,
 } from "@spark233/sdk";
 import type {
   InstallPreview,
@@ -53,6 +55,14 @@ import { registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
 import type { DiagnosticEvent, DiagnosticKind } from "../../src/features/diagnostics/types.js";
 import { PluginTrayStateStore } from "../host/plugin-tray.js";
 
+export interface WidgetSourceEvent {
+  owner: PluginOwner;
+  source: "backend" | "native";
+  entryId?: string;
+  name: string;
+  payload?: JsonValue;
+}
+
 export interface DesktopPluginHostOptions {
   getPluginIcon?: (pluginId: string) => string | undefined;
   root: string;
@@ -85,6 +95,11 @@ export interface DesktopPluginHostOptions {
   resolveResource?: (resource: ResourceHandle) => string | undefined;
   subscribeResourceRevocations?: (listener: (ids: readonly string[]) => void) => () => void;
   onBackendHostCall?: TrustedBackendOptions["onHostCall"];
+  onWidgetLifecycle?: (
+    owner: PluginOwner,
+    phase: "quiesce" | "resume" | "revoke",
+    reason?: StopReason,
+  ) => void | Promise<void>;
 }
 const sourceSchema = z.strictObject({
   kind: z.enum(["registry", "file", "directory"]),
@@ -143,6 +158,8 @@ const officialBundledIds = new Set([
   "spark233.clipboard",
   "spark233.applications",
   "spark233.search",
+  "spark233.traffic",
+  "spark233.quicklinks",
 ]);
 const bundledEntrySchema = z.strictObject({
   pluginId: z.string().min(1).max(80),
@@ -208,6 +225,7 @@ export class DesktopPluginHost {
   private abort = new AbortController();
   private readonly bundledUpdates = new Map<string, { name: string; source: PluginUpdateSource }>();
   private readonly bundledCatalog = new Map<string, BundledEntry>();
+  private readonly widgetSubscribers = new Map<string, Set<(event: WidgetSourceEvent) => void>>();
 
   constructor(private options: DesktopPluginHostOptions) {
     this.trayStates = new PluginTrayStateStore(() => options.onTrayChange?.());
@@ -240,16 +258,71 @@ export class DesktopPluginHost {
           dataDir: this.manager.dataDirectory(installation.pluginId),
           cacheDir: confined(this.paths.cacheRoot, "migration", installation.pluginId),
         }),
-      createRuntime: async (installation, metadata, scope, startupCheckOnly) => {
+      createRuntime: async (installation, metadata, scope, startupCheckOnly, purpose) => {
         const updateTray = this.trayStates.attach(scope, metadata.spark233);
-        const onEvent = (event: { name: string; payload?: JsonValue }) => {
+        const widgetDefinitions = Object.keys(metadata.spark233.ui?.widgets ?? {});
+        if (widgetDefinitions.length && !startupCheckOnly) {
+          let reason: StopReason = "disable";
+          let resumeTimer: ReturnType<typeof setImmediate> | undefined;
+          scope.own("event", {
+            prepareStop: async (nextReason) => {
+              reason = nextReason;
+              if (resumeTimer) clearImmediate(resumeTimer);
+              await options.onWidgetLifecycle?.(scope.owner, "quiesce", reason);
+              return { ok: true };
+            },
+            cancelStop: () => {
+              // ResourceScope changes to active only after all cancelStop hooks
+              // finish. Reattach views on the next turn, with a fresh owner check.
+              resumeTimer = setImmediate(() => {
+                resumeTimer = undefined;
+                if (scope.state === "active" && this.manager.isOwnerCurrent(scope.owner))
+                  void Promise.resolve()
+                    .then(() => options.onWidgetLifecycle?.(scope.owner, "resume", reason))
+                    .catch((error) => console.error("widget-resume", error));
+              });
+            },
+            dispose: async () => {
+              if (resumeTimer) clearImmediate(resumeTimer);
+              this.widgetSubscribers.delete(scope.owner.instanceId);
+              await options.onWidgetLifecycle?.(scope.owner, "revoke", reason);
+            },
+          });
+        }
+        const onEvent = (
+          event: { name: string; payload?: JsonValue },
+          source: "backend" | "native",
+          entryId?: string,
+        ) => {
           if (event.name === "tray-state") {
             try {
               updateTray(event.payload);
             } catch (error) {
               console.error("plugin-tray-state", error);
             }
-          } else options.onPluginEvent?.(scope.owner, event.name, event.payload);
+          } else {
+            try {
+              options.onPluginEvent?.(scope.owner, event.name, event.payload);
+            } catch (error) {
+              console.error("plugin-event-listener", error);
+            }
+          }
+          if (scope.state === "active") {
+            const widgetEvent: WidgetSourceEvent = {
+              owner: { ...scope.owner },
+              source,
+              ...(entryId ? { entryId } : {}),
+              name: event.name,
+              payload: event.payload,
+            };
+            for (const listener of this.widgetSubscribers.get(scope.owner.instanceId) ?? []) {
+              try {
+                listener(widgetEvent);
+              } catch (error) {
+                console.error("widget-source-listener", error);
+              }
+            }
+          }
         };
         const entries = resolvePluginEntries(installation.directory, metadata);
         const backend = entries.backend
@@ -265,15 +338,17 @@ export class DesktopPluginHost {
               onHostCall: options.onBackendHostCall,
               onLogBytes: (stream, bytes) =>
                 this.diagnosticOutput(scope.owner, stream, bytes, "backend"),
-              onEvent,
+              onEvent: (event) => onEvent(event, "backend"),
               onCrash: (error) => {
                 void this.manager
                   .reportCrash(scope.owner, error)
                   .catch((failure) => console.error("plugin-crash-recovery", failure));
               },
               activationTimeoutMs: (activation) =>
-                installation.pluginId === "spark233.translation" &&
-                activation.commandId === "translate"
+                (installation.pluginId === "spark233.translation" &&
+                  activation.commandId === "translate") ||
+                (installation.pluginId === "spark233.traffic" &&
+                  activation.commandId === "process.enable")
                   ? 120_000
                   : undefined,
             })
@@ -307,7 +382,7 @@ export class DesktopPluginHost {
               approveTrust: () => installation.grant.native,
               onOutputBytes: (stream, bytes) =>
                 this.diagnosticOutput(scope.owner, stream, bytes, "native"),
-              onEvent,
+              onEvent: (event) => onEvent(event, "native", event.entryId),
               onCrash: (error) => {
                 void this.manager
                   .reportCrash(scope.owner, error)
@@ -322,6 +397,12 @@ export class DesktopPluginHost {
               manager: () => this.manager,
               updateTray,
               resolveResource: options.resolveResource,
+              ...(backend
+                ? {
+                    invokeBackend: (activation: PluginActivation, signal: AbortSignal) =>
+                      backend.activate(activation, signal),
+                  }
+                : {}),
               ...(native
                 ? {
                     invokeNative: (entryId, activation, signal) =>
@@ -358,6 +439,19 @@ export class DesktopPluginHost {
             getTheme: options.getTheme,
             subscribeTheme: options.subscribeTheme,
             capabilityBroker: broker,
+            capabilityTimeoutMs: (request) => {
+              const payload = request.payload;
+              return installation.pluginId === "spark233.traffic" &&
+                metadata.name === "@spark233/plugin-traffic" &&
+                request.capability === "node.backend" &&
+                request.operation === "invoke" &&
+                payload &&
+                typeof payload === "object" &&
+                !Array.isArray(payload) &&
+                payload.commandId === "process.enable"
+                ? 120_000
+                : undefined;
+            },
             onCrash: (error) => {
               void this.manager
                 .reportCrash(scope.owner, error)
@@ -367,18 +461,55 @@ export class DesktopPluginHost {
           webControllers.set(key, opening);
           return opening;
         };
-        const web = await getWeb();
-        if (!backend && !web) {
-          if (!native) throw new Error("Plugin has no supported runtime entry");
-          await native.checkStartup();
-          return native;
+        // Startup widgets need the backend and lightweight owner; installing or
+        // updating still checks the packaged main page, while ordinary startup
+        // keeps its renderer cold until an explicit window command.
+        const deferWeb =
+          purpose === "widget" ||
+          (!startupCheckOnly &&
+            metadata.spark233.activation === "on-startup" &&
+            !!backend &&
+            widgetDefinitions.length > 0);
+        const web = deferWeb ? undefined : await getWeb();
+        if (
+          !backend &&
+          !web &&
+          !entries.web &&
+          !Object.keys(metadata.spark233.ui?.windows ?? {}).length
+        ) {
+          if (!native && !widgetDefinitions.length)
+            throw new Error("Plugin has no supported runtime entry");
+          if (native && purpose !== "widget") await native.checkStartup();
+          return {
+            activate: (activation) => native?.activate(activation) ?? Promise.resolve(undefined),
+            query: (activation, signal) =>
+              native?.query(activation, signal) ?? Promise.resolve(undefined),
+            executeWidget: async ({ activation, entryId, signal }) => {
+              if (!native) throw new Error("Widget has no headless runtime");
+              return entryId
+                ? native.request(entryId, activation, signal)
+                : native.query(activation, signal);
+            },
+          };
         }
         await web?.checkStartup();
         return {
+          executeWidget: async ({ activation, entryId, signal }) => {
+            signal.throwIfAborted();
+            if (entryId) {
+              if (!native) throw new Error("Widget native entry is unavailable");
+              return native.request(entryId, activation, signal);
+            }
+            if (backend) return backend.activate(activation, signal);
+            if (native) return native.query(activation, signal);
+            throw new Error("Widget has no headless runtime");
+          },
           query: async (activation, signal) => {
             signal?.throwIfAborted();
             broker?.grantContext(activation.context);
-            return backend ? backend.activate(activation, signal) : web?.query(activation, signal);
+            return backend
+              ? backend.activate(activation, signal)
+              : (await getWeb())?.query(activation, signal);
           },
           activate: async (activation) => {
             broker?.grantContext(activation.context);
@@ -411,6 +542,28 @@ export class DesktopPluginHost {
     });
   }
 
+  subscribeWidgetEvents(
+    owner: PluginOwner,
+    listener: (event: WidgetSourceEvent) => void,
+  ): () => void {
+    if (!this.manager.isOwnerCurrent(owner)) throw new Error("Widget source owner is stale");
+    let listeners = this.widgetSubscribers.get(owner.instanceId);
+    if (!listeners) {
+      listeners = new Set();
+      this.widgetSubscribers.set(owner.instanceId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners!.delete(listener);
+      if (!listeners!.size && this.widgetSubscribers.get(owner.instanceId) === listeners)
+        this.widgetSubscribers.delete(owner.instanceId);
+    };
+  }
+  widgetEntries(pluginId: string): ReturnType<typeof resolvePluginEntries> {
+    const record = this.manager.list().find((value) => value.pluginId === pluginId);
+    if (!record) throw new Error("Widget plugin is not installed");
+    return resolvePluginEntries(record.directory, this.manager.describe(pluginId));
+  }
   private diagnostic(event: DiagnosticEvent): void {
     try {
       this.options.onDiagnostic?.(event);
@@ -752,7 +905,8 @@ export class DesktopPluginHost {
       let optionalDependencies: Record<string, string> = {};
       let lastError = record.lastError;
       try {
-        const metadata = this.manager.describe(record.pluginId);
+        // Listings reuse validated display metadata; execution still revalidates.
+        const metadata = this.manager.describe(record.pluginId, true);
         const localized = localizePluginManifest(
           metadata.spark233,
           this.options.getLocale?.() ?? "zh-CN",

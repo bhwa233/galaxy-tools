@@ -24,12 +24,14 @@ interface SelectionWorker {
 }
 
 /** Reuses windows-runtime's in-box compiler and the host's cache primitives.
- * Electron has no external-app selection API. This helper only reads UIA;
- * it installs no hooks and never accesses the clipboard or sends input. */
+ * Electron has no external-app selection API. This helper reads UIA and can
+ * return focus to its last captured external target; it installs no hooks,
+ * accesses no clipboard and sends no simulated input. */
 export class NativeSelectionReader {
   private executable?: Promise<string>;
   private starting?: Promise<SelectionWorker>;
   private worker?: SelectionWorker;
+  private capturedTarget?: { worker: SelectionWorker; window: number };
   private readonly workers = new Set<SelectionWorker>();
   private readonly abort = new AbortController();
 
@@ -62,6 +64,7 @@ export class NativeSelectionReader {
         signal.removeEventListener("abort", fail);
         worker.foreground = undefined;
         this.requests.delete(worker);
+        this.capturedTarget = window > 0 && worker.active ? { worker, window } : undefined;
         resolve(window);
       };
       // A slow sample only costs accuracy: never kill the warm helper for it,
@@ -78,6 +81,52 @@ export class NativeSelectionReader {
       worker.child.stdin.write(JSON.stringify({ id, operation: "foreground" }) + "\n", (error) => {
         if (error) fail();
       });
+    });
+  }
+
+  /** Focus restoration is a one-shot use of this helper's own foreground sample.
+   * A cold/replaced/busy helper never receives an arbitrary HWND to activate. */
+  async restoreTarget(window: number): Promise<void> {
+    if (
+      process.platform !== "win32" ||
+      this.abort.signal.aborted ||
+      !Number.isSafeInteger(window) ||
+      window <= 0
+    )
+      return;
+    const worker = this.worker;
+    if (
+      !worker?.active ||
+      worker.finish ||
+      worker.foreground ||
+      this.capturedTarget?.worker !== worker ||
+      this.capturedTarget.window !== window
+    )
+      return;
+    this.capturedTarget = undefined;
+    const id = randomUUID();
+    await new Promise<void>((resolve) => {
+      const settle = () => {
+        clearTimeout(timer);
+        this.abort.signal.removeEventListener("abort", fail);
+        worker.foreground = undefined;
+        this.requests.delete(worker);
+        resolve();
+      };
+      const fail = () => {
+        settle();
+        this.retire(worker);
+      };
+      const timer = setTimeout(fail, 250);
+      worker.foreground = settle;
+      this.requests.set(worker, { id, kind: "restore" });
+      this.abort.signal.addEventListener("abort", fail, { once: true });
+      worker.child.stdin.write(
+        JSON.stringify({ id, operation: "restore", targetWindow: window }) + "\n",
+        (error) => {
+          if (error) fail();
+        },
+      );
     });
   }
 
@@ -146,14 +195,16 @@ export class NativeSelectionReader {
 
   private readonly requests = new Map<
     SelectionWorker,
-    { id: string; kind: "read" | "foreground" }
+    { id: string; kind: "read" | "foreground" | "restore" }
   >();
 
   private retire(worker: SelectionWorker): void {
     worker.active = false;
     if (this.worker === worker) this.worker = undefined;
     this.requests.delete(worker);
+    if (this.capturedTarget?.worker === worker) this.capturedTarget = undefined;
     worker.finish?.("");
+    worker.foreground?.(0);
     if (this.workers.has(worker)) worker.child.kill();
   }
 
@@ -250,6 +301,8 @@ export class NativeSelectionReader {
       if (this.worker === worker) this.worker = undefined;
       this.requests.delete(worker);
       worker.finish?.("");
+      worker.foreground?.(0);
+      if (this.capturedTarget?.worker === worker) this.capturedTarget = undefined;
       failed(new Error("Selection helper exited"));
       this.workers.delete(worker);
       exited();

@@ -79,6 +79,24 @@ describe.skipIf(process.platform !== "win32")("resident selection transport", ()
     expect(old.kill).toHaveBeenCalledOnce();
   });
 
+  it("restores only a sampled target once and never sends an unsampled HWND to the native helper", async () => {
+    await reader.prepare();
+    await reader.restoreTarget(77);
+    expect(helpers[0].requests).toEqual([]);
+    const sampled = reader.target(new AbortController().signal);
+    const helper = helpers[0];
+    helper.stdout.write(JSON.stringify({ id: helper.requests.at(-1)!.id, window: 77 }) + "\n");
+    await expect(sampled).resolves.toBe(77);
+    await reader.restoreTarget(78);
+    expect(helper.requests).toHaveLength(1);
+    const restored = reader.restoreTarget(77);
+    expect(helper.requests.at(-1)?.operation).toBe("restore");
+    helper.stdout.write(JSON.stringify({ id: helper.requests.at(-1)!.id, window: 77 }) + "\n");
+    await restored;
+    await reader.restoreTarget(77);
+    expect(helper.requests).toHaveLength(2);
+  });
+
   it("recovers from a hung read and resolves pending work when stopped", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await reader.prepare();

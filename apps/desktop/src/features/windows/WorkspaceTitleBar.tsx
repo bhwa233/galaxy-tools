@@ -1,7 +1,6 @@
 import { useEffect, useEffectEvent, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Minus, Square, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { WindowTitleBar } from "@spark233/ui/components";
 import { getCurrentWindow } from "../../platform/desktop";
 import { usePluginWindow } from "./PluginWindowContext";
 import {
@@ -73,48 +72,23 @@ export function WorkspaceTitleBar({
   };
 
   return (
-    <header
-      className={`electron-title-drag relative z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background pr-3 select-none ${isMacOS ? "pl-20" : "pl-4"}`}
+    <WindowTitleBar
+      title={windowInfo?.title ?? title}
+      isMacOS={isMacOS}
+      isMaximized={isMaximized}
+      maximizable={windowInfo?.maximizable !== false}
+      labels={{
+        minimize: t("main.window.minimize"),
+        maximize: t("main.window.maximize"),
+        restore: t("main.window.restore"),
+        close: t("main.window.close"),
+      }}
       onMouseDown={onMouseDown}
+      onMinimize={() => void perform(minimizeCurrentWindow)}
+      onToggleMaximize={() => void perform(toggleMaximizeCurrentWindow)}
+      onClose={() => void perform(onClose)}
     >
-      <h1 className="min-w-0 truncate text-sm font-semibold">{windowInfo?.title ?? title}</h1>
-      <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
-        {children}
-        {!isMacOS && (
-          <>
-            {children && <div className="mx-1 h-4 w-px bg-border" />}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void perform(minimizeCurrentWindow)}
-              title={t("main.window.minimize")}
-              aria-label={t("main.window.minimize")}
-            >
-              <Minus />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void perform(toggleMaximizeCurrentWindow)}
-              disabled={windowInfo?.maximizable === false}
-              title={t(isMaximized ? "main.window.restore" : "main.window.maximize")}
-              aria-label={t(isMaximized ? "main.window.restore" : "main.window.maximize")}
-            >
-              {isMaximized ? <Copy /> : <Square />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => void perform(onClose)}
-              title={t("main.window.close")}
-              aria-label={t("main.window.close")}
-            >
-              <X />
-            </Button>
-          </>
-        )}
-      </div>
-    </header>
+      {children}
+    </WindowTitleBar>
   );
 }

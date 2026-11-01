@@ -14,3 +14,4 @@ export {
 export { Input } from "./components/input.js";
 export { Textarea } from "./components/textarea.js";
 export { Spinner } from "./components/spinner.js";
+export { WindowTitleBar } from "./components/window-title-bar.js";

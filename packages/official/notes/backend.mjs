@@ -5665,11 +5665,22 @@ var trayMenuSchema = strictObject({
 	hidden: array(string().regex(/^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/)).max(512),
 	order: array(string().regex(/^[a-z][a-z0-9.-]*(?::[a-z][a-z0-9.-]*)?$/)).max(512)
 });
+var desktopLayerPreferencesSchema = strictObject({
+	enabled: boolean(),
+	webEnabled: boolean(),
+	notesEnabled: boolean()
+});
+var DEFAULT_DESKTOP_LAYER_PREFERENCES = {
+	enabled: true,
+	webEnabled: true,
+	notesEnabled: true
+};
 var configPatchSchema = strictObject({
 	locale: _enum(SUPPORTED_LOCALES).optional(),
 	globalShortcut: string().max(100).optional(),
 	commandShortcuts: record(string().regex(/^([a-z][a-z0-9.-]*):([a-z][a-z0-9.-]*)$/), string().max(100)).refine((value) => Object.keys(value).length <= 128).optional(),
 	trayMenu: trayMenuSchema.optional(),
+	desktopLayer: desktopLayerPreferencesSchema.partial().refine((flags) => Object.values(flags).every((value) => value !== void 0)).optional(),
 	closeToTray: boolean().optional(),
 	autostart: boolean().optional(),
 	defaultViewMode: _enum(["edit", "split"]).optional(),
@@ -5715,6 +5726,7 @@ var configPatchSchema = strictObject({
 	surfaceWidth: number().min(160).max(1e4).optional(),
 	surfaceHeight: number().min(60).max(1e4).optional(),
 	toggleVisibilityShortcut: string().max(100).optional(),
+	desktopOverlayShortcut: string().max(100).optional(),
 	openAtCursor: boolean().optional(),
 	backgroundImagePath: string().max(32768).optional(),
 	backgroundFit: _enum([
@@ -5884,6 +5896,7 @@ function defaultConfig(dataDir) {
 			hidden: [],
 			order: []
 		},
+		desktopLayer: { ...DEFAULT_DESKTOP_LAYER_PREFERENCES },
 		closeToTray: true,
 		autostart: false,
 		defaultViewMode: "edit",
@@ -5909,6 +5922,7 @@ function defaultConfig(dataDir) {
 		mcpEnabled: false,
 		mcpPermission: "read",
 		toggleVisibilityShortcut: "",
+		desktopOverlayShortcut: "Ctrl+Alt+D",
 		openAtCursor: true,
 		backgroundImagePath: "",
 		backgroundFit: "cover",
@@ -5932,7 +5946,11 @@ var HostConfigStore = class {
 		this.value = {
 			...defaultConfig(dataDir),
 			...saved,
-			dataDir
+			dataDir,
+			desktopLayer: {
+				...DEFAULT_DESKTOP_LAYER_PREFERENCES,
+				...saved.desktopLayer
+			}
 		};
 		const noteFile = path.join(dataDir, ".spark233-preferences.json");
 		if (fs.existsSync(noteFile)) {
@@ -5944,6 +5962,12 @@ var HostConfigStore = class {
 		this.value.defaultViewMode = this.value.defaultViewMode === "split" ? "split" : "edit";
 	}
 	save(config) {
+		const desktopLayer = desktopLayerPreferencesSchema.safeParse({
+			...DEFAULT_DESKTOP_LAYER_PREFERENCES,
+			...this.value.desktopLayer,
+			...config?.desktopLayer
+		});
+		if (!desktopLayer.success) throw new AppError("invalidPayload", "桌面卡片设置格式不合法");
 		if (config.trayMenu !== void 0 && !trayMenuSchema.safeParse(config.trayMenu).success) throw new AppError("invalidPayload", "托盘菜单设置格式不合法");
 		if (config?.commandShortcuts !== void 0 && (typeof config.commandShortcuts !== "object" || config.commandShortcuts === null || Array.isArray(config.commandShortcuts) || Object.keys(config.commandShortcuts).length > 128 || Object.entries(config.commandShortcuts).some(([id, value]) => !/^([a-z][a-z0-9.-]*):([a-z][a-z0-9.-]*)$/.test(id) || typeof value !== "string" || value.length > 100))) throw new AppError("invalidPayload", "插件快捷键设置格式不合法");
 		if (!config || typeof config !== "object" || ![
@@ -5958,10 +5982,12 @@ var HostConfigStore = class {
 			"read",
 			"append",
 			"full"
-		].includes(config.mcpPermission) || typeof config.globalShortcut !== "string" || typeof config.toggleVisibilityShortcut !== "string" || typeof config.autostart !== "boolean" || typeof config.closeToTray !== "boolean") throw new AppError("invalidPayload", "设置格式不合法");
+		].includes(config.mcpPermission) || typeof config.globalShortcut !== "string" || typeof config.toggleVisibilityShortcut !== "string" || config.desktopOverlayShortcut !== void 0 && (typeof config.desktopOverlayShortcut !== "string" || config.desktopOverlayShortcut.length > 100) || typeof config.autostart !== "boolean" || typeof config.closeToTray !== "boolean") throw new AppError("invalidPayload", "设置格式不合法");
 		const value = {
 			...this.value,
 			...config,
+			desktopOverlayShortcut: config.desktopOverlayShortcut ?? this.value.desktopOverlayShortcut ?? "Ctrl+Alt+D",
+			desktopLayer: desktopLayer.data,
 			locale: resolveAppLocale(config.locale),
 			dataDir: path.resolve(config.dataDir),
 			defaultViewMode: config.defaultViewMode === "split" ? "split" : "edit",

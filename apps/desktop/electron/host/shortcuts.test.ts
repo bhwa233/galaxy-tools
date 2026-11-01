@@ -36,6 +36,9 @@ it("keeps working bindings on conflicts and releases disabled commands without l
       invoked.push("launcher");
     },
     toggleVisibility: () => {},
+    toggleDesktopOverlay: () => {
+      invoked.push("overlay");
+    },
     onError: (error) => {
       throw error;
     },
@@ -63,6 +66,9 @@ it("keeps working bindings on conflicts and releases disabled commands without l
     /fixture.plugin/,
   );
   expect(native.callbacks.has("Alt+Space")).toBe(true);
+  expect(() => manager.configure({ ...config, globalShortcut: "Control+Alt+d" })).toThrow(
+    /桌面插件栏/,
+  );
   const expired = native.callbacks.get("Ctrl+K")!;
   commands = [];
   expired(); // A queued old callback must not activate a stopped plugin.
@@ -76,10 +82,16 @@ it("keeps working bindings on conflicts and releases disabled commands without l
   manager.configure(config);
   expect(native.callbacks.has("Ctrl+K")).toBe(true);
   expect(invoked).toEqual(["launcher", "fixture.plugin:open"]);
+  native.callbacks.get("Ctrl+Alt+D")!();
+  expect(invoked.at(-1)).toBe("overlay");
   manager.beginRecording();
   manager.configure(config);
   expect(native.callbacks.size).toBe(0);
   manager.endRecording(config);
   expect(native.callbacks.has("Ctrl+K")).toBe(true);
+  native.callbacks.get("Ctrl+Alt+D")!();
+  expect(invoked.at(-1)).toBe("overlay");
+  manager.configure({ ...config, desktopOverlayShortcut: "" });
+  expect(native.callbacks.has("Ctrl+Alt+D")).toBe(false);
   manager.dispose();
 });

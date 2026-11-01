@@ -1,4 +1,4 @@
-export type AppView = "settings" | "main" | "launcher" | "notepad" | "tile" | "capsule";
+export type AppView = "settings" | "main" | "launcher" | "notepad" | "tile" | "capsule" | "layer";
 
 export interface AppRoute {
   view: AppView;
@@ -17,6 +17,7 @@ export function routeFromSearch(search: string): AppRoute {
   if (view === "settings") return { view };
   if (view === "launcher") return { view };
   if (view === "capsule") return { view };
+  if (view === "layer") return { view };
   if (view === "notepad") return noteId ? { view, noteId } : { view };
   if (view === "tile") return noteId ? { view, noteId } : { view };
   return { view: "main" };

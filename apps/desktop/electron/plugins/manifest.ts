@@ -5,6 +5,9 @@ import {
   HOST_API_VERSION,
   THEME_API_VERSION,
   pluginPackageSchema,
+  parseDeclarativeTemplate,
+  declarativeResourceIds,
+  type DeclarativeTemplate,
   type PluginPackageMetadata,
 } from "@spark233/sdk";
 import { AppError, canonical, confined, inside } from "../persistence.js";
@@ -25,7 +28,17 @@ export interface ResolvedPluginEntries {
   backend?: { entry: string };
   migration?: { entry: string };
   native: Record<string, { path: string; args: string[] }>;
+  widgets: Record<string, ResolvedWidgetEntry>;
 }
+export type ResolvedWidgetEntry =
+  | { kind: "web"; file: string; root: string }
+  | {
+      kind: "declarative";
+      template: DeclarativeTemplate;
+      hoverTemplate?: DeclarativeTemplate;
+      root: string;
+      resources: Record<string, string>;
+    };
 export function defaultHostEnvironment(version: string): HostEnvironment {
   return { version, apiVersion: HOST_API_VERSION, platform: process.platform, arch: process.arch };
 }
@@ -36,6 +49,12 @@ export function validatePluginMetadata(
   environment: HostEnvironment,
   expected: PluginExpectation = {},
 ): PluginPackageMetadata {
+  try {
+    if (Buffer.byteLength(JSON.stringify(value)) > 256 * 1024)
+      throw new Error("metadata exceeds size limit");
+  } catch {
+    throw new AppError("invalidPlugin", "插件清单超过大小限制或不是 JSON");
+  }
   const parsed = pluginPackageSchema.safeParse(value);
   if (!parsed.success) {
     throw new AppError("invalidPlugin", "插件清单不符合 spark233 合同", {
@@ -80,6 +99,19 @@ export function validatePluginMetadata(
     });
     throw new AppError("incompatiblePlugin", "插件与当前宿主版本不兼容");
   }
+  if (
+    Object.values(manifest.ui?.windows ?? {}).some((window) => window.titleBar === "custom") &&
+    !semver.subset(manifest.api, ">=1.5.0 <2.0.0")
+  )
+    throw new AppError("incompatiblePlugin", "自定义窗口标题栏要求最低 API 1.5.0");
+  if (
+    Object.keys(manifest.ui?.widgets ?? {}).length &&
+    !semver.subset(manifest.api, ">=1.4.0 <2.0.0")
+  )
+    throw new AppError(
+      "incompatiblePlugin",
+      "桌面卡片要求最低 API 1.4.0，且兼容范围不得包含旧 API",
+    );
   if (
     (manifest.ui?.icon ||
       Object.keys(manifest.ui?.windows ?? {}).length ||
@@ -150,7 +182,73 @@ export function resolvePluginEntries(
     entry(window.entry, /\.html$/i);
     if (window.icon) icon(window.icon);
   }
+  const widgets: Record<string, ResolvedWidgetEntry> = {};
+  for (const [id, widget] of Object.entries(metadata.spark233.ui?.widgets ?? {})) {
+    const relative = widget.kind === "web" ? widget.entry : widget.template;
+    const file = entry(relative, widget.kind === "web" ? /\.html$/i : /\.json$/i);
+    // Resources are confined to this widget's package directory, including links.
+    const widgetRoot = confined(root, "widgets");
+    if (widget.kind === "web") {
+      if (fs.statSync(file).size > 32 * 1024 * 1024)
+        throw new AppError("invalidPlugin", "桌面卡片 HTML 超过大小限制");
+      widgets[id] = { kind: "web", file, root: widgetRoot };
+    } else {
+      if (fs.statSync(file).size > 32 * 1024)
+        throw new AppError("invalidPlugin", "声明式卡片模板超过大小限制");
+      let template: DeclarativeTemplate;
+      try {
+        template = parseDeclarativeTemplate(JSON.parse(fs.readFileSync(file, "utf8")), widget);
+      } catch (error) {
+        throw new AppError("invalidPlugin", "声明式卡片模板不合法", {
+          issues: error instanceof Error ? error.message : String(error),
+        });
+      }
+      let hoverTemplate: DeclarativeTemplate | undefined;
+      const hoverRelative = widget.desktopInteractions?.hover?.template;
+      if (hoverRelative) {
+        const hoverFile = entry(hoverRelative, /\.json$/i);
+        if (fs.statSync(hoverFile).size > 32 * 1024)
+          throw new AppError("invalidPlugin", "悬停卡片模板超过大小限制");
+        try {
+          hoverTemplate = parseDeclarativeTemplate(
+            JSON.parse(fs.readFileSync(hoverFile, "utf8")),
+            widget,
+          );
+        } catch (error) {
+          throw new AppError("invalidPlugin", "悬停卡片模板不合法", { issues: String(error) });
+        }
+      }
+      const resources: Record<string, string> = {};
+      for (const [source, parsed] of [
+        [relative, template],
+        ...(hoverTemplate && hoverRelative ? [[hoverRelative, hoverTemplate] as const] : []),
+      ] as const) {
+        for (const resourceId of declarativeResourceIds(parsed)) {
+          const png = entry(
+            source.replace(/\.json$/i, "") + "/icons/" + resourceId + ".png",
+            /\.png$/i,
+          );
+          const bytes = fs.readFileSync(png);
+          if (
+            bytes.length < 24 ||
+            bytes.length > 64 * 1024 ||
+            !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+            bytes.readUInt32BE(16) < 1 ||
+            bytes.readUInt32BE(20) < 1 ||
+            bytes.readUInt32BE(16) > 256 ||
+            bytes.readUInt32BE(20) > 256
+          )
+            throw new AppError("invalidPlugin", "桌面卡片 PNG 资源不合法或超过大小限制");
+          if (resources[resourceId] && !fs.readFileSync(resources[resourceId]).equals(bytes))
+            throw new AppError("invalidPlugin", "桌面卡片图标标识冲突");
+          resources[resourceId] = png;
+        }
+      }
+      widgets[id] = { kind: "declarative", template, hoverTemplate, root: widgetRoot, resources };
+    }
+  }
   return {
+    widgets,
     ...(metadata.spark233.entry ? { web: entry(metadata.spark233.entry, /\.html$/i) } : {}),
     ...(metadata.spark233.backend
       ? { backend: { entry: entry(metadata.spark233.backend.entry, /\.(?:mjs|cjs|js)$/i) } }

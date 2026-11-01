@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { listPlugins, watchPluginsChanged } from "../plugins/api";
 import { PluginIcon } from "../plugins/PluginIcon";
-import type { PluginSummary } from "../plugins/types";
+import type { PluginManagementState, PluginSummary } from "../plugins/types";
 import { patchConfig } from "./api";
 import type { AppConfig, AppConfigPatch } from "./types";
 import { shortcutIdentity, shortcutPlatform } from "./shortcutRecorder";
@@ -26,6 +26,8 @@ export function CommandSettings({
   onSaved,
   pluginId,
   warnings,
+  initialState,
+  loadState = listPlugins,
 }: {
   kind: "shortcuts" | "tray";
   config: AppConfig;
@@ -33,18 +35,21 @@ export function CommandSettings({
   onSaved: (config: AppConfig) => void;
   pluginId?: string;
   warnings?: string[];
+  initialState?: PluginManagementState;
+  loadState?: (refresh?: boolean) => Promise<PluginManagementState>;
 }) {
   const { t } = useTranslation();
-  const [plugins, setPlugins] = useState<PluginSummary[]>();
+  const [plugins, setPlugins] = useState<PluginSummary[] | undefined>(initialState?.plugins);
   const [error, setError] = useState<string>();
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true,
       generation = 0;
-    const load = async () => {
+    const load = async (refresh = false) => {
+      if (!active) return;
       const revision = ++generation;
       try {
-        const state = await listPlugins();
+        const state = await loadState(refresh);
         if (active && revision === generation) {
           setPlugins(state.plugins);
           // Update/install notices belong to plugin management, not this editor.
@@ -55,14 +60,14 @@ export function CommandSettings({
       }
     };
     const listener = watchPluginsChanged(() => {
-      void load();
+      void load(true);
     });
-    void load();
+    void load(retry > 0);
     return () => {
       active = false;
       void listener.then((stop) => stop());
     };
-  }, [retry]);
+  }, [retry, loadState]);
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-4">
       <div>
@@ -145,6 +150,15 @@ function ShortcutEditor({
       registered: true,
       value: effective.toggleVisibilityShortcut,
     },
+    {
+      key: "desktopOverlayShortcut",
+      title: t("settings.desktopOverlayShortcut"),
+      owner: "spark233",
+      pluginId: "",
+      available: true,
+      registered: true,
+      value: effective.desktopOverlayShortcut ?? "Ctrl+Alt+D",
+    },
     ...plugins.flatMap((plugin) =>
       plugin.commands
         .filter((command) => !command.internal)
@@ -186,11 +200,14 @@ function ShortcutEditor({
             baseline.commandShortcuts?.[key] ?? "",
           ]),
         ),
-        ...(patch.globalShortcut !== undefined || patch.toggleVisibilityShortcut !== undefined
+        ...(patch.globalShortcut !== undefined ||
+        patch.toggleVisibilityShortcut !== undefined ||
+        patch.desktopOverlayShortcut !== undefined
           ? {
               expectedShortcuts: {
                 globalShortcut: baseline.globalShortcut,
                 toggleVisibilityShortcut: baseline.toggleVisibilityShortcut,
+                desktopOverlayShortcut: baseline.desktopOverlayShortcut ?? "Ctrl+Alt+D",
               },
             }
           : {}),
@@ -215,9 +232,14 @@ function ShortcutEditor({
   const change = (key: string, value: string) => {
     if (!dirty) setBaseline(config);
     setPatch((previous) => {
-      if (key === "globalShortcut" || key === "toggleVisibilityShortcut") {
+      if (
+        key === "globalShortcut" ||
+        key === "toggleVisibilityShortcut" ||
+        key === "desktopOverlayShortcut"
+      ) {
         const next = { ...previous, [key]: value };
-        if (value === current[key]) delete next[key];
+        if (value === (current[key] ?? (key === "desktopOverlayShortcut" ? "Ctrl+Alt+D" : "")))
+          delete next[key];
         return next;
       }
       const commands = { ...previous.commandShortcuts, [key]: value };

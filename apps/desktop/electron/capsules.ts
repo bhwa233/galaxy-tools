@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, screen, shell } from "electron";
+import { BrowserWindow, Menu, powerMonitor, screen, shell } from "electron";
 import path from "node:path";
 import type {
   CapsuleEntry,
@@ -28,6 +28,10 @@ import type { NotesDataClient } from "./plugins/official/notes-data-client.js";
 import type { AppConfig } from "../src/features/settings/types.js";
 import { AppError } from "./persistence.js";
 import { externalUrl } from "./security.js";
+import { LayerWindow } from "./layer-window.js";
+import type { LayerCard } from "../shared/layer-contract.js";
+import type { DesktopLayer } from "./desktop-layer.js";
+import { allocateLayerCards, DEFAULT_LAYER_QUOTAS } from "./layer-layout-store.js";
 interface Options {
   here: string;
   url: string;
@@ -41,14 +45,19 @@ interface Options {
   changed: () => void;
   globalMenu: () => Electron.Menu | Promise<Electron.Menu>;
   onRendererCrash?: (error: Error) => void;
+  canInteract?: () => boolean;
 }
 interface Surface {
   win: BrowserWindow;
+  layer?: LayerWindow;
+  key: string;
+  bounds: Rect;
   snapshot: CapsuleSnapshot;
   ready: boolean;
 }
 interface Drag {
   owner: number;
+  ownerCard?: string;
   id: string;
   queue?: string;
   entries: CapsuleEntry[];
@@ -73,9 +82,14 @@ export class Capsules {
   private suppressed: Rect[] = [];
   private hidden = false;
   private enabled = true;
+  private systemSuppressed = new Set<"locked" | "suspend">();
+  private releaseEnvironment: () => void;
   private titles = new Map<string, string>();
   private refreshGeneration = 0;
   private previewGeneration = 0;
+  private desktopLayer?: DesktopLayer;
+  private releaseDesktopLayer?: () => void;
+  private quotaSignature = "";
   private label(chinese: string, english: string): string {
     return this.options.getConfig().locale.startsWith("en") ? english : chinese;
   }
@@ -86,9 +100,24 @@ export class Capsules {
   }
   constructor(private options: Options) {
     this.ticker = setInterval(() => this.tick(), 60);
-    screen.on("display-added", this.displayChanged);
-    screen.on("display-removed", this.displayChanged);
-    screen.on("display-metrics-changed", this.displayChanged);
+    this.releaseEnvironment = LayerWindow.observeEnvironment({
+      screen,
+      powerMonitor,
+      timers: { setTimeout, clearTimeout },
+      onDisplayChange: this.displayChanged,
+      onSuppressed: (reason, value) => {
+        if (value) {
+          this.systemSuppressed.add(reason);
+          this.cancelDrag();
+          this.hidePreview();
+        } else this.systemSuppressed.delete(reason);
+        for (const s of this.surfaces.values()) s.layer?.setSuppressed(reason, value);
+        this.desktopLayer?.refresh();
+      },
+      onRestore: () => {
+        if (this.enabled) this.refresh();
+      },
+    });
   }
   private displayChanged = () => {
     if (!this.enabled) return;
@@ -98,7 +127,254 @@ export class Capsules {
     this.save();
   };
   owns(win: BrowserWindow) {
-    return [...this.surfaces.values()].some((s) => s.win === win);
+    return [...this.surfaces.values()].some((s) => s.layer?.win === win);
+  }
+  nativeWindows(): BrowserWindow[] {
+    return [...this.surfaces.values()].flatMap((surface) => (surface.layer ? [surface.win] : []));
+  }
+  /** Focus/capture exclusions may include shared windows; callers must never
+   * destroy these as notes-owned resources because widgets can share the HWND. */
+  presentationWindows(): BrowserWindow[] {
+    const windows = new Set(this.nativeWindows());
+    for (const surface of this.surfaces.values()) {
+      if (surface.layer || !surface.snapshot.items[0]) continue;
+      const win = this.desktopLayer?.windowForCard(this.cardId(surface, surface.snapshot.items[0]));
+      if (win && !win.isDestroyed()) windows.add(win);
+    }
+    return [...windows];
+  }
+  /** Check a proposed visible note without changing the live layout or closing
+   * its editor. The same prediction is used when entering/restoring the layer. */
+  assertCanShow(
+    entry: CapsuleEntry | readonly CapsuleEntry[],
+    queuePatch?: Partial<CapsuleQueue> & { key: string },
+  ): void {
+    const proposed = Array.isArray(entry)
+      ? (entry as readonly CapsuleEntry[])
+      : [entry as CapsuleEntry];
+    if (this.desktopLayer) this.assertLayerQuota(this.desktopLayer, proposed, queuePatch);
+  }
+  private assertLayerQuota(
+    layer: DesktopLayer,
+    proposed: readonly CapsuleEntry[] = [],
+    queuePatch?: Partial<CapsuleQueue> & { key: string },
+  ): void {
+    const replacements = new Map(proposed.map((entry) => [entry.label, entry]));
+    const entries = [...this.options.entries.values()].map(
+      (entry) => replacements.get(entry.label) ?? entry,
+    );
+    for (const entry of proposed)
+      if (!entries.some((existing) => existing.label === entry.label)) entries.push(entry);
+    const displays = screen.getAllDisplays();
+    // Follow render()'s display fallback without mutating the live capsule.
+    const planned = entries.map((entry) =>
+      entry.visible &&
+      entry.capsule &&
+      !displays.some((display) => String(display.id) === entry.capsule!.displayId)
+        ? {
+            ...entry,
+            capsule: {
+              ...entry.capsule,
+              displayId: String(screen.getDisplayMatching(entry.bounds).id),
+            },
+          }
+        : entry,
+    );
+    const views: string[] = [];
+    for (const display of displays)
+      for (const edge of ["left", "right", "top"] as const) {
+        const key = queueKey(String(display.id), edge),
+          group = members(planned, key);
+        if (!group.length) continue;
+        const queue = {
+          ...(this.queues.get(key) ?? {
+            key,
+            offset: edge === "top" ? 0 : 100,
+            collapsed: false,
+            scroll: 0,
+            ...(edge === "top" ? { centered: true } : {}),
+          }),
+          ...(queuePatch?.key === key ? queuePatch : {}),
+        };
+        const geometry = queueGeometry(
+          display.workArea,
+          edge,
+          queue,
+          group.map((entry) => pillWidth(this.title(entry.noteId!))),
+        );
+        views.push(String(display.id)); // master is a real shared-layer card too.
+        if (!queue.collapsed)
+          group.forEach((_, index) => {
+            const slot = geometry.slot(index);
+            if (
+              edge === "top"
+                ? !!intersectRect(slot, geometry.viewport)
+                : slot.y >= SLOT_PITCH && slot.y + slot.height <= geometry.bounds.height
+            ) {
+              views.push(String(display.id));
+            }
+          });
+      }
+    for (const entry of planned)
+      if (entry.visible && entry.folded && entry.noteId && entry.capsule?.kind === "floating")
+        views.push(
+          String(screen.getDisplayNearestPoint({ x: entry.capsule.x, y: entry.capsule.y }).id),
+        );
+    const widgets = layer
+      .snapshot()
+      .cards.filter((card) => card.renderKind !== "notes" && card.visible);
+    const counts = new Map<string, number>();
+    for (const id of [...views, ...widgets.map((card) => card.displayId)])
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    if (
+      views.length > DEFAULT_LAYER_QUOTAS.perPlugin ||
+      views.length + widgets.length > DEFAULT_LAYER_QUOTAS.total ||
+      [...counts.values()].some((count) => count > DEFAULT_LAYER_QUOTAS.perDisplay)
+    )
+      throw new AppError(
+        "layer.quotaExceeded",
+        "桌面层活动卡片超过配额，已保留当前便签状态；请先隐藏部分卡片",
+      );
+  }
+  private layerPillBudget(entries: readonly CapsuleEntry[], displays: readonly Electron.Display[]) {
+    const masters = displays.reduce(
+      (count, display) =>
+        count +
+        ["left", "right", "top"].filter(
+          (edge) => members(entries, queueKey(String(display.id), edge as Edge)).length,
+        ).length,
+      0,
+    );
+    const floating = entries.filter(
+      (entry) =>
+        entry.visible && entry.folded && entry.noteId && entry.capsule?.kind === "floating",
+    ).length;
+    return Math.max(0, DEFAULT_LAYER_QUOTAS.perPlugin - masters - floating);
+  }
+  /** Queue/floating views share trusted layer windows. Preview and drag keep the
+   * existing globally bounded native windows and the same controller behavior. */
+  async setDesktopLayer(layer?: DesktopLayer): Promise<void> {
+    if (this.desktopLayer === layer) return;
+    if (layer) this.assertLayerQuota(layer);
+    this.cancelDrag();
+    this.hidePreview();
+    this.releaseDesktopLayer?.();
+    this.releaseDesktopLayer = undefined;
+    for (const surface of this.surfaces.values()) await surface.layer?.destroy();
+    this.surfaces.clear();
+    this.desktopLayer = layer;
+    if (layer)
+      this.releaseDesktopLayer = layer.register({
+        id: "trusted-notes",
+        snapshot: () => this.layerCards(),
+        onInvoke: (cardId, command, args) => this.handleLayer(cardId, command, args),
+      });
+    await this.refresh();
+    {
+      const deadline = Date.now() + 5000;
+      while (
+        layer
+          ? this.layerCards().some((card) => !layer.isCardReady(card.id))
+          : [...this.surfaces.values()].some((surface) => !surface.ready)
+      ) {
+        if (Date.now() > deadline)
+          throw new AppError("capsuleUnavailable", "便签展示窗口未就绪，已保留布局");
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+    }
+  }
+  private cardId(surface: Surface, item: CapsuleItem): string {
+    return "notes-view:" + surface.key + "/" + item.id;
+  }
+  private layerCards(): LayerCard[] {
+    return this.quotaCards().map((card) => ({
+      ...card,
+      visible: !this.systemSuppressed.size,
+    }));
+  }
+  /** Lock/suspend only suppress presentation; their logical reservations remain
+   * until notes are explicitly hidden or disabled. */
+  quotaCards(): LayerCard[] {
+    if (!this.desktopLayer || !this.enabled || this.hidden) return [];
+    const cards = [...this.surfaces.values()]
+      .filter((surface) => !surface.layer)
+      .flatMap((surface) =>
+        surface.snapshot.items.map((item, order) => ({
+          id: this.cardId(surface, item),
+          consumerId: "trusted-notes",
+          displayId: String(screen.getDisplayMatching(surface.bounds).id),
+          group: "top" as const,
+          inputMode: "interactive" as const,
+          bounds: {
+            ...item.rect,
+            x: surface.bounds.x + item.rect.x,
+            y: surface.bounds.y + item.rect.y,
+          },
+          clip: item.clip,
+          order,
+          visible: true,
+          renderKind: "notes" as const,
+          renderRef: item.id,
+          payload: {
+            ...surface.snapshot,
+            items: [{ ...item, rect: { ...item.rect, x: 0, y: 0 } }],
+          } as unknown as import("@spark233/sdk").JsonValue,
+        })),
+      );
+    const active = new Set(
+      allocateLayerCards(
+        cards.map((card) => ({
+          id: card.id,
+          renderKind: "notes" as const,
+          card: {
+            ...card,
+            kind: "notes" as const,
+            noteId: card.renderRef,
+            workAreaAtSave: card.bounds,
+            restore: true,
+            createdAt: card.renderRef.startsWith("master:") ? 0 : 1,
+          },
+        })),
+      ).active,
+    );
+    return cards.filter((card) => active.has(card.id));
+  }
+  private publishLayerQuota(): void {
+    const signature = JSON.stringify(this.quotaCards().map((card) => [card.id, card.displayId]));
+    if (signature === this.quotaSignature) return;
+    this.quotaSignature = signature;
+    this.options.changed();
+  }
+  private async handleLayer(
+    cardId: string,
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const surface = [...this.surfaces.values()].find(
+      (entry) =>
+        !entry.layer && entry.snapshot.items.some((item) => this.cardId(entry, item) === cardId),
+    );
+    const item = surface?.snapshot.items.find((entry) => this.cardId(surface, entry) === cardId);
+    if (
+      !surface ||
+      !item ||
+      this.options.canInteract?.() === false ||
+      !this.desktopLayer?.isCardVisible(cardId) ||
+      ![
+        "capsule_activate",
+        "capsule_open",
+        "capsule_hover",
+        "capsule_hide",
+        "capsule_drag_start",
+        "capsule_drag_end",
+        "capsule_scroll",
+        "capsule_menu",
+      ].includes(command) ||
+      (args.id !== undefined && args.id !== item.id)
+    )
+      throw new AppError("permissionDenied", "不属于此桌面便签的操作");
+    if (command === "capsule_drag_end" && this.drag?.ownerCard !== cardId) return;
+    return this.handleSurface(surface, surface.win, command, args, cardId);
   }
   private queue(key: string) {
     let value = this.queues.get(key);
@@ -128,26 +404,27 @@ export class Capsules {
   }
   async fold(entry: CapsuleEntry) {
     if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
+    const display = screen.getDisplayMatching(entry.bounds),
+      point = {
+        x: entry.bounds.x + entry.bounds.width / 2,
+        y: entry.bounds.y + entry.bounds.height / 2,
+      };
+    const placement: NonNullable<CapsuleEntry["capsule"]> = entry.capsule ?? {
+      kind: "docked",
+      displayId: String(display.id),
+      edge: nearestEdge({ id: String(display.id), workArea: display.workArea }, point),
+      order: 0,
+      x: entry.bounds.x,
+      y: entry.bounds.y,
+    };
+    this.assertCanShow({ ...entry, capsule: placement, folded: true, visible: true });
     const before = {
       folded: entry.folded,
       visible: entry.visible,
       capsule: entry.capsule ? { ...entry.capsule } : undefined,
     };
     try {
-      const display = screen.getDisplayMatching(entry.bounds),
-        point = {
-          x: entry.bounds.x + entry.bounds.width / 2,
-          y: entry.bounds.y + entry.bounds.height / 2,
-        };
-      if (!entry.capsule)
-        entry.capsule = {
-          kind: "docked",
-          displayId: String(display.id),
-          edge: nearestEdge({ id: String(display.id), workArea: display.workArea }, point),
-          order: 0,
-          x: entry.bounds.x,
-          y: entry.bounds.y,
-        };
+      entry.capsule = placement;
       entry.folded = true;
       entry.visible = true;
       if (entry.capsule.kind === "docked") {
@@ -164,8 +441,10 @@ export class Capsules {
           ? `queue:${queueKey(entry.capsule.displayId, entry.capsule.edge)}`
           : `floating:${entry.noteId}`;
       const surface = this.surfaces.get(key);
-      for (let i = 0; surface && !surface.ready && i < 60; i++)
+      for (let i = 0; i < 60; i++) {
+        if (!surface || surface.ready) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       if (!this.enabled || !surface?.ready || surface.win.isDestroyed())
         throw new AppError("capsuleUnavailable", "胶囊窗口未就绪，已保留便签窗口");
       await surface.win.webContents.executeJavaScript(
@@ -214,6 +493,7 @@ export class Capsules {
           e.capsule.displayId = String(d.id);
         }
       }
+    let budget = this.desktopLayer ? this.layerPillBudget(entries, displays) : undefined;
     for (const display of displays)
       for (const edge of ["left", "right", "top"] as const) {
         const key = queueKey(String(display.id), edge),
@@ -225,6 +505,7 @@ export class Capsules {
             edge,
             queue,
             group.map((e) => pillWidth(this.title(e.noteId!))),
+            budget,
           );
         queue.scroll = geometry.scroll;
         const items: CapsuleItem[] = [
@@ -239,6 +520,7 @@ export class Capsules {
         ];
         if (!queue.collapsed)
           group.forEach((e, i) => {
+            if (budget !== undefined && items.length - 1 >= budget) return;
             const rect = geometry.slot(i);
             const visible = edge === "top" ? intersectRect(rect, geometry.viewport) : undefined;
             if (
@@ -263,6 +545,7 @@ export class Capsules {
                   : {}),
               });
           });
+        if (budget !== undefined) budget -= items.length - 1;
         const surfaceKey = `queue:${key}`;
         wanted.add(surfaceKey);
         this.surface(surfaceKey, geometry.bounds, { kind: "queue", key, edge, items });
@@ -295,10 +578,12 @@ export class Capsules {
       }
     for (const [key, s] of this.surfaces)
       if (!["preview", "drag"].includes(key) && !wanted.has(key)) {
+        if (!s.layer && this.drag?.ownerCard?.startsWith("notes-view:" + key + "/"))
+          this.cancelDrag();
         // The pointer-capture owner stays alive until drop/cancel, even if its queue empties.
-        if (this.drag?.owner === s.win.id) s.win.hide();
+        if (s.layer && this.drag?.owner === s.win.id) s.layer.hide();
         else {
-          s.win.destroy();
+          void s.layer?.destroy();
           this.surfaces.delete(key);
         }
       }
@@ -308,6 +593,8 @@ export class Capsules {
     )
       this.hidePreview();
     this.applyZOrder();
+    this.publishLayerQuota();
+    this.desktopLayer?.refresh();
   }
   private title(id: string) {
     return this.titles.get(id) ?? "无标题便签";
@@ -315,73 +602,98 @@ export class Capsules {
   private surface(key: string, bounds: Rect, snapshot: CapsuleSnapshot): Surface {
     if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
     let surface = this.surfaces.get(key);
+    if (this.desktopLayer && (snapshot.kind === "queue" || snapshot.kind === "floating")) {
+      if (!surface) {
+        const getLayer = () => this.desktopLayer;
+        surface = {
+          key,
+          bounds,
+          snapshot,
+          get win() {
+            const first = this.snapshot.items[0];
+            const win = first && getLayer()?.windowForCard("notes-view:" + key + "/" + first.id);
+            if (!win) throw new AppError("capsuleUnavailable", "桌面便签窗口尚未就绪");
+            return win;
+          },
+          get ready() {
+            return (
+              !!this.snapshot.items[0] &&
+              !!getLayer()?.isCardReady("notes-view:" + key + "/" + this.snapshot.items[0].id)
+            );
+          },
+        };
+        this.surfaces.set(key, surface);
+      }
+      surface.bounds = bounds;
+      surface.snapshot = snapshot;
+      return surface;
+    }
     if (!surface) {
-      const win = new BrowserWindow({
-        ...bounds,
+      const layer = new LayerWindow({
+        id: key,
+        mode:
+          snapshot.kind === "preview"
+            ? "notes-preview"
+            : snapshot.kind === "drag"
+              ? "notes-drag"
+              : "shared",
+        bounds,
+        group: "top",
+        inputMode: snapshot.kind === "drag" ? "passive" : "interactive",
+        fullscreenBehavior: "lower",
+        order: snapshot.kind === "drag" ? 2 : snapshot.kind === "preview" ? 1 : 0,
         title: this.label("spark233 胶囊", "spark233 capsules"),
-        frame: false,
-        transparent: true,
-        show: false,
-        resizable: false,
-        skipTaskbar: true,
-        alwaysOnTop: true,
-        focusable: false,
-        hasShadow: false,
-        webPreferences: {
-          preload: path.join(this.options.here, "preload.cjs"),
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          webSecurity: true,
-          backgroundThrottling: true,
-          additionalArguments: [`--spark233-label=capsule:${key}`],
+        entryURL: `${this.options.url}?view=capsule`,
+        preloadPath: path.join(this.options.here, "preload.cjs"),
+        label: `capsule:${key}`,
+        screen,
+        createBrowserWindow: (options) => new BrowserWindow(options),
+        timers: { setTimeout, clearTimeout },
+        diagnostic: (code, error) => {
+          if (code === "renderer-gone") this.options.onRendererCrash?.(error);
+          else console.error(error);
+        },
+        onClosed: () => {
+          if (this.surfaces.get(key)?.layer === layer) this.surfaces.delete(key);
         },
       });
-      surface = { win, snapshot, ready: false };
+      surface = { win: layer.win, layer, key, bounds, snapshot, ready: false };
       this.surfaces.set(key, surface);
-      win.webContents.on("render-process-gone", (_event, details) => {
-        this.options.onRendererCrash?.(
-          new Error(`Notes capsule renderer exited: ${details.reason} (${details.exitCode})`),
-        );
-      });
-      win.setMenu(null);
-      win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-      win.webContents.on("will-navigate", (e) => e.preventDefault());
-      win.webContents.on("will-attach-webview", (e) => e.preventDefault());
-      win.on("closed", () => {
-        if (this.surfaces.get(key)?.win === win) this.surfaces.delete(key);
-      });
-      void win.loadURL(`${this.options.url}?view=capsule`).catch((error) => {
-        if (!win.isDestroyed()) console.error(error);
-      });
+      layer.setFullscreen(this.suppressed);
+      layer.setSuppressed("user", this.hidden);
+      for (const reason of this.systemSuppressed) layer.setSuppressed(reason, true);
     }
+    const displayId = String(surface.layer!.display(bounds).id);
+    // Legacy snapshot rects are client-local; LayerCard geometry is screen DIP.
+    // Preview/drag retain the entire original hit rectangle, not only their items.
+    const items =
+      snapshot.kind === "queue"
+        ? snapshot.items
+        : [
+            {
+              id: key,
+              rect: { x: 0, y: 0, width: bounds.width, height: bounds.height },
+            },
+          ];
+    const cards: LayerCard[] = items.map((item, order) => ({
+      id: item.id,
+      displayId,
+      group: "top",
+      inputMode: snapshot.kind === "drag" ? "passive" : "interactive",
+      bounds: { ...item.rect, x: bounds.x + item.rect.x, y: bounds.y + item.rect.y },
+      clip: "clip" in item ? item.clip : undefined,
+      order,
+      visible: true,
+    }));
+    const previous = surface.snapshot;
     surface.snapshot = snapshot;
-    surface.win.setBounds(bounds);
-    if (process.platform === "win32" || process.platform === "linux") {
-      const shape =
-        snapshot.kind === "queue"
-          ? snapshot.items.map((i) => {
-              const r = i.clip
-                ? { ...i.clip, x: i.rect.x + i.clip.x, y: i.rect.y + i.clip.y }
-                : i.rect;
-              return {
-                x: Math.floor(r.x),
-                y: Math.floor(r.y),
-                width: Math.ceil(r.x + r.width) - Math.floor(r.x),
-                height: Math.ceil(r.y + r.height) - Math.floor(r.y),
-              };
-            })
-          : [{ x: 0, y: 0, width: bounds.width, height: bounds.height }];
-      surface.win.setShape(shape);
-    }
-    if (surface.ready) {
-      this.send(surface);
-      if (!this.hidden) surface.win.showInactive();
-    }
+    surface.bounds = bounds;
+    if (!surface.layer!.apply(cards, bounds, () => this.send(surface!)))
+      surface.snapshot = previous;
     return surface;
   }
   private send(surface: Surface) {
-    if (!this.enabled || surface.win.isDestroyed()) return;
+    if (!this.enabled || !surface.layer || surface.win.isDestroyed()) return;
     surface.win.webContents.send("spark233:event:capsule-state", surface.snapshot);
   }
   private find(id: string) {
@@ -389,7 +701,7 @@ export class Capsules {
   }
   private open(id: string): Promise<void> {
     const operation = (async () => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.options.canInteract?.() === false) return;
       const e = this.find(id);
       if (!e) return;
       this.hidePreview();
@@ -402,7 +714,7 @@ export class Capsules {
     return operation;
   }
   private hide(id: string) {
-    if (!this.enabled) return;
+    if (!this.enabled || this.options.canInteract?.() === false) return;
     this.hidePreview();
     void this.options.hide(id).catch(console.error);
   }
@@ -413,7 +725,7 @@ export class Capsules {
     this.previewAnchor = undefined;
     this.previewEdge = undefined;
     this.leaveSince = 0;
-    this.surfaces.get("preview")?.win.hide();
+    this.surfaces.get("preview")?.layer?.hide();
   }
   private async showPreview(id: string, anchor: Rect, edge: Edge) {
     if (!this.enabled) return;
@@ -422,6 +734,7 @@ export class Capsules {
     if (
       !this.enabled ||
       this.hidden ||
+      this.systemSuppressed.size ||
       this.drag ||
       generation !== this.previewGeneration ||
       !contains(anchor, screen.getCursorScreenPoint(), 2) ||
@@ -443,7 +756,18 @@ export class Capsules {
     this.leaveSince = 0;
   }
   private tick() {
-    if (!this.enabled || this.hidden || this.drag) return;
+    if (this.drag) {
+      const owner = BrowserWindow.fromId(this.drag.owner);
+      if (
+        !owner ||
+        owner.isDestroyed() ||
+        this.options.canInteract?.() === false ||
+        (this.drag.ownerCard && !this.desktopLayer?.isCardVisible(this.drag.ownerCard))
+      )
+        this.cancelDrag();
+      return;
+    }
+    if (!this.enabled || this.hidden || this.systemSuppressed.size || this.drag) return;
     const point = screen.getCursorScreenPoint(),
       now = Date.now();
     if (this.hover && now >= this.hover.due) {
@@ -464,7 +788,7 @@ export class Capsules {
       else if (now - this.leaveSince > 180) this.hidePreview();
     }
   }
-  private beginDrag(surface: Surface, id: string) {
+  private beginDrag(surface: Surface, id: string, ownerCard?: string) {
     if (this.drag) throw new AppError("busy", "另一个拖动尚未结束");
     const item = surface.snapshot.items.find((i) => i.id === id);
     if (!item) throw new AppError("invalidPayload", "胶囊不存在");
@@ -475,16 +799,16 @@ export class Capsules {
     const timer = setInterval(() => this.moveDrag(), 16);
     this.drag = {
       owner: surface.win.id,
+      ownerCard,
       id,
       queue,
       entries,
       start: point,
       point,
-      origin: surface.win.getBounds(),
+      origin: surface.bounds,
       offset: queue
         ? surface.snapshot.edge === "top"
-          ? surface.win.getBounds().x -
-            screen.getDisplayMatching(surface.win.getBounds()).workArea.x
+          ? surface.bounds.x - screen.getDisplayMatching(surface.bounds).workArea.x
           : this.queue(queue).offset
         : 0,
       timer,
@@ -513,16 +837,18 @@ export class Capsules {
         ],
       },
     );
-    this.surfaces.get("drag")?.win.setIgnoreMouseEvents(true);
   }
   private endDrag(cancel = false) {
     const drag = this.drag;
     if (!drag) return;
     clearInterval(drag.timer);
     this.drag = undefined;
-    this.surfaces.get("drag")?.win.destroy();
+    void this.surfaces.get("drag")?.layer?.destroy();
+    if (this.options.canInteract?.() === false) cancel = true;
     if (cancel) {
-      this.refresh();
+      // Cancellation changes no business/layout data. Repaint the cached
+      // controller state without querying a quiescing backend.
+      this.render();
       return;
     }
     const point = screen.getCursorScreenPoint(),
@@ -547,14 +873,33 @@ export class Capsules {
         edgeDistance(a, source.edge, point) <= 72
       ) {
         const current = this.queue(drag.queue);
-        current.offset =
-          drag.offset + (horizontal ? point.x - drag.start.x : point.y - drag.start.y);
+        const offset = drag.offset + (horizontal ? point.x - drag.start.x : point.y - drag.start.y);
+        this.assertCanShow([], { ...current, offset, ...(horizontal ? { centered: false } : {}) });
+        current.offset = offset;
         if (horizontal) current.centered = false;
       } else {
+        const offset = edge === "top" ? point.x - a.x - 20 : point.y - a.y - 16;
+        const collapsed = this.queue(drag.queue).collapsed;
+        const peers = members(this.options.entries.values(), key).filter(
+          (entry) => !drag.entries.includes(entry),
+        );
+        this.assertCanShow(
+          drag.entries.map((entry, index) => ({
+            ...entry,
+            capsule: {
+              ...entry.capsule!,
+              kind: "docked",
+              displayId: String(display.id),
+              edge,
+              order: peers.length + index,
+            },
+          })),
+          { key, offset, collapsed, ...(edge === "top" ? { centered: false } : {}) },
+        );
         const target = this.queue(key);
-        target.offset = edge === "top" ? point.x - a.x - 20 : point.y - a.y - 16;
+        target.offset = offset;
         if (edge === "top") target.centered = false;
-        target.collapsed = this.queue(drag.queue).collapsed;
+        target.collapsed = collapsed;
         insertMembers(
           [...this.options.entries.values()],
           drag.entries,
@@ -571,7 +916,13 @@ export class Capsules {
       }
       if (near || !entry.folded) {
         const group = members(this.options.entries.values(), key).filter((e) => e !== entry),
-          q = this.queue(key),
+          q = this.queues.get(key) ?? {
+            key,
+            offset: edge === "top" ? 0 : 100,
+            collapsed: false,
+            scroll: 0,
+            ...(edge === "top" ? { centered: true } : {}),
+          },
           g = queueGeometry(a, edge, q, [
             ...group.map((e) => pillWidth(this.title(e.noteId!))),
             pillWidth(this.title(entry.noteId!)),
@@ -581,15 +932,32 @@ export class Capsules {
           { x: point.x - g.bounds.x, y: point.y - g.bounds.y },
           edge,
         );
+        const proposed = [...group];
+        proposed.splice(index, 0, entry);
+        this.assertCanShow(
+          proposed.map((item, order) => ({
+            ...item,
+            capsule: {
+              ...item.capsule!,
+              kind: "docked",
+              displayId: String(display.id),
+              edge,
+              order,
+            },
+          })),
+        );
         insertMembers([...this.options.entries.values()], [entry], String(display.id), edge, index);
-      } else
-        entry.capsule = {
+      } else {
+        const placement = {
           ...entry.capsule!,
-          kind: "floating",
+          kind: "floating" as const,
           displayId: String(display.id),
           x: point.x - 20,
           y: point.y - 16,
         };
+        this.assertCanShow({ ...entry, capsule: placement });
+        entry.capsule = placement;
+      }
     }
     this.save();
     this.refresh();
@@ -610,15 +978,21 @@ export class Capsules {
       // layout and queue records intact while removing every live surface.
       this.cancelDrag();
       this.hidePreview();
-      for (const surface of this.surfaces.values()) surface.win.destroy();
+      for (const surface of this.surfaces.values()) void surface.layer?.destroy();
       this.surfaces.clear();
+      this.publishLayerQuota();
+      this.desktopLayer?.refresh();
     } else this.refresh();
     this.options.changed();
   }
   setHidden(hidden: boolean) {
+    if (!hidden && this.hidden && this.desktopLayer) this.assertLayerQuota(this.desktopLayer);
     this.hidden = hidden;
+    if (hidden) this.cancelDrag();
     this.hidePreview();
-    for (const s of this.surfaces.values()) s.win.hide();
+    for (const s of this.surfaces.values()) s.layer?.setSuppressed("user", hidden);
+    this.publishLayerQuota();
+    this.desktopLayer?.refresh();
     if (!hidden) this.refresh();
     this.options.changed();
   }
@@ -629,33 +1003,43 @@ export class Capsules {
   }
   private applyZOrder() {
     if (!this.enabled) return;
-    for (const s of this.surfaces.values()) {
-      const bounds = s.win.getBounds(),
-        blocked = this.suppressed.some((r) =>
-          contains(r, { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }),
-        );
-      // Avoid the default Windows restack behind a lowered primary taskbar.
-      s.win.setAlwaysOnTop(!blocked, process.platform === "win32" ? "pop-up-menu" : "floating");
-    }
+    for (const s of this.surfaces.values()) s.layer?.setFullscreen(this.suppressed);
+    LayerWindow.restack([...this.surfaces.values()].flatMap((s) => (s.layer ? [s.layer] : [])));
   }
+
   async handle(
     win: BrowserWindow,
     command: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
     if (!this.enabled) throw new AppError("pluginDisabled", "便签插件已停用");
-    const surface = [...this.surfaces.values()].find((s) => s.win === win);
+    const surface = [...this.surfaces.values()].find((s) => s.layer?.win === win);
     if (!surface) throw new AppError("permissionDenied", "未知胶囊窗口");
+    return this.handleSurface(surface, win, command, args);
+  }
+  private async handleSurface(
+    surface: Surface,
+    win: BrowserWindow,
+    command: string,
+    args: Record<string, unknown>,
+    ownerCard?: string,
+  ): Promise<unknown> {
+    if (
+      !["desktop_ready", "config_get", "capsule_state"].includes(command) &&
+      this.options.canInteract?.() === false
+    )
+      throw new AppError("pluginStopping", "便签正在保存或停止，请稍后重试");
     switch (command) {
       case "desktop_ready":
         surface.ready = true;
+        surface.layer!.markReady();
         this.send(surface);
         if (
           !this.hidden &&
           (surface.snapshot.kind !== "preview" || this.previewId) &&
           (surface.snapshot.kind !== "drag" || this.drag)
         )
-          win.showInactive();
+          surface.layer!.show();
         return;
       case "shell_open":
         await shell.openExternal(externalUrl(args.url));
@@ -671,6 +1055,11 @@ export class Capsules {
         this.hidePreview();
         if (item.master && surface.snapshot.key) {
           const queue = this.queue(surface.snapshot.key);
+          if (queue.collapsed && this.desktopLayer)
+            this.assertLayerQuota(this.desktopLayer, undefined, {
+              key: queue.key,
+              collapsed: false,
+            });
           queue.collapsed = !queue.collapsed;
           this.save();
           this.refresh();
@@ -691,7 +1080,7 @@ export class Capsules {
         if (this.drag) return;
         const item = surface.snapshot.items.find((i) => i.id === args.id && !i.master);
         if (!item) return;
-        const b = win.getBounds(),
+        const b = surface.layer ? win.getBounds() : surface.bounds,
           anchor = item.clip
             ? {
                 ...item.clip,
@@ -720,7 +1109,7 @@ export class Capsules {
         return;
       }
       case "capsule_drag_start":
-        this.beginDrag(surface, String(args.id));
+        this.beginDrag(surface, String(args.id), ownerCard);
         return;
       case "capsule_drag_end":
         if (this.drag?.owner === win.id) this.endDrag(!!args.cancel);
@@ -728,7 +1117,10 @@ export class Capsules {
       case "capsule_scroll":
         if (surface.snapshot.key) {
           const q = this.queue(surface.snapshot.key);
-          q.scroll += Math.max(-120, Math.min(120, Number(args.delta) || 0));
+          const scroll = q.scroll + Math.max(-120, Math.min(120, Number(args.delta) || 0));
+          // The shared viewport and widget allocator enforce live quotas;
+          // scrolling must still reach members hidden by that bounded viewport.
+          q.scroll = scroll;
           this.hidePreview();
           this.refresh();
           this.save();
@@ -757,7 +1149,12 @@ export class Capsules {
                 click: () => this.dock(item.id, "top"),
               },
             ]);
-        if (this.enabled && !win.isDestroyed() && this.owns(win)) menu.popup({ window: win });
+        if (
+          this.enabled &&
+          !win.isDestroyed() &&
+          (this.owns(win) || (ownerCard && this.desktopLayer?.isCardVisible(ownerCard)))
+        )
+          menu.popup({ window: win });
         return;
       }
       default:
@@ -765,13 +1162,28 @@ export class Capsules {
     }
   }
   private dock(id: string, edge: Edge) {
-    if (!this.enabled) return;
+    if (!this.enabled || this.options.canInteract?.() === false) return;
     const e = this.find(id);
     if (!e) return;
     const d = e.capsule
       ? (screen.getAllDisplays().find((display) => String(display.id) === e.capsule!.displayId) ??
         screen.getDisplayMatching(e.bounds))
       : screen.getDisplayMatching(e.bounds);
+    try {
+      this.assertCanShow({
+        ...e,
+        capsule: {
+          ...e.capsule!,
+          kind: "docked",
+          displayId: String(d.id),
+          edge,
+          order: Number.MAX_SAFE_INTEGER,
+        },
+      });
+    } catch (error) {
+      console.error("capsule-quota", error);
+      return;
+    }
     insertMembers(
       [...this.options.entries.values()],
       [e],
@@ -791,10 +1203,9 @@ export class Capsules {
       clearInterval(this.drag.timer);
       this.drag = undefined;
     }
-    for (const s of this.surfaces.values()) s.win.destroy();
+    this.releaseEnvironment();
+    this.releaseDesktopLayer?.();
+    for (const s of this.surfaces.values()) void s.layer?.destroy();
     this.surfaces.clear();
-    screen.removeListener("display-added", this.displayChanged);
-    screen.removeListener("display-removed", this.displayChanged);
-    screen.removeListener("display-metrics-changed", this.displayChanged);
   }
 }

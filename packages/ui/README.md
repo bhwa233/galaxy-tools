@@ -20,6 +20,12 @@ class-variance-authority 0.7, cn 0.5 and lucide-react 1.64. Peers are optional f
 framework independent theme-only consumers; component consumers must provide
 them. Component APIs and composition remain those of the existing shadcn source.
 
+`WindowTitleBar` shares the desktop workspace title, native drag region and
+minimize/maximize/close button appearance. It is a pure component: the caller
+provides labels, maximized state and callbacks through its own window bridge.
+Custom Web plugin windows use the host API 1.5 sandboxed window controls; the
+component never imports the desktop preload or controls another window.
+
 `packages/ui/src/components/` is the single component source shared by the desktop app and plugins. `node packages/ui/build.mjs`
 bundles its exports and generates standalone JS, declarations and utility CSS
 under `packages/ui/dist/`; `--output <directory>` assembles an independent package

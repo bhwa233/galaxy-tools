@@ -5,6 +5,16 @@ export const trayMenuSchema = z.strictObject({
   hidden: z.array(z.string().regex(/^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/)).max(512),
   order: z.array(z.string().regex(/^[a-z][a-z0-9.-]*(?::[a-z][a-z0-9.-]*)?$/)).max(512),
 });
+export const desktopLayerPreferencesSchema = z.strictObject({
+  enabled: z.boolean(),
+  webEnabled: z.boolean(),
+  notesEnabled: z.boolean(),
+});
+export const DEFAULT_DESKTOP_LAYER_PREFERENCES = {
+  enabled: true,
+  webEnabled: true,
+  notesEnabled: true,
+} as const;
 // Explicit mutable fields only: unknown keys, including dataDir, must never
 // reach the host preferences through an ordinary settings write.
 export const configPatchSchema = z
@@ -16,6 +26,10 @@ export const configPatchSchema = z
       .refine((value) => Object.keys(value).length <= 128)
       .optional(),
     trayMenu: trayMenuSchema.optional(),
+    desktopLayer: desktopLayerPreferencesSchema
+      .partial()
+      .refine((flags) => Object.values(flags).every((value) => value !== undefined))
+      .optional(),
     closeToTray: z.boolean().optional(),
     autostart: z.boolean().optional(),
     defaultViewMode: z.enum(["edit", "split"]).optional(),
@@ -43,6 +57,7 @@ export const configPatchSchema = z
     surfaceWidth: z.number().min(160).max(10000).optional(),
     surfaceHeight: z.number().min(60).max(10000).optional(),
     toggleVisibilityShortcut: z.string().max(100).optional(),
+    desktopOverlayShortcut: z.string().max(100).optional(),
     openAtCursor: z.boolean().optional(),
     backgroundImagePath: z.string().max(32768).optional(),
     backgroundFit: z.enum(["cover", "contain", "repeat"]).optional(),

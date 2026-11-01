@@ -201,6 +201,7 @@ export function NotePad({
   const tileDragIntentRef = useRef<{ x: number; y: number } | null>(null);
   const windowLabelRef = useRef("");
   const statusRef = useRef<NotePadStatus>("empty");
+  const savedNoteRef = useRef<Note | null>(null);
   const contentValueRef = useRef(content);
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
@@ -229,6 +230,7 @@ export function NotePad({
   }, []);
 
   const applyNote = useCallback((note: Note) => {
+    savedNoteRef.current = note;
     noteSyncEpoch.current += 1;
     titleValueRef.current = note.title;
     contentValueRef.current = note.content;
@@ -321,6 +323,7 @@ export function NotePad({
             contentValueRef.current !== contentBefore
           )
             return;
+          savedNoteRef.current = note;
           if (note.title === titleBefore && note.content === contentBefore) return;
           titleValueRef.current = note.title;
           contentValueRef.current = note.content;
@@ -431,6 +434,22 @@ export function NotePad({
     const titleSnapshot = titleValueRef.current;
     const contentSnapshot = contentValueRef.current;
     const existingCategory = notes.find((n) => n.id === currentId)?.category ?? "";
+    const saved = savedNoteRef.current;
+    // Auto-save, Ctrl+S and close preparation use the same queue. Once an
+    // earlier write has committed this exact snapshot, later queued requests
+    // need no second write or notes-changed fan-out. A failed save still retries.
+    if (
+      saved &&
+      currentId === saved.id &&
+      statusRef.current !== "saveFailed" &&
+      saved.title === titleSnapshot &&
+      saved.content === contentSnapshot &&
+      saved.category === existingCategory
+    ) {
+      statusRef.current = "saved";
+      setStatus("saved");
+      return { ...saved, editorMode: editorModeRef.current };
+    }
     const request = {
       title: titleSnapshot,
       content: contentSnapshot,
@@ -449,15 +468,17 @@ export function NotePad({
       return [...next].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     });
     await invoke("surface_state", { noteId: note.id, mode: surfaceModeRef.current });
+    savedNoteRef.current = note;
     const dirty =
       contentValueRef.current !== contentSnapshot || titleValueRef.current !== titleSnapshot;
     statusRef.current = dirty ? "dirty" : "saved";
     setStatus(statusRef.current);
     return note;
   }, [notes]);
-  const { save: saveNote, pending: pendingSaves } = useNoteDocument(persistNote);
+  const { save: saveNote, pending: pendingSaves, drain: drainSaves } = useNoteDocument(persistNote);
   useNoteClosePreparation({
     save: saveNote,
+    drain: drainSaves,
     isDirty: () => pendingSaves.current > 0 || ["dirty", "saveFailed"].includes(statusRef.current),
     isSaved: () => statusRef.current === "saved" && pendingSaves.current === 0,
     label: () => windowLabelRef.current || "notepad",

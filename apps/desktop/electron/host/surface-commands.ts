@@ -9,6 +9,8 @@ export function createSurfaceCommands(
     RuntimeContext,
     | "windows"
     | "capsules"
+    | "desktopLayer"
+    | "screenshotLayer"
     | "hideHostWindow"
     | "layouts"
     | "createWindow"
@@ -26,14 +28,19 @@ export function createSurfaceCommands(
 ) {
   function visibleSurfaceWindows(): BrowserWindow[] {
     return [
-      ...ctx.windows.values(),
-      ...[...(ctx.capsules?.surfaces.values() ?? [])].map((surface) => surface.win),
-    ].filter((win) => win.isVisible());
+      ...new Set([
+        ...ctx.windows.values(),
+        ...(ctx.capsules?.presentationWindows() ?? []),
+        ...(ctx.desktopLayer?.windows() ?? []),
+      ]),
+    ].filter((win) => !win.isDestroyed() && win.isVisible());
   }
 
   function hideAllSurfaces(): void {
     for (const win of visibleSurfaceWindows()) ctx.hideHostWindow(win);
     ctx.capsules.setHidden(true);
+    ctx.desktopLayer?.setVisibility("user", true);
+    ctx.screenshotLayer?.refresh();
   }
 
   function showAllSurfaces(): void {
@@ -41,6 +48,8 @@ export function createSurfaceCommands(
       (entry) => entry.visible && entry.view !== "main",
     );
     ctx.capsules.setHidden(false);
+    ctx.desktopLayer?.setVisibility("user", false);
+    ctx.screenshotLayer?.refresh();
     if (notes.length)
       for (const entry of notes)
         if (!entry.folded) ctx.createWindow(entry).show();

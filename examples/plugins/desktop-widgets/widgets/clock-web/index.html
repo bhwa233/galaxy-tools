@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>时钟</title>
+    <link rel="stylesheet" href="./clock.css" />
+  </head>
+  <body>
+    <main>
+      <div class="heading">
+        <span id="label">现在</span
+        ><button id="details" type="button" aria-expanded="false">显示日期</button>
+      </div>
+      <time id="time" aria-live="off">—</time>
+      <p id="date" hidden></p>
+      <p id="status" role="status">正在连接…</p>
+    </main>
+    <script type="module" src="./clock.js"></script>
+  </body>
+</html>

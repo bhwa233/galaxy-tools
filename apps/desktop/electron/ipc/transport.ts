@@ -73,13 +73,33 @@ export function createTransport(
         )
           throw new AppError("invalidPayload", "IPC 参数不合法");
         const entry = commands.resolve(command, args);
+        const smokeTrace =
+          process.env.SPARK233_SMOKE === "1" &&
+          ["notes_create", "notes_update", "surface_state", "desktop_prepare_report"].includes(
+            command,
+          );
+        if (smokeTrace)
+          console.info(
+            "smoke-ipc",
+            JSON.stringify({ at: Date.now(), phase: "received", command, windowId: win.id }),
+          );
         const run = async () => {
           const modal = entry.modal;
           if (modal)
             ctx.nativeDialogDepth.set(win.id, (ctx.nativeDialogDepth.get(win.id) ?? 0) + 1);
           try {
+            if (smokeTrace)
+              console.info(
+                "smoke-ipc",
+                JSON.stringify({ at: Date.now(), phase: "started", command, windowId: win.id }),
+              );
             return await entry.run(win);
           } finally {
+            if (smokeTrace)
+              console.info(
+                "smoke-ipc",
+                JSON.stringify({ at: Date.now(), phase: "settled", command, windowId: win.id }),
+              );
             if (modal) {
               const count = (ctx.nativeDialogDepth.get(win.id) ?? 1) - 1;
               if (count) ctx.nativeDialogDepth.set(win.id, count);

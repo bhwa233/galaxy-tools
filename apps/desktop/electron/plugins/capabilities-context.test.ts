@@ -128,3 +128,71 @@ test("raw native capability payloads cannot manufacture a source application", a
     await scope.stop("quit");
   }
 });
+
+test("backend capability rejects unauthorized commands and late owner results", async () => {
+  const owner = {
+    pluginId: "fixture.backend-boundary",
+    version: "1.0.0",
+    instanceId: randomUUID(),
+  };
+  const scope = new PluginResourceScope(owner);
+  const manifest = pluginManifestSchema.parse({
+    schemaVersion: 1,
+    id: owner.pluginId,
+    displayName: "Backend boundary",
+    api: "^1.4.0",
+    host: "^1.2.0",
+    platforms: [process.platform],
+    architectures: [process.arch],
+    entry: "index.html",
+    backend: { entry: "backend.mjs" },
+    capabilities: ["node.backend"],
+    commands: [
+      { id: "private", title: "Private", internal: true },
+      { id: "bound", title: "Bound", sourceApplications: ["notepad.exe"] },
+      { id: "read", title: "Read" },
+    ],
+  });
+  let current = true;
+  let complete: ((value: { ok: boolean }) => void) | undefined;
+  const invokeBackend = vi.fn(
+    () =>
+      new Promise<{ ok: boolean }>((resolve) => {
+        complete = resolve;
+      }),
+  );
+  const broker = createCapabilityBroker({
+    scope,
+    manifest,
+    manager: () =>
+      ({
+        assertCommandAvailable: () => {},
+        isOwnerCurrent: () => current,
+      }) as unknown as PluginManager,
+    invokeBackend,
+  });
+  const call = (commandId: string, payload = {}) =>
+    broker({
+      owner,
+      capability: "node.backend",
+      operation: "invoke",
+      payload: { commandId, ...payload },
+      signal: new AbortController().signal,
+    });
+  try {
+    for (const id of ["private", "bound", "other-plugin:read"])
+      await expect(call(id)).rejects.toThrow();
+    await expect(call("read", { pluginId: "other-plugin" })).rejects.toThrow();
+    expect(invokeBackend).not.toHaveBeenCalled();
+    const stale = call("read");
+    current = false;
+    complete!({ ok: true });
+    await expect(stale).rejects.toThrow("实例已失效");
+    current = true;
+    const oversized = call("read");
+    complete!({ ok: true, privatePayload: "x".repeat(70 * 1024) } as { ok: boolean });
+    await expect(oversized).rejects.toThrow();
+  } finally {
+    await scope.stop("quit");
+  }
+});

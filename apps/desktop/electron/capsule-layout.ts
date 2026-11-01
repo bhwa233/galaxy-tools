@@ -51,7 +51,13 @@ export function members(entries: Iterable<CapsuleEntry>, key: string): CapsuleEn
     .sort((a, b) => a.capsule!.order - b.capsule!.order || a.label.localeCompare(b.label));
 }
 /** All geometry uses Electron screen DIPs, including negative monitor origins. */
-export function queueGeometry(area: Rect, edge: Edge, queue: CapsuleQueue, widths: number[]) {
+export function queueGeometry(
+  area: Rect,
+  edge: Edge,
+  queue: CapsuleQueue,
+  widths: number[],
+  maxVisibleItems = widths.length,
+) {
   const count = widths.length;
   // Reserve the icons, gaps, padding and edge borders, then grow the count column as needed.
   const masterWidth = Math.max(MASTER_MIN_WIDTH, 62 + String(count).length * 8);
@@ -65,8 +71,12 @@ export function queueGeometry(area: Rect, edge: Edge, queue: CapsuleQueue, width
     }
     const naturalWidth = count ? totalWidth - PILL_GAP : masterWidth;
     totalWidth = queue.collapsed ? masterWidth : naturalWidth;
-    const width = Math.min(area.width, totalWidth);
-    const scroll = Math.max(0, Math.min(Math.max(0, naturalWidth - area.width), queue.scroll));
+    // A shared layer can retain every queue member while bounding its live
+    // viewport. Keep the complete natural extent so scrolling still reaches it.
+    const liveWidth =
+      !queue.collapsed && maxVisibleItems < count ? ends[maxVisibleItems] - PILL_GAP : totalWidth;
+    const width = Math.min(area.width, Math.max(masterWidth, liveWidth));
+    const scroll = Math.max(0, Math.min(Math.max(0, naturalWidth - width), queue.scroll));
     const offset = queue.centered ? (area.width - width) / 2 : queue.offset;
     const x = Math.round(Math.max(area.x, Math.min(area.x + area.width - width, area.x + offset)));
     return {
@@ -83,7 +93,10 @@ export function queueGeometry(area: Rect, edge: Edge, queue: CapsuleQueue, width
     };
   }
   const width = Math.max(PILL_MIN_WIDTH, masterWidth, ...widths);
-  const height = Math.min(area.height, SLOT_PITCH * (queue.collapsed ? 1 : count + 1));
+  const height = Math.min(
+    area.height,
+    SLOT_PITCH * (queue.collapsed ? 1 : Math.min(count, maxVisibleItems) + 1),
+  );
   const y = Math.round(
     Math.max(area.y, Math.min(area.y + area.height - height, area.y + queue.offset)),
   );

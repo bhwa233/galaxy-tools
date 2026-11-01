@@ -29,6 +29,9 @@ export type PluginWebOperation =
   | "storage.remove"
   | "command.register"
   | "window.close"
+  | "window.minimize"
+  | "window.toggleMaximize"
+  | "window.isMaximized"
   | "capability.invoke"
   | "lifecycle.result"
   | "query.result";
@@ -65,6 +68,11 @@ export interface PluginBrowserClient {
     payload?: JsonValue,
   ): Promise<JsonValue | undefined>;
   close(): Promise<void>;
+  window: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    isMaximized(): Promise<boolean>;
+  };
   dispose(): void;
 }
 
@@ -274,6 +282,15 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
       }),
     close: async () => {
       await request("window.close");
+    },
+    window: {
+      minimize: async () => {
+        await request("window.minimize");
+      },
+      toggleMaximize: async () => {
+        await request("window.toggleMaximize");
+      },
+      isMaximized: async () => (await request("window.isMaximized")) === true,
     },
     dispose: () => {
       active = false;

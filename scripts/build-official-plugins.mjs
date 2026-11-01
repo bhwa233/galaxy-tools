@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { unlinkSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
@@ -56,9 +57,17 @@ const output = path.resolve(
       : "dist-plugins"),
 );
 const expectedIds = new Set(
-  ["notes", "screenshot", "ocr", "translation", "clipboard", "applications", "search"].map(
-    (name) => `spark233.${name}`,
-  ),
+  [
+    "notes",
+    "screenshot",
+    "ocr",
+    "translation",
+    "clipboard",
+    "applications",
+    "search",
+    "traffic",
+    "quicklinks",
+  ].map((name) => `spark233.${name}`),
 );
 const rendererPlugins = new Set();
 for (const entry of await fs.readdir(root, { withFileTypes: true })) {
@@ -238,6 +247,30 @@ async function prepareResources(source, metadata) {
         missingNative = true;
     }
   }
+  if (id === "spark233.traffic" && !missingNative) {
+    const resources = JSON.parse(
+      await fs.readFile(path.join(source, "native/resources.json"), "utf8"),
+    );
+    for await (const filename of fs.glob(
+      [
+        "native/traffic/**/*.cs",
+        "native/traffic/**/*.csproj",
+        "native/traffic/**/packages.lock.json",
+        "native/traffic/*.props",
+        "native/traffic/**/*.manifest",
+        "native/traffic/NuGet.Config",
+        "scripts/native-traffic/build.ps1",
+      ],
+      { cwd: project },
+    )) {
+      if (filename.split(/[\\/]/).some((part) => ["bin", "obj"].includes(part))) continue;
+      const relative = filename.replaceAll("\\", "/");
+      const hash = createHash("sha256")
+        .update(await fs.readFile(path.join(project, filename)))
+        .digest("hex");
+      if (resources.inputs?.[relative] !== hash) missingNative = true;
+    }
+  }
   if (missingNative) {
     if (process.env.SPARK233_DEV_SKIP_MISSING_NATIVE === "1" && !(await hasNativeToolchain())) {
       console.warn(
@@ -277,6 +310,14 @@ async function prepareResources(source, metadata) {
       ]);
     } else if (id === "spark233.search")
       run(await powershell(), ["-NoProfile", "-File", "scripts/native-search/build.ps1"]);
+    else if (id === "spark233.traffic")
+      run(await powershell(), [
+        "-NoProfile",
+        "-File",
+        "scripts/native-traffic/build.ps1",
+        "-StageDirectory",
+        path.join(source, "native"),
+      ]);
     else throw new Error(`No native build recipe for ${id}`);
   }
   for (const { path: entry } of native)
@@ -472,7 +513,8 @@ async function copyBusinessRenderer(packageRoot, source, metadata) {
     return { ...font, file: matches[0].name, url: `spark233://shared/ui/v1/${font.name}` };
   });
   const target = path.join(packageRoot, "renderer"),
-    fontFiles = new Set(fonts.map((font) => font.file));
+    privateWebOrigin = ["spark233.traffic", "spark233.quicklinks"].includes(metadata.spark233.id),
+    fontFiles = new Set(privateWebOrigin ? [] : fonts.map((font) => font.file));
   await fs.cp(hostRenderer, target, {
     recursive: true,
     filter: (filename) => !fontFiles.has(path.basename(filename)),
@@ -483,7 +525,7 @@ async function copyBusinessRenderer(packageRoot, source, metadata) {
     if (!entry.isFile() || !/\.(?:html|css|m?js|json|svg)$/i.test(entry.name)) continue;
     const previous = await fs.readFile(filename, "utf8");
     let content = previous;
-    for (const font of fonts)
+    for (const font of privateWebOrigin ? [] : fonts)
       content = content.replace(
         new RegExp(`(?:\\.\\.?/assets/|/assets/|assets/|\\./)?${RegExp.escape(font.file)}`, "g"),
         font.url,
@@ -493,7 +535,9 @@ async function copyBusinessRenderer(packageRoot, source, metadata) {
   const sharedUi = {
     version: 1,
     uiPackage,
-    fonts: Object.fromEntries(fonts.map((font) => [font.name, font.url])),
+    fonts: Object.fromEntries(
+      fonts.map((font) => [font.name, privateWebOrigin ? `./assets/${font.file}` : font.url]),
+    ),
   };
   await fs.writeFile(
     path.join(target, "spark233-shared-ui.json"),
@@ -516,6 +560,17 @@ const index = [];
 const offline = [];
 const devBuild = process.env.SPARK233_DEV_PLUGIN_BUILD;
 if (devBuild && !/^[0-9]{1,15}$/.test(devBuild)) throw new Error("Invalid development build id");
+if (devBuild && process.env.SPARK233_DEV_PLUGIN_OUTPUT) {
+  // A launcher reclaiming old generations must leave a concurrent publisher
+  // alone, including its new archives before they appear in index.json.
+  const marker = await outputPath(`.dev-build-${process.pid}-${devBuild}.active`);
+  await fs.writeFile(marker, "", { flag: "wx" });
+  process.once("exit", () => {
+    try {
+      unlinkSync(marker);
+    } catch {}
+  });
+}
 for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
   const source = path.join(root, entry.name);
@@ -535,6 +590,10 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   if (metadata.spark233.id === "spark233.clipboard")
     run(process.execPath, [path.join(source, "build.mjs"), "--backend-only"]);
   if (metadata.spark233.id === "spark233.notes")
+    run(process.execPath, [path.join(source, "build.mjs")]);
+  if (metadata.spark233.id === "spark233.traffic")
+    run(process.execPath, [path.join(source, "build.mjs")]);
+  if (metadata.spark233.id === "spark233.quicklinks")
     run(process.execPath, [path.join(source, "build.mjs")]);
   const temporaryRoot = await fs.realpath(os.tmpdir());
   const work = await fs.mkdtemp(path.join(temporaryRoot, "spark233-package-"));
@@ -658,13 +717,8 @@ await fs.writeFile(
   path.join(output, "resources.json"),
   JSON.stringify({ schemaVersion: 1, plugins: offline }, null, 2),
 );
-if (devBuild && process.env.SPARK233_DEV_PLUGIN_OUTPUT)
-  for (const name of await fs.readdir(output))
-    if (
-      /^[a-z0-9-]+-\d+\.\d+\.\d{13,15}\.tgz$/.test(name) &&
-      !index.some((entry) => entry.file === name)
-    )
-      await fs.unlink(await outputPath(name));
+// A live Electron startup may still hold the previous index. Development
+// launchers reclaim its archives only after that Electron exits safely.
 if (!selectedPlugin && !buildOptions.output) {
   // General launcher commands use the same pinned matcher even while the
   // applications business plugin is disabled. Keep wrapper-relative native

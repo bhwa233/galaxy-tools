@@ -1,5 +1,12 @@
 /** Every new host command must declare serialization, modal ownership and notes access. */
 export const commandPolicies = {
+  layer_listTemplates: { serialized: false, modal: false, notes: false },
+  desktop_overlay_toggle: { serialized: false, modal: false, notes: false },
+  layer_create: { serialized: true, modal: false, notes: false },
+  layer_remove: { serialized: true, modal: false, notes: false },
+  layer_retry: { serialized: true, modal: false, notes: false },
+  layer_update: { serialized: true, modal: false, notes: false },
+  layer_edit: { serialized: true, modal: false, notes: false },
   app_exec_path: { serialized: false, modal: false, notes: true },
   app_mcp_command: { serialized: false, modal: false, notes: false },
   app_name: { serialized: false, modal: false, notes: true },

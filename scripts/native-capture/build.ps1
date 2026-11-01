@@ -35,6 +35,7 @@ if (-not (Test-Path -LiteralPath $SourceRoot)) {
 # Each generation applies the current adapters to pinned upstream archives. Never
 # silently compile a previous adapted tree after changing session protocol code.
 $inputs = @((Join-Path $PSScriptRoot 'adapt.ps1'), (Join-Path $PSScriptRoot 'sources.lock.json'))
+$inputs += Get-ChildItem $PSScriptRoot -Filter '*.h' -File -Recurse | Sort-Object FullName | Select-Object -ExpandProperty FullName
 $inputs += Get-ChildItem (Join-Path $PSScriptRoot '../../native/capture') -File -Recurse | Sort-Object FullName | Select-Object -ExpandProperty FullName
 $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((($inputs | Get-FileHash -Algorithm SHA256).Hash -join "`n")))).Substring(0, 16).ToLowerInvariant()
 $adapted = Join-Path $OutputRoot "adapted-$digest"

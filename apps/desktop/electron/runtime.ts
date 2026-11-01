@@ -3,9 +3,12 @@ import {
   app,
   BrowserWindow,
   dialog,
+  ipcMain,
   nativeTheme,
   net,
   protocol,
+  powerMonitor,
+  screen,
   safeStorage,
   session,
   shell,
@@ -27,6 +30,7 @@ import { createNoteSurfaces } from "./host/note-surfaces.js";
 import { createOfficialRuntimeFactory } from "./host/official-runtimes.js";
 import { createPluginSettings } from "./host/plugin-settings.js";
 import { createSurfaceCommands } from "./host/surface-commands.js";
+import { acquireDesktopInstance } from "./host/single-instance.js";
 import { createWindowClose } from "./host/window-close.js";
 import { createDispatch } from "./ipc/dispatch.js";
 import { createTransport } from "./ipc/transport.js";
@@ -40,6 +44,15 @@ import type { PluginContext, PluginOwner, PluginTheme } from "@spark233/sdk";
 import type { CapsuleEntry } from "../src/features/capsules/types.js";
 import type { ReminderItem } from "../src/features/reminders/types.js";
 import { Capsules } from "./capsules.js";
+import { DesktopLayer } from "./desktop-layer.js";
+import { DesktopOverlayLayout } from "./desktop-overlay-layout.js";
+import { bindDevToolsShortcut } from "./host/windows.js";
+import { LayerWindow } from "./layer-window.js";
+import { LayerLayoutStore } from "./layer-layout-store.js";
+import { ScreenshotLayerCoordinator } from "./screenshot-layer.js";
+import { DEFAULT_DESKTOP_LAYER_PREFERENCES } from "../shared/config-schema.js";
+import { NotesLayerCoordinator, parseNotesLayout } from "./notes-layer.js";
+import { WidgetHost, widgetScheme } from "./plugins/widget-host.js";
 import { parseCliArgs, type CliCommand } from "./cli-args.js";
 import { HostConfigStore, persistedConfigSchema } from "./host-config.js";
 import { ShortcutManager } from "./host/shortcuts.js";
@@ -61,6 +74,15 @@ import type { ReminderNotification } from "./reminders.js";
 import { initializeWindowsRuntime, watchFullscreen } from "./windows-runtime.js";
 
 export interface RuntimeContext {
+  readonly desktopLayer: typeof desktopLayer;
+  readonly toggleDesktopOverlay: typeof toggleDesktopOverlay;
+  readonly widgetHost: typeof widgetHost;
+  readonly notesLayer: typeof notesLayer;
+  readonly screenshotLayer: typeof screenshotLayer;
+  readonly notesMigrationError: typeof notesMigrationError;
+  readonly syncDesktopLayer: typeof syncDesktopLayer;
+  readonly flushDesktopLayer: typeof flushDesktopLayer;
+  readonly reloadDesktopLayer: typeof reloadDesktopLayer;
   readonly activateHostCommand: typeof activateHostCommand;
   readonly applicationEntries: typeof applicationEntries;
   readonly applyNoteTopmost: typeof applyNoteTopmost;
@@ -83,6 +105,8 @@ export interface RuntimeContext {
   readonly refreshWindowPresentations: typeof refreshWindowPresentations;
   readonly flushPluginWindowStates: typeof flushPluginWindowStates;
   readonly getPluginIcon: typeof getPluginIcon;
+  readonly getPluginTheme: typeof getPluginTheme;
+  readonly subscribePluginTheme: typeof subscribePluginTheme;
   readonly queuePluginWindowActivation: typeof queuePluginWindowActivation;
   readonly takePluginWindowActivation: typeof takePluginWindowActivation;
   readonly pluginWindowInfo: typeof pluginWindowInfo;
@@ -241,6 +265,33 @@ const runtimeContext: RuntimeContext = {
   get changed(): typeof changed {
     return changed;
   },
+  get desktopLayer(): typeof desktopLayer {
+    return desktopLayer;
+  },
+  get toggleDesktopOverlay(): typeof toggleDesktopOverlay {
+    return toggleDesktopOverlay;
+  },
+  get widgetHost(): typeof widgetHost {
+    return widgetHost;
+  },
+  get notesLayer(): typeof notesLayer {
+    return notesLayer;
+  },
+  get screenshotLayer(): typeof screenshotLayer {
+    return screenshotLayer;
+  },
+  get notesMigrationError(): typeof notesMigrationError {
+    return notesMigrationError;
+  },
+  get syncDesktopLayer(): typeof syncDesktopLayer {
+    return syncDesktopLayer;
+  },
+  get flushDesktopLayer(): typeof flushDesktopLayer {
+    return flushDesktopLayer;
+  },
+  get reloadDesktopLayer(): typeof reloadDesktopLayer {
+    return reloadDesktopLayer;
+  },
   get clearLauncherContext(): typeof clearLauncherContext {
     return clearLauncherContext;
   },
@@ -279,6 +330,12 @@ const runtimeContext: RuntimeContext = {
   },
   get getPluginIcon(): typeof getPluginIcon {
     return getPluginIcon;
+  },
+  get getPluginTheme(): typeof getPluginTheme {
+    return getPluginTheme;
+  },
+  get subscribePluginTheme(): typeof subscribePluginTheme {
+    return subscribePluginTheme;
   },
   get queuePluginWindowActivation(): typeof queuePluginWindowActivation {
     return queuePluginWindowActivation;
@@ -751,6 +808,8 @@ const {
   showLauncherWithSelection,
   prepareSelectionReader,
   cancelSelection,
+  captureExternalFocus,
+  restoreExternalFocus,
   stopSelectionReader,
   openLauncherWindow,
   requestLauncher,
@@ -823,6 +882,7 @@ if (
 )
   throw new Error("Unexpected renderer dev server");
 registerPluginProtocolScheme([
+  widgetScheme,
   {
     scheme: "spark233",
     privileges: {
@@ -861,6 +921,8 @@ if (
   throw new Error("Smoke probes require explicit opt-in and isolated profile paths");
 const cliArgs = parseCliArgs(process.argv);
 let pendingCliCommand: CliCommand | undefined;
+let primaryDesktopInstance = false;
+let startupComplete = false;
 if (cliArgs.mcp) {
   // --mcp：stdio MCP 服务进程，不参与单实例锁与正常启动。
   void runMcpLauncher({ exe: process.execPath, here, configDir })
@@ -869,7 +931,15 @@ if (cliArgs.mcp) {
       process.stderr.write(`spark233 MCP 启动失败: ${String(error)}\n`);
       app.exit(1);
     });
-} else if (!app.requestSingleInstanceLock()) app.exit(0);
+} else {
+  primaryDesktopInstance = acquireDesktopInstance(
+    app.getPath("userData"),
+    process.env.SPARK233_SMOKE === "1" &&
+      !!process.env.SPARK233_CONFIG_DIR &&
+      !!process.env.SPARK233_DATA_DIR,
+  );
+  if (!primaryDesktopInstance) app.exit(0);
+}
 const fileGrants = new WeakMap<BrowserWindow, FileGrants>();
 const applicationEntries = new ApplicationEntryAdmissions();
 const windows = new Map<string, BrowserWindow>();
@@ -915,7 +985,11 @@ let backupRecoveryPending = false;
 let launcherAvailabilityRevision = 0;
 function setMaintenance(value: boolean): void {
   if (maintenance === value) return;
+  if (value && desktopLayer?.snapshot().editing)
+    throw new AppError("saveFailed", "Finish or cancel desktop layout editing before maintenance");
   maintenance = value;
+  desktopLayer?.setVisibility("user", value);
+  screenshotLayer?.refresh();
   launcherAvailabilityRevision++;
   if (value) {
     launcher?.clear();
@@ -968,8 +1042,15 @@ const getPluginTheme = (): PluginTheme => ({
         : "light"
       : hostConfig.value.theme,
 });
+function subscribePluginTheme(listener: () => void): () => void {
+  pluginThemeListeners.add(listener);
+  return () => {
+    pluginThemeListeners.delete(listener);
+  };
+}
 function publishPluginTheme(): void {
   for (const listener of pluginThemeListeners) listener();
+  desktopLayer?.refresh();
 }
 nativeTheme.on("updated", publishPluginTheme);
 nativeTheme.on("updated", () => {
@@ -981,6 +1062,90 @@ const createOfficialRuntime: NonNullable<DesktopPluginHostOptions["createOfficia
   createOfficialRuntimeFactory(runtimeContext);
 let tray: TrayController;
 let capsules: Capsules;
+let desktopLayer: DesktopLayer | undefined;
+let overlayFocusTarget = 0;
+let overlayToggle: Promise<void> = Promise.resolve();
+function toggleDesktopOverlay(): Promise<void> {
+  const task = overlayToggle
+    .catch(() => {})
+    .then(async () => {
+      // Shortcuts can be registered by plugin onChange before installation and
+      // desktop restoration finish. Preserve the request until that fence opens.
+      const startupError = await layerStartup;
+      if (maintenance || hostShutdown.isQuitting || !desktopLayer) return;
+      if (startupError || !layerStartupReady)
+        throw new AppError(
+          "layer.startupFailed",
+          ui(
+            `桌面插件层初始化失败：${startupError ?? "插件宿主不可用"}`,
+            `Desktop plugin layer failed to initialize: ${startupError ?? "Plugin host unavailable"}`,
+          ),
+        );
+      if (desktopLayer.overlayActive) {
+        desktopLayer.closeOverlay(true);
+        return;
+      }
+      const target = await captureExternalFocus();
+      if (maintenance || hostShutdown.isQuitting) return;
+      overlayFocusTarget = target;
+      desktopLayer.openOverlay();
+    });
+  overlayToggle = task;
+  return task;
+}
+let widgetHost: WidgetHost | undefined;
+let notesLayer: NotesLayerCoordinator | undefined;
+let screenshotLayer: ScreenshotLayerCoordinator | undefined;
+let notesMigrationError: string | undefined;
+let layerStartupReady = false;
+let completeLayerStartup: (error?: string) => void;
+const layerStartup = new Promise<string | undefined>((resolve) => {
+  completeLayerStartup = resolve;
+});
+let layerStore: LayerLayoutStore | undefined;
+let stopLayerEnvironment = () => {};
+function layerFlags() {
+  const preferences = hostConfig?.value.desktopLayer ?? DEFAULT_DESKTOP_LAYER_PREFERENCES;
+  // Plugin installation holds the manager's maintenance fence and can block
+  // window readiness. Restore views once owners/data are fully initialized.
+  return { ...preferences, enabled: preferences.enabled && layerStartupReady };
+}
+async function syncDesktopLayer(strict = false): Promise<void> {
+  if (
+    desktopLayer?.snapshot().editing &&
+    notesLayer?.isEnabled !== !!(layerFlags().enabled && layerFlags().notesEnabled)
+  )
+    throw new AppError("saveFailed", "Apply or cancel desktop editing before changing notes mode");
+  if (notesActive && layoutsRestored) {
+    try {
+      await notesLayer?.setEnabled(layerFlags().enabled && layerFlags().notesEnabled);
+      notesMigrationError = undefined;
+    } catch (error) {
+      notesMigrationError = error instanceof Error ? error.message : String(error);
+      console.error("desktop-notes-migration", error);
+      emit("desktop-pins-changed");
+      if (strict) throw error;
+    }
+  }
+  await desktopLayer?.setEnabled(layerFlags().enabled);
+  screenshotLayer?.refresh();
+  await widgetHost?.sync();
+  desktopLayer?.refresh();
+}
+async function flushDesktopLayer(): Promise<void> {
+  if (desktopLayer?.snapshot().editing)
+    throw new AppError("saveFailed", "Apply or cancel desktop layout editing before continuing");
+  await layerStore?.flush();
+  await notesLayer?.flush();
+  await screenshotLayer?.flush();
+}
+async function reloadDesktopLayer(): Promise<void> {
+  await notesLayer?.resetAfterRestore();
+  await layerStore?.reloadAfterRestore();
+  screenshotLayer?.reload();
+  await widgetHost?.reloadAfterRestore();
+  await syncDesktopLayer();
+}
 let mcpServer: McpServer;
 let lastBalloonReminder: ReminderItem | undefined;
 let stopFullscreen = () => {};
@@ -996,6 +1161,7 @@ let mutations: Promise<unknown> = Promise.resolve();
 const hostShortcuts = new ShortcutManager({
   showLauncher: showLauncherWithSelection,
   toggleVisibility: toggleAllSurfaces,
+  toggleDesktopOverlay,
   commands: () => pluginHost?.manager.commands() ?? [],
   activate: activateHostCommand,
   onError: reportError,
@@ -1020,6 +1186,7 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   remember,
   persist: async () => {
     flushPluginWindowStates();
+    await flushDesktopLayer();
     if (!backupRecoveryPending) await persistLayout();
   },
   shutdownPlugins: async () => {
@@ -1040,7 +1207,19 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
       }
     }
   },
-  onCommit: () => {
+  onCommit: async () => {
+    stopLayerEnvironment();
+    for (const cleanup of [
+      () => notesLayer?.dispose(),
+      () => screenshotLayer?.dispose(),
+      () => widgetHost?.dispose(),
+      () => desktopLayer?.dispose(),
+    ])
+      try {
+        await cleanup();
+      } catch (error) {
+        console.error("desktop-layer-shutdown", error);
+      }
     exiting = true;
     if (updateInstallApply) {
       const apply = updateInstallApply;
@@ -1145,12 +1324,7 @@ let noteStateVersion = 0;
 let noteStateFingerprint = "";
 let fullscreenRects: Electron.Rectangle[] = [];
 const emit = (name: string, payload?: unknown, target?: BrowserWindow) => {
-  for (const win of target
-    ? [target]
-    : [
-        ...windows.values(),
-        ...[...(capsules?.surfaces.values() ?? [])].map((surface) => surface.win),
-      ])
+  for (const win of target ? [target] : [...windows.values(), ...(capsules?.nativeWindows() ?? [])])
     if (!win.isDestroyed()) win.webContents.send(`spark233:event:${name}`, payload);
 };
 let launcherShow: Promise<BrowserWindow> | undefined;
@@ -1210,14 +1384,21 @@ function translationSettings(): Record<string, unknown> {
 let settingsCaller: BrowserWindow | undefined;
 const pluginSettings = createPluginSettings(runtimeContext);
 app.on("second-instance", (_event, argv) => {
-  startupFile = externalArg(argv);
+  const file = externalArg(argv);
+  if (file) startupFile = file;
   const command = parseCliArgs(argv).command;
-  if (!pluginHost || !tray) {
-    if (command) pendingCliCommand = command;
+  // Shutdown owns the save boundary and can cancel a partially restored UI.
+  // Do not leave an explicit exit waiting behind desktop initialization.
+  if (command === "exit" && hostConfig) {
+    void quit();
+    return;
+  }
+  if (!startupComplete) {
+    if (command || !file) pendingCliCommand = command ?? "show";
     return;
   }
   if (command) executeCliCommand(command);
-  if (startupFile) {
+  if (file) {
     const main = showMain();
     if (startupFile && ready.has(main.id)) {
       grantsFor(main).grant(startupFile);
@@ -1245,6 +1426,7 @@ app.on("will-quit", () => {
   backupScheduler?.stop();
   hostShortcuts.dispose();
   stopFullscreen();
+  stopLayerEnvironment();
   capsules?.dispose();
   mcpServer?.stop();
   tray?.dispose();
@@ -1254,6 +1436,7 @@ export function startDesktopHost(): void {
     .whenReady()
     .then(async () => {
       if (cliArgs.mcp) return; // --mcp 进程的正常启动路径已被启动器接管
+      if (!primaryDesktopInstance) return;
       try {
         diagnostics = new DiagnosticsStore(path.join(configDir, "diagnostics"));
         diagnostics.record({ kind: "host", code: "started", level: "info" });
@@ -1313,6 +1496,8 @@ export function startDesktopHost(): void {
         getPluginIcon,
       });
       capsules = new Capsules({
+        canInteract: () =>
+          notesActive && notesScope?.state === "active" && !maintenance && !hostShutdown.isQuitting,
         here,
         url: devUrl || "spark233://notes/index.html",
         entries: layouts,
@@ -1333,6 +1518,7 @@ export function startDesktopHost(): void {
           }
         },
         changed: () => {
+          void widgetHost?.sync().catch((error) => console.error("desktop-notes-quota", error));
           refreshTray();
           publishNoteStates();
         },
@@ -1344,6 +1530,222 @@ export function startDesktopHost(): void {
       });
       // No note resources or metadata refreshes belong to a running plugin yet.
       capsules.setEnabled(false);
+      layerStore = new LayerLayoutStore({
+        file: path.join(hostConfigDir, "desktop-layout.json"),
+        onError: (error) => console.error("desktop-layout", error),
+      });
+      desktopLayer = new DesktopLayer({
+        store: layerStore,
+        overlayLayout: new DesktopOverlayLayout(
+          path.join(configDir, "desktop-overlay-layout.json"),
+        ),
+        onOverlayClosed: async (restore) => {
+          const target = overlayFocusTarget;
+          overlayFocusTarget = 0;
+          if (restore && target) await restoreExternalFocus(target);
+        },
+        onOverlaySettings: async () => {
+          await openHostSettings({ page: "desktop" });
+        },
+        onOverlayOpenPanel: async (card) => {
+          if (!card.widget || !pluginHost?.manager.isOwnerCurrent(card.widget.owner))
+            throw new AppError("pluginDisabled", "插件实例已失效");
+          await pluginHost.manager.activateOwned("spark233.traffic", { commandId: "open" }, () => {
+            if (!pluginHost?.manager.isOwnerCurrent(card.widget!.owner))
+              throw new AppError("pluginDisabled", "插件实例已失效");
+          });
+        },
+        onOverlayPresentation: async (card, patch) => {
+          if (card.widget) {
+            await widgetHost?.update(card.widget.widgetInstanceId, patch);
+            return true;
+          }
+          if (card.renderKind === "screenshot") {
+            await screenshotLayer?.update(card.renderRef!, patch);
+            return true;
+          }
+          return false;
+        },
+        displays: () =>
+          screen.getAllDisplays().map((display) => ({
+            id: String(display.id),
+            workArea: display.workArea,
+            scaleFactor: display.scaleFactor,
+          })),
+        primaryDisplay: () => String(screen.getPrimaryDisplay().id),
+        cursor: () => screen.getCursorScreenPoint(),
+        flags: layerFlags,
+        theme: () => getPluginTheme().effective,
+        locale: () => hostConfig.value.locale,
+        diagnostic: (code, detail) => {
+          console.error("desktop-layer", code, detail);
+        },
+        createWindow: (spec) => {
+          const entryURL = `spark233://app/index.html?view=layer&surface=${encodeURIComponent(spec.id)}&generation=${spec.generation}`;
+          const ownSession = widgetHost!.createSurfaceSession(spec, entryURL);
+          const layer = new LayerWindow({
+            id: spec.id,
+            mode: spec.card ? "web-shell" : "shared",
+            bounds: spec.bounds,
+            group: spec.group,
+            inputMode: spec.inputMode,
+            title: "spark233 desktop cards",
+            entryURL,
+            preloadPath: path.join(here, "layer-preload.cjs"),
+            session: ownSession,
+            label: "layer:" + spec.id,
+            additionalArguments: [
+              "--spark233-surface=" + spec.id,
+              "--spark233-surface-generation=" + spec.generation,
+            ],
+            screen,
+            createBrowserWindow: (options) => new BrowserWindow(options),
+            timers: { setTimeout, clearTimeout },
+            diagnostic: spec.fault,
+            onClosed: spec.closed,
+          });
+          widgetHost!.bindSession(ownSession, layer.win.webContents);
+          if (spec.overlay) {
+            bindDevToolsShortcut(layer.win, { isolatedSession: true });
+            layer.win.on("blur", () => {
+              setTimeout(() => {
+                if (
+                  !layer.win.isDestroyed() &&
+                  !layer.win.isFocused() &&
+                  !layer.win.webContents.isDevToolsOpened() &&
+                  desktopLayer?.isOverlayWindow(layer.win)
+                )
+                  desktopLayer.closeOverlay(false);
+              }, 80);
+            });
+          }
+          return { window: layer, entryURL };
+        },
+      });
+      widgetHost = new WidgetHost({
+        layer: desktopLayer,
+        store: layerStore,
+        notesActive: () => notesActive && notesLayer?.isEnabled === true,
+        trustedCards: () => [...capsules.quotaCards(), ...(screenshotLayer?.quotaCards() ?? [])],
+        resolveScreenshotImage: async (handle) => screenshotLayer?.resolveImage(handle),
+        pluginHost: () => pluginHost,
+        rendererRoot,
+        flags: layerFlags,
+        locale: () => hostConfig.value.locale,
+        theme: () => getPluginTheme().effective,
+        diagnostic: (code, detail) => console.error(code, detail),
+      });
+      notesLayer = new NotesLayerCoordinator({
+        store: layerStore,
+        journalFile: path.join(hostConfigDir, "desktop-layer-migration.json"),
+        readLegacy: () => (notesStartupClient ?? notesClient).getState("layout"),
+        writeLegacy: async (value) => {
+          const data =
+            notesScope?.state === "preparing" && notesMaintenanceClient
+              ? notesMaintenanceClient
+              : (notesStartupClient ?? notesClient);
+          await data.putState("layout", JSON.parse(JSON.stringify(value)));
+        },
+        snapshotLegacy: () =>
+          parseNotesLayout({
+            version: 2,
+            capsuleQueues: [...capsules.queues.values()],
+            windows: [...layouts.values()].filter((entry) => entry.view === "main" || entry.noteId),
+          }),
+        applyLegacy: (value) => {
+          for (const [label, entry] of layouts)
+            if (entry.view === "main" || entry.noteId) layouts.delete(label);
+          for (const entry of value.windows)
+            layouts.set(entry.label, structuredClone(entry) as Layout);
+          capsules.queues.clear();
+          for (const queue of value.capsuleQueues)
+            capsules.queues.set(queue.key, structuredClone(queue));
+        },
+        switchView: async (enabled) => {
+          await capsules.setDesktopLayer(enabled ? desktopLayer : undefined);
+        },
+        displays: () =>
+          screen.getAllDisplays().map((display) => ({
+            id: String(display.id),
+            workArea: display.workArea,
+            scaleFactor: display.scaleFactor,
+          })),
+        primaryDisplay: () => String(screen.getPrimaryDisplay().id),
+        diagnostic: (code, detail) => console.error(code, detail),
+      });
+      screenshotLayer = new ScreenshotLayerCoordinator({
+        layer: desktopLayer,
+        store: layerStore,
+        flags: layerFlags,
+        isOwnerCurrent: (owner, presentationOnly) =>
+          pluginHost?.manager.isOwnerCurrent(owner, undefined, presentationOnly === true) === true,
+        otherQuotaCards: () => [
+          ...(widgetHost?.quotaCards() ?? []),
+          ...capsules.quotaCards().map((card) => ({
+            id: card.id,
+            renderKind: "notes" as const,
+            card: {
+              kind: "notes" as const,
+              noteId: card.renderRef!,
+              displayId: card.displayId,
+              workAreaAtSave: card.bounds,
+              bounds: card.bounds,
+              group: card.group,
+              inputMode: card.inputMode,
+              visible: card.visible,
+              order: card.order,
+              restore: true,
+              createdAt: 0,
+            },
+          })),
+        ],
+        cursor: () => screen.getCursorScreenPoint(),
+        toDip: (bounds) =>
+          screen.screenToDipRect(null, {
+            x: Math.round(bounds.x),
+            y: Math.round(bounds.y),
+            width: Math.round(bounds.width),
+            height: Math.round(bounds.height),
+          }),
+        toPhysical: (bounds) =>
+          screen.dipToScreenRect(null, {
+            x: Math.round(bounds.x),
+            y: Math.round(bounds.y),
+            width: Math.round(bounds.width),
+            height: Math.round(bounds.height),
+          }),
+        onImage: (image) => {
+          pluginImages.set(image.resource.id, image);
+        },
+        onImageReleased: (id) => {
+          pluginImages.delete(id);
+        },
+        changed: () => {
+          emit("desktop-pins-changed");
+        },
+        diagnostic: (code, detail) => console.error(code, detail),
+      });
+      ipcMain.handle("spark233:layer", (event, value) => {
+        if (maintenance || hostShutdown.isQuitting)
+          throw new AppError("maintenance", "Desktop cards are stopping");
+        return desktopLayer!.handle(event, value);
+      });
+      stopLayerEnvironment = LayerWindow.observeEnvironment({
+        screen,
+        powerMonitor,
+        timers: { setTimeout, clearTimeout },
+        onDisplayChange: () => {
+          void desktopLayer
+            ?.displayChanged()
+            .then(() => widgetHost?.sync())
+            .catch((error) => console.error("desktop-display", error));
+        },
+        onSuppressed: (reason, value) => {
+          desktopLayer?.setVisibility(reason, value);
+          screenshotLayer?.refresh();
+        },
+        onRestore: () => desktopLayer?.refresh(),
+      });
       mcpServer = new McpServer({
         configDir: () => configDir,
         context: () => ({ permission: hostConfig.value.mcpPermission, ops: mcpOps }),
@@ -1355,15 +1757,20 @@ export function startDesktopHost(): void {
         (rects) => {
           fullscreenRects = rects;
           capsules.setFullscreen(rects);
+          desktopLayer?.setFullscreen(rects);
           for (const [label, win] of windows) {
             const layout = layouts.get(label);
             if (!layout || win.isDestroyed()) continue;
             applyNoteTopmost(win, layout);
           }
         },
-        () => [...windows.values(), ...[...capsules.surfaces.values()].map((s) => s.win)],
+        () => [
+          ...windows.values(),
+          ...capsules.nativeWindows(),
+          ...(desktopLayer?.windows().filter((win) => !desktopLayer?.isOverlayWindow(win)) ?? []),
+        ],
       );
-      startupFile = externalArg(process.argv.slice(1));
+      startupFile ??= externalArg(process.argv.slice(1));
       protocol.handle("spark233", async (request) => {
         try {
           const url = new URL(request.url);
@@ -1493,6 +1900,7 @@ export function startDesktopHost(): void {
                 fireReminderNotification(payload as unknown as ReminderNotification);
             }
           },
+          onWidgetLifecycle: (owner, phase) => widgetHost?.lifecycle(owner, phase),
           resolveResource: (resource) =>
             pluginImages.get(resource.id)?.path ?? pluginFiles.get(resource.id),
           subscribeResourceRevocations: (listener) => {
@@ -1504,12 +1912,7 @@ export function startDesktopHost(): void {
           hostVersion: app.getVersion(),
           getTheme: getPluginTheme,
           getLocale: () => hostConfig.value.locale,
-          subscribeTheme: (listener) => {
-            pluginThemeListeners.add(listener);
-            return () => {
-              pluginThemeListeners.delete(listener);
-            };
-          },
+          subscribeTheme: subscribePluginTheme,
           onDiagnostic: (event) => {
             diagnostics?.record(event);
           },
@@ -1526,6 +1929,8 @@ export function startDesktopHost(): void {
                 emit("plugin-package-task-changed", task, win);
           },
           onChange: () => {
+            if (layerStartupReady)
+              void syncDesktopLayer().catch((error) => console.error("desktop-layer-sync", error));
             refreshWindowPresentations();
             launcher?.pluginsChanged();
             emit("plugins-changed");
@@ -1606,7 +2011,6 @@ export function startDesktopHost(): void {
       });
       preloadLauncher();
       if (launcher.state().firstRun) await showLauncher();
-      if (startupFile && notesActive) showMain();
       try {
         registerShortcuts(hostConfig.value);
       } catch (error) {
@@ -1615,6 +2019,16 @@ export function startDesktopHost(): void {
       syncMcp();
       refreshTray();
       publishNoteStates();
+      // The first tray/menu/shortcut pass and launcher bootstrap validate the
+      // installed packages. Finish that work before starting the layer's 5 s
+      // window-ready budget, including restored pins on an existing profile.
+      if (pluginHost && !pluginHostStartupError) {
+        layerStartupReady = true;
+        await syncDesktopLayer();
+      }
+      completeLayerStartup(pluginHostStartupError);
+      startupComplete = true;
+      if (startupFile && notesActive) showMain();
       const initialCommand = pendingCliCommand ?? cliArgs.command;
       pendingCliCommand = undefined;
       if (initialCommand) executeCliCommand(initialCommand);
@@ -1642,6 +2056,7 @@ export function startDesktopHost(): void {
           showMain,
           showLauncher,
           pauseForBackup,
+          prepare,
           hideAndRelease,
           foldAndRelease,
           capsules,
@@ -1653,6 +2068,7 @@ export function startDesktopHost(): void {
       }
     })
     .catch((error) => {
+      completeLayerStartup(error instanceof Error ? error.message : String(error));
       reportError(error);
       app.exit(1);
     });

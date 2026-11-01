@@ -1,5 +1,5 @@
-// Read only the foreground selection through Windows UI Automation. No clipboard,
-// simulated keys, mouse hooks or background listeners are installed.
+// Read foreground selections through UIA and restore focus only to the exact
+// last sampled HWND/PID/process lifetime. No clipboard, simulated keys or hooks.
 using System;
 using System.Diagnostics;
 using System.Collections.Generic;
@@ -21,6 +21,9 @@ class SelectionReader {
     [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
     [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     static IntPtr Focus(IntPtr window) {
         uint pid; uint thread=GetWindowThreadProcessId(window,out pid);
@@ -29,6 +32,31 @@ class SelectionReader {
     }
     static long Identity(uint pid) {
         using(var process=Process.GetProcessById((int)pid)) return process.StartTime.ToUniversalTime().Ticks;
+    }
+    sealed class RestorePoint {
+        public IntPtr Window;
+        public uint Pid;
+        public long Started;
+    }
+    static RestorePoint CaptureTarget(int hostPid) {
+        IntPtr window=GetForegroundWindow();
+        uint pid; GetWindowThreadProcessId(window,out pid);
+        if(window==IntPtr.Zero || pid==0 || (int)pid==hostPid ||
+            !IsWindow(window) || !IsWindowVisible(window)) return null;
+        long started=Identity(pid);
+        uint currentPid; GetWindowThreadProcessId(window,out currentPid);
+        if(currentPid!=pid || GetForegroundWindow()!=window || !IsWindow(window)) return null;
+        return new RestorePoint {Window=window,Pid=pid,Started=started};
+    }
+    static long RestoreTarget(RestorePoint captured,long requested) {
+        if(captured==null || captured.Window.ToInt64()!=requested ||
+            !IsWindow(captured.Window) || !IsWindowVisible(captured.Window) ||
+            IsIconic(captured.Window)) return 0;
+        uint pid; GetWindowThreadProcessId(captured.Window,out pid);
+        if(pid!=captured.Pid || Identity(pid)!=captured.Started) return 0;
+        // Let Windows enforce foreground-lock rules. Never attach input queues,
+        // synthesize keys, or unminimize a window that the user has since hidden.
+        return SetForegroundWindow(captured.Window)?requested:0;
     }
     static bool Modifiers() {
         foreach(int key in new int[] {0x10,0x11,0x12,0x5b,0x5c}) if(GetAsyncKeyState(key)<0) return true;
@@ -150,6 +178,7 @@ class SelectionReader {
         var serializer=new JavaScriptSerializer {MaxJsonLength=524288};
         Console.WriteLine("{\"ready\":true}");
         Console.Out.Flush();
+        RestorePoint captured=null;
         string line;
         while((line=Console.ReadLine())!=null) {
             try {
@@ -166,7 +195,17 @@ class SelectionReader {
                     try { target=Convert.ToInt64(targetValue); } catch { return 1; }
                 }
                 if(Object.Equals(operation,"foreground")) {
-                    Console.WriteLine(serializer.Serialize(new {id=(string)idValue,window=(long)GetForegroundWindow()}));
+                    captured=null;
+                    try { captured=CaptureTarget(hostPid); } catch { }
+                    Console.WriteLine(serializer.Serialize(new {id=(string)idValue,window=captured==null?0:captured.Window.ToInt64()}));
+                    Console.Out.Flush();
+                    continue;
+                }
+                if(Object.Equals(operation,"restore")) {
+                    var previous=captured; captured=null;
+                    long restored=0;
+                    try { restored=RestoreTarget(previous,target); } catch { }
+                    Console.WriteLine(serializer.Serialize(new {id=(string)idValue,window=restored}));
                     Console.Out.Flush();
                     continue;
                 }

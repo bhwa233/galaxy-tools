@@ -23,6 +23,13 @@ it("hands off a pending selection at readiness without revealing a preloaded win
   expect(emit).toHaveBeenCalledWith("open-workspace", payload, win);
   expect(win.show).not.toHaveBeenCalled();
   expect(workspaceRequests.get("launcher")).toBe(payload);
+  expect(emit).toHaveBeenLastCalledWith("launcher-visibility-changed", { visible: false }, win);
+  // A cold show may happen before the renderer subscribes. Readiness must
+  // replay actual visibility rather than leaving its preload flag fenced.
+  win.isVisible = () => true;
+  await handlers.desktop_ready({ ...invocation, layout: { ...invocation.layout, visible: true } });
+  expect(emit).toHaveBeenLastCalledWith("launcher-visibility-changed", { visible: true }, win);
+  expect(win.show).not.toHaveBeenCalled();
 });
 
 it("rejects a late query from a hidden launcher before starting providers", async () => {

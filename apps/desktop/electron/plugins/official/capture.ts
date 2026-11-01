@@ -23,6 +23,20 @@ export interface CaptureImage {
   width: number;
   height: number;
 }
+export interface CapturePinBounds {
+  /** Windows physical pixels, including negative virtual-desktop origins. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export interface CapturePinImage extends CaptureImage {
+  attempt: number;
+  sourcePath: string;
+  documentPath: string;
+  bounds: CapturePinBounds;
+  scale: number;
+}
 export interface OcrAvailability {
   available: boolean;
   reason?: string;
@@ -41,6 +55,11 @@ export interface CaptureRuntimeOptions {
   recognize?: (image: CaptureImage) => Promise<JsonValue | undefined>;
   /** Every completed screenshot, whether or not it was forwarded to OCR. */
   onResult?: (image: CaptureImage, action: CaptureAction) => void | Promise<void>;
+  canPinToDesktop?: () => boolean;
+  /** Copies the session bundle into durable host storage before acknowledging native exit. */
+  onPin?: (image: CapturePinImage, isCurrent: () => boolean) => Promise<string>;
+  onPinAborted?: (pinId: string) => Promise<void>;
+  onPinAcknowledged?: (pinId: string) => Promise<void>;
   /** Milliseconds of annotation work are the user's; this bounds process shutdown. */
   timeoutMs?: number;
   /** Overridable for tests; defaults to a bounded history in the plugin data dir. */
@@ -87,6 +106,12 @@ export interface CaptureRuntime {
   readonly owner: PluginOwner;
   readonly activeSession: string | undefined;
   activate(activation: PluginActivation): Promise<JsonValue | undefined>;
+  /** Trusted host entry only; activation payloads cannot supply paths. */
+  editPin(input: {
+    sourcePath: string;
+    documentPath: string;
+    bounds?: CapturePinBounds;
+  }): Promise<JsonValue | undefined>;
   cancel(): Promise<StopDecision>;
   prepareStop(reason: StopReason): Promise<StopDecision>;
   dispose(): Promise<void>;
@@ -108,6 +133,29 @@ const captureResult = envelope.extend({
   action: z.enum(["copy", "save", "ocr"]),
   image: z.literal("selection.png"),
 });
+const pinBounds = z.object({
+  x: z.number().int().min(-1_000_000).max(1_000_000),
+  y: z.number().int().min(-1_000_000).max(1_000_000),
+  width: z.number().int().positive().max(65536),
+  height: z.number().int().positive().max(65536),
+});
+const pinIdentity = envelope.pick({ protocol: true, sessionId: true, pid: true }).extend({
+  attempt: z.number().int().positive().max(1_000_000),
+});
+const pinResult = envelope
+  .extend({
+    kind: z.literal("pin"),
+    action: z.literal("pin"),
+    attempt: pinIdentity.shape.attempt,
+    image: z.literal("pin.png"),
+    source: z.literal("pin-source.png"),
+    document: z.literal("pin-document.json"),
+    width: z.number().int().positive().max(16000),
+    height: z.number().int().positive().max(16000),
+    bounds: pinBounds,
+    scale: z.number().finite().min(0.1).max(8),
+  })
+  .refine((value) => value.width * value.height <= 32_000_000);
 const ocrResult = envelope.extend({
   kind: z.literal("ocr"),
   text: z.string().max(4 * 1024 * 1024),
@@ -145,6 +193,13 @@ interface NativeSession {
   scope: PluginResourceScope;
   process?: PluginNativeController;
   cancelled: boolean;
+  exited?: boolean;
+  pinId?: string;
+  pinPublication?: string;
+  cleanupFailed?: boolean;
+  pinFile?: string;
+  pinAttempts?: Set<number>;
+  pinAck?: { attempt: number; status: "accepted" | "rejected"; pinId?: string };
   done: Promise<void>;
   finish: () => void;
 }
@@ -261,6 +316,16 @@ class CaptureController implements CaptureRuntime {
     const session = this.current;
     if (!session) return { ok: true };
     this.requestCancellation(session);
+    if (session.cleanupFailed && session.exited)
+      try {
+        await this.finishSession(session);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          reason: `Native publication rollback is still pending: ${String(error)}`,
+        };
+      }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const exited = await Promise.race([
       session.done.then(() => true),
@@ -308,6 +373,7 @@ class CaptureController implements CaptureRuntime {
     session.process = process;
     if (session.cancelled) this.requestCancellation(session);
     const exit = await process.waitForExit();
+    session.exited = true;
     const cancellationFile = confined(session.directory, "cancel.json");
     const cancellation = fs.existsSync(cancellationFile)
       ? z
@@ -347,6 +413,12 @@ class CaptureController implements CaptureRuntime {
     return value;
   }
   protected async finishSession(session: NativeSession): Promise<void> {
+    try {
+      await this.abortPin(session);
+    } catch (error) {
+      session.cleanupFailed = true;
+      throw error;
+    }
     const released = await session.scope.stop("quit");
     if (!released.ok) throw new Error(released.errors.join("; "));
     try {
@@ -358,6 +430,147 @@ class CaptureController implements CaptureRuntime {
       session.finish();
     }
   }
+  private pinAllowed(): boolean {
+    const options = this.options as CaptureRuntimeOptions;
+    try {
+      return !!options.onPin && options.canPinToDesktop?.() === true;
+    } catch {
+      return false;
+    }
+  }
+  private sessionCurrent(session: NativeSession): boolean {
+    return (
+      this.current === session &&
+      !this.disposed &&
+      !session.cancelled &&
+      !session.exited &&
+      this.options.scope.state === "active" &&
+      this.options.scope.accepts(this.owner)
+    );
+  }
+  private async abortPin(session: NativeSession): Promise<void> {
+    if (!session.pinPublication || session.pinId) return;
+    await (this.options as CaptureRuntimeOptions).onPinAborted?.(session.pinPublication);
+    session.pinPublication = undefined;
+    session.pinAck = undefined;
+  }
+  private async writePinAck(session: NativeSession): Promise<void> {
+    const ack = session.pinAck;
+    if (!ack || !this.sessionCurrent(session)) return;
+    if (ack.status === "accepted" && !this.pinAllowed()) {
+      await this.abortPin(session);
+      session.pinAck = { attempt: ack.attempt, status: "rejected" };
+      return this.writePinAck(session);
+    }
+    atomicWrite(
+      confined(session.directory, "pin.ack"),
+      `${session.id}:${session.process!.pid}:${ack.attempt}:${ack.status}`,
+    );
+    if (ack.status === "accepted") session.pinId = ack.pinId;
+    session.pinAck = undefined;
+    if (ack.status === "accepted")
+      try {
+        await (this.options as CaptureRuntimeOptions).onPinAcknowledged?.(ack.pinId!);
+      } catch (error) {
+        // Native has already accepted transfer. A failed old-revision GC must
+        // preserve the new durable pin and must not retract its acknowledgement.
+        console.error("capture-pin-gc", error);
+      }
+  }
+  private async pollPin(session: NativeSession): Promise<void> {
+    if (!session.process || !this.sessionCurrent(session) || session.pinId) return;
+    if (session.pinAck) {
+      await this.writePinAck(session);
+      return;
+    }
+    const file = confined(session.directory, "pin.json");
+    if (!fs.existsSync(file)) return;
+    const stat = fs.statSync(file, { bigint: true });
+    const signature = `${stat.ino}:${stat.mtimeNs}:${stat.size}`;
+    if (session.pinFile === signature) return;
+    session.pinFile = signature;
+    if (!stat.isFile() || stat.size > 64n * 1024n)
+      throw new Error("Native pin envelope exceeds its file budget");
+    const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    const identity = pinIdentity.parse(raw);
+    if (identity.sessionId !== session.id || identity.pid !== session.process.pid)
+      throw new Error("Native pin session/PID identity mismatch");
+    const attempts = (session.pinAttempts ??= new Set<number>());
+    if (attempts.has(identity.attempt)) return;
+    attempts.add(identity.attempt);
+    let currentAttempt = true;
+    const isCurrent = () => currentAttempt && this.sessionCurrent(session) && this.pinAllowed();
+    try {
+      const selected = pinResult.parse(raw);
+      if (!isCurrent()) throw new Error("Desktop pinning is unavailable for this session");
+      const png = checkedPng(confined(session.directory, selected.image));
+      const source = checkedPng(confined(session.directory, selected.source));
+      const documentPath = checkedPinDocument(confined(session.directory, selected.document));
+      if (
+        ![png.path, source.path, documentPath].every((value) =>
+          inside(canonical(session.directory), value),
+        ) ||
+        png.width !== selected.width ||
+        png.height !== selected.height ||
+        source.width !== selected.width ||
+        source.height !== selected.height
+      )
+        throw new Error("Native pin files escape the session or have inconsistent dimensions");
+      const image: CapturePinImage = {
+        owner: this.owner,
+        sessionId: session.id,
+        attempt: selected.attempt,
+        path: png.path,
+        sourcePath: source.path,
+        documentPath,
+        width: png.width,
+        height: png.height,
+        bounds: selected.bounds,
+        scale: selected.scale,
+        resource: {
+          id: `${this.owner.pluginId}:${this.owner.instanceId}:${session.id}:pin:${selected.attempt}`,
+          kind: "image",
+          mimeType: "image/png",
+          size: png.size,
+        },
+      };
+      const pinId = await (this.options as CaptureRuntimeOptions).onPin!(image, isCurrent);
+      if (typeof pinId !== "string" || !pinId || pinId.length > 512)
+        throw new Error("Desktop pin publisher returned an invalid identity");
+      session.pinPublication = pinId;
+      if (!isCurrent()) {
+        await this.abortPin(session);
+        return;
+      }
+      session.pinAck = { attempt: selected.attempt, status: "accepted", pinId };
+    } catch (error) {
+      currentAttempt = false;
+      await this.abortPin(session);
+      session.pinAck = { attempt: identity.attempt, status: "rejected" };
+      console.error("capture-pin", error);
+    }
+    await this.writePinAck(session);
+  }
+  async editPin(input: {
+    sourcePath: string;
+    documentPath: string;
+    bounds?: CapturePinBounds;
+  }): Promise<JsonValue | undefined> {
+    if (this.kind !== "capture") throw new Error("Only screenshots accept pinned-image editing");
+    return this.capture({ commandId: "capture" }, (session) => {
+      if (!path.isAbsolute(input.sourcePath) || !path.isAbsolute(input.documentPath))
+        throw new Error("Pinned-image editing requires trusted absolute host paths");
+      const source = checkedPng(input.sourcePath);
+      const documentPath = checkedPinDocument(input.documentPath);
+      atomicWrite(confined(session.directory, "edit-source.png"), fs.readFileSync(source.path));
+      atomicWrite(confined(session.directory, "edit-document.json"), fs.readFileSync(documentPath));
+      if (input.bounds)
+        atomicWrite(
+          confined(session.directory, "edit-bounds.json"),
+          JSON.stringify(pinBounds.parse(input.bounds)),
+        );
+    });
+  }
   async activate(activation: PluginActivation): Promise<JsonValue | undefined> {
     if (activation.commandId === "cancel") return (await this.cancel()) as unknown as JsonValue;
     if (activation.commandId && !["capture", "ocr"].includes(activation.commandId))
@@ -368,6 +581,13 @@ class CaptureController implements CaptureRuntime {
         options.getOcrStatus().reason ??
           "OCR plugin is unavailable; basic screenshot remains available",
       );
+    return this.capture(activation);
+  }
+  private async capture(
+    activation: PluginActivation,
+    prepareEdit?: (session: NativeSession) => void,
+  ): Promise<JsonValue | undefined> {
+    const options = this.options as CaptureRuntimeOptions;
     const session = this.createSession();
     const disabledFile = confined(session.directory, "ocr.disabled");
     const syncOcrStatus = () => {
@@ -382,7 +602,11 @@ class CaptureController implements CaptureRuntime {
       else if (fs.existsSync(disabledFile)) fs.unlinkSync(disabledFile);
     };
     let availabilityTimer: ReturnType<typeof setInterval> | undefined;
+    let pinTimer: ReturnType<typeof setInterval> | undefined;
+    let pinTask = Promise.resolve();
+    let pinBusy = false;
     try {
+      prepareEdit?.(session);
       // The native session reads this file dynamically. A fixed false argv
       // would prevent an already-open selection from following a later enable.
       syncOcrStatus();
@@ -394,11 +618,27 @@ class CaptureController implements CaptureRuntime {
           console.error("capture-ocr-state", error);
         }
       }, 250);
+      const hostPin = this.pinAllowed();
+      if (hostPin)
+        pinTimer = setInterval(() => {
+          if (pinBusy || !this.sessionCurrent(session)) return;
+          pinBusy = true;
+          pinTask = this.pollPin(session)
+            .catch((error) => console.error("capture-pin", error))
+            .finally(() => {
+              pinBusy = false;
+            });
+        }, 100);
       await this.start(session, [
         "--auto-quit=true",
         `--spark233-locale=${options.getLocale?.().toLowerCase().startsWith("en") ? "en-US" : "zh-CN"}`,
         ...(activation.commandId === "ocr" ? ["--enter=ocr"] : []),
+        ...(hostPin ? ["--spark233-pin-host=true", `--spark233-pin-owner-pid=${process.pid}`] : []),
+        ...(prepareEdit ? ["--spark233-edit-pin=true"] : []),
       ]);
+      clearInterval(pinTimer);
+      await pinTask;
+      if (session.pinId) return { status: "pinned", pinId: session.pinId };
       // A cancelled selection publishes nothing; every completed one publishes exactly
       // once, whatever the user did with it.
       if (!fs.existsSync(confined(session.directory, "capture.json")))
@@ -450,12 +690,14 @@ class CaptureController implements CaptureRuntime {
       return await options.recognize(image);
     } finally {
       clearInterval(availabilityTimer);
+      clearInterval(pinTimer);
+      await pinTask;
       await this.finishSession(session);
     }
   }
 }
 
-function checkedPng(filename: string): {
+export function checkedPng(filename: string): {
   path: string;
   size: number;
   width: number;
@@ -482,6 +724,16 @@ function checkedPng(filename: string): {
   if (!width || !height || width > 65536 || height > 65536 || width * height > 100_000_000)
     throw new Error("OCR image dimensions exceed the task budget");
   return { path: real, size, width, height };
+}
+function checkedPinDocument(filename: string): string {
+  const real = fs.realpathSync(filename),
+    stat = fs.statSync(real);
+  if (!stat.isFile() || !stat.size || stat.size > 8 * 1024 * 1024)
+    throw new Error("Pinned-image document exceeds 8 MiB or is not a file");
+  const value: unknown = JSON.parse(fs.readFileSync(real, "utf8"));
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Pinned-image document must be a JSON object");
+  return real;
 }
 
 class OcrController extends CaptureController implements OcrRuntime {

@@ -3,6 +3,15 @@
 Local SDK under development. `@spark233/sdk` is a working package name, not a
 claim that its npm scope has been registered. Publishing is a separate step.
 
+Browser pages with an explicitly granted `node.backend` capability can call their
+current backend using `client.capability("node.backend", "invoke", { commandId,
+parameters })`. Only the same plugin's public headless commands are accepted;
+internal commands, window commands and commands requiring file/image/window or
+host-observed source context are rejected. Requests use the current owner and
+existing scoped task cancellation, with bounded JSON input/output and owner
+checks before dispatch and before returning. The host never falls back to
+`activate` or starts a different plugin through this operation.
+
 A plugin is a prebuilt npm package with a `spark233` manifest in `package.json`.
 The manifest is validated without running plugin code or npm lifecycle scripts.
 `schemaVersion` is 1; the current host API is 1.2.0 and theme protocol is 1.0.0.
@@ -183,6 +192,14 @@ name; window icons inherit `ui.icon`. Dimensions are constrained to the display.
 Existing official window geometry takes priority. `legacyLabels` migrates old
 official window labels.
 
+Host API 1.5 adds `ui.windows.<profile>.titleBar: "custom"` for a frameless Web
+window. Declare `api: ">=1.5.0 <2.0.0"`; omitted or `"native"` retains the system
+title bar. `client.window.minimize()`, `toggleMaximize()` and `isMaximized()` act
+only on the calling plugin's declared custom window and accept no target or
+options. Maximize respects both `resizable` and `maximizable`. `client.close()`
+keeps the existing save-before-close lifecycle. Use native CSS drag regions for
+title bar movement and exclude controls with `app-region: no-drag`.
+
 HTML/icon paths are confined to the package, including symlink resolution.
 Icons are signature checked, limited to 1 MiB and PNG 1024 pixels per side.
 Ship resources in the package's `files` list. Declarations never grant arbitrary
@@ -195,3 +212,95 @@ user preferences remain in private runtime stores and are never bundled.
 Official renderers have their own `renderer/main.tsx`, shared shell and desktop
 bridge. Generic Web plugins keep the restricted browser SDK and save protocol;
 they do not gain access to the official desktop bridge.
+
+## Desktop cards (host API 1.4)
+
+Desktop cards are templates under `ui.widgets`; users create durable instances
+of those templates. A widget-only plugin does not need a dummy page or backend.
+Declare `api: ">=1.4.0 <2.0.0"`; broad ranges including older APIs are rejected.
+Old plugins without widgets keep their existing contracts.
+
+```json
+{
+  "ui": {
+    "theme": "^1.0.0",
+    "widgets": {
+      "clock": {
+        "kind": "declarative",
+        "title": "Clock",
+        "template": "widgets/clock.json",
+        "size": { "width": 240, "height": 80 },
+        "clickThrough": true,
+        "interactive": false,
+        "data": { "time": { "source": "host", "provider": "host.clock", "format": "text" } }
+      }
+    }
+  }
+}
+```
+
+The JSON template is a bounded tree of `stack`, `text`, `number`, `progress`,
+`icon`, `sparkline`, `rank-list` and `button` nodes. It contains no scripts, raw HTML, CSS or
+expressions. The host validates the template, data formats and referenced action
+IDs before execution. A clock template may use:
+
+```json
+{
+  "version": 1,
+  "padding": 12,
+  "background": "card",
+  "root": {
+    "type": "text",
+    "value": { "dataKey": "time" },
+    "size": "title",
+    "tone": "default",
+    "maxLines": 1
+  }
+}
+```
+
+Custom Web templates instead use `kind:"web", entry:"widgets/example/index.html"`.
+They run in a separate restricted shell. Import the standalone browser module
+with `import { connectWidget } from "/__sdk__/widget.js"`, then await
+`connectWidget()` and use `onInit`, `onData`, `onVisibility`, `onSize`, `invoke`,
+`openMain`, `resize` and `dispose`. It exposes no Node, file, network, native or
+arbitrary window API. A Web card may still trigger its plugin's explicitly
+declared actions, so the action list is part of the trust summary.
+
+`commands` is the public-command allowlist; `actions` maps public action IDs to
+`{mode:"query"|"action"|"open-main", commandId, entryId?}`. Headless query/action
+commands cannot reference window commands or require captured files/images/window
+context. A Web card's `openMain(actionId)` requires its own user activation, then
+offers a 10-second candidate in the trusted host shell. The user must click the
+shell's "Open main page" button before the host dispatches that command; child
+messages cannot supply this confirmation. Cancelling, expiry, editing, hiding
+or retiring the owner/load generation prevents pending navigation. Passive cards may
+declare query subscriptions but cannot invoke user actions. Backend/native data
+binds `event` and `subscriptionAction`; the latter must reference a query action.
+Data events contain `{widgetInstanceId,values:{...}}` and must come from the
+declared source and native entry. The host supplies action parameters as
+`{widgetInstanceId,input}`; business configuration remains in the plugin dataDir.
+
+Templates are limited to 32 KiB, 64 nodes and depth 4; complete display frames to
+16 KiB, 16 keys and 480 series samples. Invalid frames are rejected whole, not
+truncated. Null means unavailable. The host owns geometry, input mode and
+lifecycle; disabling removes live views and subscriptions while retaining saved
+instances. Updating or reloading revokes old owner/load-generation ports and
+requests. Package paths and PNG resources are confined and checked at install.
+
+Declarative widgets may optionally declare `desktopInteractions` for a host-owned
+primary `open-main` action, a hover template and native desktop preferences/menu.
+The primary command must also appear in the widget's public `commands` allowlist;
+the window profile belongs to that command, not to the action. This mode uses
+trusted pointer input, separates dragging from clicking and keeps temporary hover,
+edge-hide and drag geometry outside durable layouts. Existing widgets retain
+their original interaction behavior.
+
+`format:"rows"` binds a `rank-list` to at most three display-only records
+`{id,label,valueText,iconId?}`. A template has at most two lists and a frame at most
+six total rows. URLs, paths and arbitrary fields are rejected. Upload/download
+tones use the host's orange/green semantic colors. A matching backend/native event
+may include a separate `icons` dictionary with PNG Base64 values, bound to the
+same current owner and widget instance. Attachments are limited to six images,
+64 KiB decoded per image, 256×256 pixels and 256 KiB decoded total, and cannot
+override static resource IDs. They do not relax the 16 KiB widget data frame.

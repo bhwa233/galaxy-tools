@@ -17,7 +17,16 @@ if (destination === project || destination === path.parse(destination).root)
 const work = path.join(project, "local-build/spark233/ui-build", randomUUID());
 await fs.mkdir(work, { recursive: true });
 const metadata = JSON.parse(await fs.readFile(path.join(source, "package.json"), "utf8"));
-const families = ["button", "alert", "badge", "card", "input", "textarea", "spinner"];
+const families = [
+  "button",
+  "alert",
+  "badge",
+  "card",
+  "input",
+  "textarea",
+  "spinner",
+  "window-title-bar",
+];
 const dist = path.join(destination, "dist");
 
 // Reuse Vite/TypeScript/Tailwind and the installed shadcn sources. No second

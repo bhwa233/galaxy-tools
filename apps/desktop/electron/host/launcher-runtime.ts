@@ -28,6 +28,7 @@ export function createLauncherRuntime(
     | "releasing"
     | "clipboardRuntime"
     | "capsules"
+    | "desktopLayer"
     | "layouts"
     | "safeBounds"
     | "createWindow"
@@ -114,6 +115,15 @@ export function createLauncherRuntime(
   }
   function cancelSelection(): void {
     selectionLauncher.cancel();
+  }
+  function captureExternalFocus(): Promise<number> {
+    if (ctx.maintenance || ctx.hostShutdown.isQuitting || hostWindowFocused())
+      return Promise.resolve(0);
+    return getReader().target(new AbortController().signal);
+  }
+  async function restoreExternalFocus(window: number): Promise<void> {
+    if (ctx.maintenance || ctx.hostShutdown.isQuitting || window <= 0) return;
+    await reader?.restoreTarget(window);
   }
   async function stopSelectionReader(): Promise<void> {
     selectionLauncher.stop();
@@ -267,7 +277,8 @@ export function createLauncherRuntime(
   function hostWindowFocused(): boolean {
     return [
       ...ctx.windows.values(),
-      ...[...(ctx.capsules?.surfaces.values() ?? [])].map((surface) => surface.win),
+      ...(ctx.capsules?.presentationWindows() ?? []),
+      ...(ctx.desktopLayer?.windows() ?? []),
     ].some((win) => !win.isDestroyed() && win.isFocused());
   }
 
@@ -376,6 +387,8 @@ export function createLauncherRuntime(
     showLauncherWithSelection,
     prepareSelectionReader,
     cancelSelection,
+    captureExternalFocus,
+    restoreExternalFocus,
     stopSelectionReader,
     requestLauncher,
     preloadLauncher,

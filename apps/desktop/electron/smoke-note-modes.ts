@@ -24,7 +24,11 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     await win.webContents.executeJavaScript(
       `document.querySelector('[data-note-editor-mode="${value}"]').click()`,
     );
-    await until(win, mode(value), `Note did not switch to ${value}`);
+    await until(
+      win,
+      `${mode(value)} && !document.querySelector('[data-note-editor-mode="${value}"]')?.disabled`,
+      `Note did not finish switching to ${value}`,
+    );
   }
   async function save(win: BrowserWindow, noteId?: string, expectedContent?: string) {
     const expected =
@@ -35,6 +39,11 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     await win.webContents.executeJavaScript(
       "document.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true}))",
     );
+    // Matching disk content can predate this Ctrl+S, especially in read-only
+    // Markdown mode. Drain the actual renderer save queue before the next
+    // action, rather than accumulating unacknowledged saves until fold/close.
+    if (!(await context.prepare(win)))
+      throw new Error("Ctrl+S did not complete its renderer save acknowledgement");
     if (expected === null) {
       await wait(200);
       return;
@@ -51,6 +60,9 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   }
   const win = context.windows.get(await context.openNote())!;
   await until(win, mode("text"), "New note did not default to Text mode");
+  win.show();
+  win.focus();
+  win.webContents.focus();
   if (
     await win.webContents.executeJavaScript(
       "!document.querySelector('textarea') || !!document.querySelector('[contenteditable=true]')",
@@ -65,12 +77,11 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   if (!headerTitle) throw new Error("Note title is not limited to 12 characters at upper left");
   await win.webContents.executeJavaScript("document.querySelector('[data-note-title]').focus()");
   await win.webContents.insertText("一二三四五六七八九十甲乙丙");
-  if (
-    (await win.webContents.executeJavaScript(
-      "document.querySelector('[data-note-title]').value",
-    )) !== "一二三四五六七八九十甲乙"
-  )
-    throw new Error("Native title input did not enforce the 12-character limit");
+  await until(
+    win,
+    "document.querySelector('[data-note-title]').value === '一二三四五六七八九十甲乙'",
+    "Native title input did not enforce the 12-character limit",
+  );
   const source =
     "# 原来的便签\n\n正文 **保持原样**。\n\n- [ ] 核对图片\n- [x] 已完成\n\n| 列一 | 列二 |\n| --- | --- |\n| 原文 | 保留 |\n\n公式：$E=mc^2$\n\n";
   await win.webContents.executeJavaScript("document.querySelector('textarea').focus()");
@@ -145,7 +156,35 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     "Text mode did not show the exact saved source",
   );
   fs.writeFileSync(path.join(output, "note-pad-text.png"), (await win.capturePage()).toPNG());
-  await context.foldAndRelease(win);
+  await win.webContents.executeJavaScript(`(() => {
+    window.smokeCloseEvents=[];
+    window.spark233Desktop.on('desktop:prepare-close', value => window.smokeCloseEvents.push({ requestId:value.requestId, at:Date.now() }));
+  })()`);
+  try {
+    await context.foldAndRelease(win);
+  } catch (error) {
+    const state = await win.webContents
+      .executeJavaScript(`({
+      text: document.body.innerText, url: location.href,
+      visible: document.visibilityState,
+      closeEvents: window.smokeCloseEvents,
+      editorMode: document.querySelector('[data-editor-mode]')?.getAttribute('data-editor-mode'),
+      content: document.querySelector('textarea')?.value
+    })`)
+      .catch((failure) => ({ failure: String(failure) }));
+    fs.writeFileSync(
+      path.join(output, "note-mode-close-failure.json"),
+      JSON.stringify(
+        {
+          state,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        null,
+        2,
+      ),
+    );
+    throw error;
+  }
   const reopened = context.windows.get(await context.openNote(id))!;
   await until(reopened, mode("text"), "Fold/reopen forgot the note's Text mode");
   await switchMode(reopened, "markdown");
@@ -161,7 +200,7 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     "Main editor did not load the same source",
   );
   await main.webContents.executeJavaScript(
-    "document.querySelector('button[data-value=edit]').click()",
+    "document.querySelector('button[data-note-view-mode=edit]').click()",
   );
   await until(
     main,
@@ -170,12 +209,12 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
   );
   if (
     await main.webContents.executeJavaScript(
-      "!!document.querySelector('button[data-value=preview]')",
+      "!!document.querySelector('button[data-note-view-mode=preview]')",
     )
   )
     throw new Error("Main window unexpectedly offers a third preview mode");
   await main.webContents.executeJavaScript(
-    "document.querySelector('button[data-value=split]').click()",
+    "document.querySelector('button[data-note-view-mode=split]').click()",
   );
   await until(
     main,
@@ -194,7 +233,16 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     "Main save did not synchronize the small-window preview",
   );
   fs.writeFileSync(path.join(output, "note-main-split.png"), (await main.capturePage()).toPNG());
+  await switchMode(reopened, "text");
+  const immediateCloseSource = original + "\n关闭前立即输入，保存确认保留正文。\n";
+  await reopened.webContents.executeJavaScript(`(() => {
+    const area = document.querySelector('textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, ${JSON.stringify(immediateCloseSource)});
+    area.dispatchEvent(new Event('input', {bubbles:true}));
+  })()`);
   await context.hideAndRelease(reopened);
+  if ((await context.notes.get(id)).content !== immediateCloseSource)
+    throw new Error("Immediate close lost the pending editor source");
   return {
     defaultTextEditor: true,
     titleAtUpperLeft: true,
@@ -208,5 +256,6 @@ export async function verifyNoteModes(context: SmokeContext, main: BrowserWindow
     modeRememberedOnReopen: true,
     mainEditAndSplit: true,
     mainToPadSync: true,
+    immediateDirtyClose: true,
   };
 }

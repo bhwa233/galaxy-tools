@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Database,
+  PanelsTopLeft,
   LayoutList,
   Keyboard,
   PanelBottom,
@@ -16,6 +17,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -29,8 +40,12 @@ import {
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { getCurrentWindow, listen } from "../../platform/desktop";
 import { PluginManagementDialog } from "../plugins/PluginManagementDialog";
+import { listPlugins, watchPluginsChanged, watchPluginPackageTasks } from "../plugins/api";
+import type { PluginManagementState } from "../plugins/types";
+import { DEFAULT_DESKTOP_LAYER_PREFERENCES } from "../../../shared/config-schema";
 import { BackupDialog } from "../backup/BackupDialog";
 import { DiagnosticsDialog } from "../diagnostics/DiagnosticsDialog";
+import { DesktopWidgetManager } from "../desktop-layer/DesktopWidgetManager";
 import { LauncherPreferencesDialog } from "../launcher/LauncherPreferencesDialog";
 import {
   getLauncherState,
@@ -55,6 +70,7 @@ const pages = [
   "shortcuts",
   "tray",
   "entries",
+  "desktop",
   "plugins",
   "marketplace",
   "backup",
@@ -73,18 +89,78 @@ const icons = {
   shortcuts: Keyboard,
   tray: PanelBottom,
   entries: LayoutList,
+  desktop: PanelsTopLeft,
   plugins: Package,
   marketplace: Store,
   backup: Database,
   diagnostics: Stethoscope,
 };
+function withPendingConfig(value: AppConfig, patch: AppConfigPatch): AppConfig {
+  return {
+    ...value,
+    ...patch,
+    desktopLayer: {
+      ...DEFAULT_DESKTOP_LAYER_PREFERENCES,
+      ...value.desktopLayer,
+      ...patch.desktopLayer,
+    },
+  };
+}
 export function SettingsWindow() {
   const { t } = useTranslation();
   const [target, setTarget] = useState<SettingsTarget>(initialTarget);
   const [config, setConfig] = useState<AppConfig>();
   const [state, setState] = useState<LauncherState>();
+  const [pluginSnapshot, setPluginSnapshot] = useState<PluginManagementState>();
+  const pluginReads = useRef<{
+    generation: number;
+    value?: PluginManagementState;
+    pending?: Promise<PluginManagementState>;
+  }>({ generation: 0 });
+  // The settings shell already owns shared configuration. Keep its public
+  // plugin snapshot here as well; editors still unmount through save guards.
+  const readPlugins = useCallback((refresh = false): Promise<PluginManagementState> => {
+    const cache = pluginReads.current;
+    if (cache.pending) return cache.pending;
+    if (!refresh && cache.value) return Promise.resolve(cache.value);
+    const generation = cache.generation;
+    const operation = listPlugins().then((snapshot) => {
+      if (generation === cache.generation) {
+        cache.value = snapshot;
+        setPluginSnapshot(snapshot);
+      }
+      return snapshot;
+    });
+    cache.pending = operation;
+    void operation
+      .finally(() => {
+        if (cache.pending === operation) cache.pending = undefined;
+      })
+      .catch(() => {});
+    return operation;
+  }, []);
+  useEffect(() => {
+    const invalidate = () => {
+      const cache = pluginReads.current;
+      cache.generation++;
+      cache.pending = undefined;
+      cache.value = undefined;
+    };
+    const pluginsListener = watchPluginsChanged(() => {
+      const loaded = !!pluginReads.current.value || !!pluginReads.current.pending;
+      invalidate();
+      if (loaded) void readPlugins().catch(() => {});
+    });
+    const tasksListener = watchPluginPackageTasks(invalidate);
+    return () => {
+      invalidate();
+      void pluginsListener.then((stop) => stop());
+      void tasksListener.then((stop) => stop());
+    };
+  }, [readPlugins]);
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [hasPending, setHasPending] = useState(false);
   const [migrationTarget, setMigrationTarget] = useState<string>();
   const [migrating, setMigrating] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -113,7 +189,7 @@ export function SettingsWindow() {
       })
       .catch(() => {});
     const configListener = listen("config-changed", ({ payload }) =>
-      setConfig({ ...payload, ...hostPending.current }),
+      setConfig(withPendingConfig(payload, hostPending.current)),
     );
     const statusListener = listen("launcher-status-changed", () => {
       void getLauncherState()
@@ -148,26 +224,49 @@ export function SettingsWindow() {
     }
   };
   const change = (patch: AppConfigPatch) => {
-    hostPending.current = { ...hostPending.current, ...patch };
-    setConfig((current) => (current ? { ...current, ...patch } : current));
+    hostPending.current = {
+      ...hostPending.current,
+      ...patch,
+      ...(patch.desktopLayer
+        ? { desktopLayer: { ...hostPending.current.desktopLayer, ...patch.desktopLayer } }
+        : {}),
+    };
+    setHasPending(Object.keys(hostPending.current).length > 0);
+    setConfig((current) => (current ? withPendingConfig(current, patch) : current));
     setSaving(true);
+    let submitted: AppConfigPatch = {};
     const operation = writes.current
       .catch(() => {})
       .then(async () => {
-        const submitted = { ...hostPending.current };
+        submitted = { ...hostPending.current };
         if (!Object.keys(submitted).length) return;
         const value = await patchConfig(submitted);
         for (const key of Object.keys(submitted) as (keyof AppConfigPatch)[])
           if (JSON.stringify(hostPending.current[key]) === JSON.stringify(submitted[key]))
             delete hostPending.current[key];
         if (mounted.current) {
-          setConfig({ ...value, ...hostPending.current });
+          setHasPending(Object.keys(hostPending.current).length > 0);
+          setConfig(withPendingConfig(value, hostPending.current));
           setError(undefined);
         }
       });
     writes.current = operation;
     void operation
-      .catch((value) => {
+      .catch(async (value) => {
+        if (
+          submitted.desktopLayer &&
+          JSON.stringify(hostPending.current.desktopLayer) ===
+            JSON.stringify(submitted.desktopLayer)
+        ) {
+          delete hostPending.current.desktopLayer;
+          if (mounted.current) setHasPending(Object.keys(hostPending.current).length > 0);
+          try {
+            const current = await getConfig();
+            if (mounted.current) setConfig(withPendingConfig(current, hostPending.current));
+          } catch {
+            /* Preserve the visible save error if the refresh also fails. */
+          }
+        }
         if (mounted.current) setError(text(value));
       })
       .finally(() => {
@@ -201,6 +300,7 @@ export function SettingsWindow() {
     void operation().catch((value) => setError(text(value)));
   };
   const page = target.page ?? "general";
+  const desktopPreferences = { ...DEFAULT_DESKTOP_LAYER_PREFERENCES, ...config?.desktopLayer };
   return (
     <main className="flex h-screen min-w-0 flex-col bg-background text-foreground">
       <header
@@ -314,6 +414,8 @@ export function SettingsWindow() {
                     onNavigate={navigate}
                     pluginId={target.pluginId}
                     initialTab={target.tab}
+                    initialState={pluginSnapshot}
+                    loadState={readPlugins}
                     onOpenChange={() => {}}
                   />
                 )}
@@ -326,6 +428,8 @@ export function SettingsWindow() {
                     onSaved={setConfig}
                     warnings={state?.warnings}
                     pluginId={target.pluginId}
+                    initialState={pluginSnapshot}
+                    loadState={readPlugins}
                   />
                 )}
                 {page === "entries" && (
@@ -347,6 +451,74 @@ export function SettingsWindow() {
                       return next;
                     }}
                   />
+                )}
+                {page === "desktop" && (
+                  <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
+                    <FieldSet>
+                      <FieldLegend>{t("settingsEditor.pages.desktop")}</FieldLegend>
+                      <FieldGroup>
+                        <Field orientation="horizontal" data-disabled={saving}>
+                          <Checkbox
+                            id="desktop-layer-enabled"
+                            checked={desktopPreferences.enabled}
+                            disabled={saving}
+                            onCheckedChange={(enabled) => change({ desktopLayer: { enabled } })}
+                          />
+                          <FieldContent>
+                            <FieldLabel htmlFor="desktop-layer-enabled">
+                              {t("desktopSettings.enabled")}
+                            </FieldLabel>
+                            <FieldDescription>
+                              {t("desktopSettings.enabledDescription")}
+                            </FieldDescription>
+                          </FieldContent>
+                        </Field>
+                        <Field
+                          orientation="horizontal"
+                          data-disabled={saving || !desktopPreferences.enabled}
+                        >
+                          <Checkbox
+                            id="desktop-layer-web"
+                            checked={desktopPreferences.webEnabled}
+                            disabled={saving || !desktopPreferences.enabled}
+                            onCheckedChange={(webEnabled) =>
+                              change({ desktopLayer: { ...config.desktopLayer, webEnabled } })
+                            }
+                          />
+                          <FieldContent>
+                            <FieldLabel htmlFor="desktop-layer-web">
+                              {t("desktopSettings.webEnabled")}
+                            </FieldLabel>
+                          </FieldContent>
+                        </Field>
+                        <Field
+                          orientation="horizontal"
+                          data-disabled={saving || !desktopPreferences.enabled}
+                        >
+                          <Checkbox
+                            id="desktop-layer-notes"
+                            checked={desktopPreferences.notesEnabled}
+                            disabled={saving || !desktopPreferences.enabled}
+                            onCheckedChange={(notesEnabled) =>
+                              change({ desktopLayer: { ...config.desktopLayer, notesEnabled } })
+                            }
+                          />
+                          <FieldContent>
+                            <FieldLabel htmlFor="desktop-layer-notes">
+                              {t("desktopSettings.notesEnabled")}
+                            </FieldLabel>
+                            <FieldDescription>
+                              {t("desktopSettings.notesDescription")}
+                            </FieldDescription>
+                          </FieldContent>
+                        </Field>
+                      </FieldGroup>
+                    </FieldSet>
+                    <DesktopWidgetManager
+                      enabled={desktopPreferences.enabled}
+                      webEnabled={desktopPreferences.webEnabled}
+                    />
+                  </div>
                 )}
                 {page === "backup" && (
                   <>
@@ -371,12 +543,12 @@ export function SettingsWindow() {
                 {page === "diagnostics" && (
                   <DiagnosticsDialog embedded open onOpenChange={() => {}} />
                 )}
-                {(page === "general" || page === "tray") && (
+                {(page === "general" || page === "tray" || page === "desktop") && (
                   <SettingsFooter
                     status={
                       saving
                         ? t("launcher.preferences.saving")
-                        : Object.keys(hostPending.current).length
+                        : hasPending
                           ? t("settingsEditor.unsaved")
                           : t("settingsEditor.saved")
                     }

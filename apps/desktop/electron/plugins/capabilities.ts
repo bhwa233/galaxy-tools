@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { commandMatchesSourceApplication } from "@spark233/sdk";
+import { assertWidgetJson, commandMatchesSourceApplication } from "@spark233/sdk";
 import type {
   JsonValue,
   PluginManifest,
@@ -27,8 +27,15 @@ export function createCapabilityBroker(options: {
   manager: () => PluginManager;
   updateTray?: (payload: unknown) => void;
   resolveResource?: (resource: ResourceHandle) => string | undefined;
+  /** Host-owned limits for a trusted backend's configuration channel. Widget
+   * traffic retains its original defaults; pages cannot raise their own limits. */
+  backendJsonLimits?: { maxBytes: number; maxNodes: number; maxStringLength: number };
   invokeNative?: (
     entryId: string,
+    activation: PluginActivation,
+    signal: AbortSignal,
+  ) => Promise<JsonValue | undefined>;
+  invokeBackend?: (
     activation: PluginActivation,
     signal: AbortSignal,
   ) => Promise<JsonValue | undefined>;
@@ -71,6 +78,51 @@ export function createCapabilityBroker(options: {
   const broker = async (request: PluginWebCapabilityRequest): Promise<JsonValue | undefined> => {
     accept(request);
     const { capability, operation, payload } = request;
+    if (capability === "node.backend" && operation === "invoke") {
+      if (!options.manifest.capabilities.includes("node.backend") || !options.invokeBackend)
+        throw new Error("此插件的后台运行时不可用");
+      const limits = options.backendJsonLimits;
+      assertWidgetJson(
+        payload,
+        limits?.maxBytes,
+        limits ? 12 : undefined,
+        limits?.maxNodes,
+        limits?.maxStringLength,
+      );
+      const input = z
+        .strictObject({ commandId: z.string().min(1).max(80), parameters: z.json().optional() })
+        .parse(payload);
+      const command = options.manifest.commands.find(
+        (value) => value.id === input.commandId && !value.internal,
+      );
+      if (
+        !command ||
+        command.window ||
+        command.sourceApplications ||
+        command.match === "window" ||
+        command.inputs.some((kind) => kind === "files" || kind === "image" || kind === "window")
+      )
+        throw new Error("后台调用仅允许本插件公开的无窗命令，不能伪造资源或来源上下文");
+      options.manager().assertCommandAvailable(options.manifest.id, command.id);
+      if (!options.manager().isOwnerCurrent(request.owner, command.id))
+        throw new Error("后台实例已失效");
+      const result = await options.invokeBackend(
+        { commandId: command.id, parameters: input.parameters as JsonValue | undefined },
+        request.signal,
+      );
+      accept(request);
+      if (!options.manager().isOwnerCurrent(request.owner, command.id))
+        throw new Error("后台结果所属实例已失效");
+      if (result !== undefined)
+        assertWidgetJson(
+          result,
+          limits?.maxBytes ?? 64 * 1024,
+          12,
+          limits?.maxNodes ?? 4096,
+          limits?.maxStringLength,
+        );
+      return result;
+    }
     if (capability === "tray" && operation === "update") {
       if (!options.updateTray) throw new Error("Plugin tray is unavailable");
       options.updateTray(payload);

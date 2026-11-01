@@ -510,6 +510,7 @@
       "registryPluginHint": "从 npm 安装的插件会自动检查，更新需要你确认安装。"
     },
     "visibilityShortcut": "显示/隐藏窗口快捷键",
+    "desktopOverlayShortcut": "显示/隐藏桌面插件栏",
     "background": {
       "label": "背景图片",
       "default": "默认背景",
@@ -1056,6 +1057,7 @@
     "pages": {
       "general": "常规设置",
       "entries": "入口管理",
+      "desktop": "桌面卡片",
       "plugins": "插件配置",
       "marketplace": "插件市场",
       "backup": "数据与备份",
@@ -1076,6 +1078,16 @@
     "minimize": "最小化",
     "maximize": "最大化或还原",
     "backGeneral": "返回常规设置"
+  },
+  "desktopSettings": {
+    "enabled": "桌面插件层",
+    "enabledDescription": "关闭后保留卡片和布局。",
+    "webEnabled": "网页卡片",
+    "notesEnabled": "桌面便签胶囊",
+    "notesDescription": "关闭后恢复原显示方式。",
+    "retry": "重试恢复",
+    "retrying": "正在恢复…",
+    "retryCard": "重新加载卡片：{{title}}"
   },
   "pluginMarket": {
     "tabs": {
@@ -1172,6 +1184,9 @@
     "moveUp": "上移 {{title}}",
     "moveDown": "下移 {{title}}",
     "showItem": "显示 {{title}}"
+  },
+  "desktopOverlay": {
+    "open": "打开插件栏"
   },
   "noteHistory": {
     "title": "版本历史",

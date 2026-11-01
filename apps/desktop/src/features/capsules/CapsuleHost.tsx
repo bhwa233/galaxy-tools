@@ -5,14 +5,6 @@ import { invoke, listen } from "../../platform/desktop";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../markdown/MarkdownPreviewLazy";
 import "./capsules.css";
 import type { CapsuleItem, CapsuleSnapshot } from "./types";
-function run<C extends import("../../../shared/command-policies").CommandName>(
-  command: C,
-  ...input: undefined extends import("../../../shared/desktop-contract").Commands[C]["args"]
-    ? [args?: import("../../../shared/desktop-contract").Commands[C]["args"]]
-    : [args: import("../../../shared/desktop-contract").Commands[C]["args"]]
-) {
-  void invoke(command, ...input).catch(console.error);
-}
 /** Vector marks share a fixed box so glyph fallback cannot change their visual center. */
 function CapsuleMark({ expanded }: { expanded: boolean }) {
   return expanded ? (
@@ -44,20 +36,33 @@ function CapsuleMark({ expanded }: { expanded: boolean }) {
     </svg>
   );
 }
-export function CapsuleHost() {
+export function CapsuleHost({
+  snapshot,
+  request = invoke,
+}: { snapshot?: CapsuleSnapshot; request?: typeof invoke } = {}) {
   const { t } = useTranslation();
-  const [state, setState] = useState<CapsuleSnapshot>();
+  const [liveState, setState] = useState<CapsuleSnapshot>();
+  const state = snapshot ?? liveState;
+  function run<C extends import("../../../shared/command-policies").CommandName>(
+    command: C,
+    ...input: undefined extends import("../../../shared/desktop-contract").Commands[C]["args"]
+      ? [args?: import("../../../shared/desktop-contract").Commands[C]["args"]]
+      : [args: import("../../../shared/desktop-contract").Commands[C]["args"]]
+  ) {
+    void request(command, ...input).catch(console.error);
+  }
   const gesture = useRef<{ pointerId: number; x: number; y: number; dragging: boolean } | null>(
     null,
   );
   const suppressClick = useRef(false);
   useEffect(() => {
+    if (snapshot) return;
     const off = listen("capsule-state", (e) => setState(e.payload));
     void invoke("capsule_state").then(setState).catch(console.error);
     return () => {
       void off.then((fn) => fn());
     };
-  }, []);
+  }, [snapshot]);
   const press = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     suppressClick.current = false;

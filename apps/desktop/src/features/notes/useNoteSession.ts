@@ -418,7 +418,11 @@ export function useNoteSession({
     [replaceNoteMetadata, t],
   );
 
-  const { save: saveCurrentNote, pending: pendingSaves } = useNoteDocument(performSave);
+  const {
+    save: saveCurrentNote,
+    pending: pendingSaves,
+    drain: drainSaves,
+  } = useNoteDocument(performSave);
 
   // Reuse the existing save queue and load epoch. Preparing a target never
   // replaces a draft: only the latest request with an unchanged, saved source commits.
@@ -791,6 +795,7 @@ export function useNoteSession({
 
   useNoteClosePreparation({
     save: () => saveCurrentNote(true),
+    drain: drainSaves,
     isDirty: () =>
       pendingSaves.current > 0 || ["dirty", "saving", "error"].includes(saveStateRef.current),
     isSaved: () => saveStateRef.current === "saved" && pendingSaves.current === 0,

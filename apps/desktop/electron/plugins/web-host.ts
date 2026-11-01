@@ -29,6 +29,7 @@ import {
   type PluginWindowStopReason,
 } from "@spark233/sdk";
 import { atomicWrite, canonical, confined, inside } from "../persistence.js";
+import { bindDevToolsShortcut } from "../host/windows.js";
 import { PluginResourceScope, type StopDecision } from "./resources.js";
 
 const SCHEME = "spark233-plugin";
@@ -83,6 +84,10 @@ export interface WebPluginOptions {
   /** Host presentation policy; never read from plugin IPC. */
   show?: boolean;
   timeoutMs?: number;
+  /** Host-owned allowance for a bounded long action such as visible Windows UAC. */
+  capabilityTimeoutMs?: (
+    request: Pick<PluginWebCapabilityRequest, "capability" | "operation" | "payload">,
+  ) => number | undefined;
 }
 export interface WebPluginController {
   readonly owner: PluginOwner;
@@ -140,6 +145,7 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
 };
 const CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -405,6 +411,26 @@ class WebRuntime implements WebPluginController {
         }
         return undefined;
       }
+      case "window.minimize":
+      case "window.toggleMaximize":
+      case "window.isMaximized": {
+        // This handler already authenticates the active owner and main frame.
+        // No target window, coordinates or renderer-controlled flags are accepted.
+        z.undefined().parse(request.payload);
+        const declaration = this.presentation().window;
+        if (declaration?.titleBar !== "custom")
+          throw new Error("Custom window controls were not declared");
+        if (request.operation === "window.isMaximized") return window.isMaximized();
+        if (request.operation === "window.minimize") {
+          window.minimize();
+          return undefined;
+        }
+        if (!window.isResizable() || !window.isMaximizable())
+          throw new Error("This plugin window cannot be maximized");
+        if (window.isMaximized()) window.unmaximize();
+        else window.maximize();
+        return undefined;
+      }
       case "window.close": {
         const decision = await this.prepareStop("window-close");
         if (!decision.ok) throw new Error(decision.reason);
@@ -437,10 +463,17 @@ class WebRuntime implements WebPluginController {
               signal: controller.signal,
             }),
             new Promise<never>((_, reject) => {
-              timer = setTimeout(() => {
-                controller.abort();
-                reject(new Error("Plugin capability timed out"));
-              }, this.options.timeoutMs ?? 10_000);
+              timer = setTimeout(
+                () => {
+                  controller.abort();
+                  reject(new Error("Plugin capability timed out"));
+                },
+                this.options.capabilityTimeoutMs?.(
+                  data as Pick<PluginWebCapabilityRequest, "capability" | "operation" | "payload">,
+                ) ??
+                  this.options.timeoutMs ??
+                  10_000,
+              );
             }),
             new Promise<never>((_, reject) =>
               controller.signal.addEventListener(
@@ -534,6 +567,7 @@ class WebRuntime implements WebPluginController {
         resizable: declaration?.resizable ?? true,
         maximizable: declaration?.maximizable ?? true,
         skipTaskbar: declaration?.taskbar === false,
+        frame: declaration?.titleBar !== "custom",
         show: false,
         title: this.options.manifest.displayName,
         webPreferences: {
@@ -551,6 +585,7 @@ class WebRuntime implements WebPluginController {
         },
       });
       this.currentWindow = window;
+      bindDevToolsShortcut(window, { isolatedSession: true });
       this.applyWindowIdentity();
       window.on("page-title-updated", (event) => event.preventDefault());
       this.connected = false;

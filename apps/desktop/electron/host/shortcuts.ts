@@ -10,6 +10,7 @@ export interface HostShortcutCommand {
 export interface ShortcutManagerOptions {
   showLauncher: () => void | Promise<unknown>;
   toggleVisibility: () => void | Promise<unknown>;
+  toggleDesktopOverlay?: () => void | Promise<unknown>;
   commands: () => readonly HostShortcutCommand[];
   activate: (pluginId: string, commandId: string) => void | Promise<unknown>;
   onError: (error: unknown) => void;
@@ -23,7 +24,7 @@ export interface ShortcutCheck {
 }
 type Configuration = Pick<
   AppConfig,
-  "globalShortcut" | "toggleVisibilityShortcut" | "commandShortcuts"
+  "globalShortcut" | "toggleVisibilityShortcut" | "desktopOverlayShortcut" | "commandShortcuts"
 > & { locale?: string };
 
 /** Own the host's Electron registrations, including its configured public
@@ -35,6 +36,7 @@ export class ShortcutManager {
   private configuration: Configuration = {
     globalShortcut: "",
     toggleVisibilityShortcut: "",
+    desktopOverlayShortcut: "",
     commandShortcuts: {},
   };
 
@@ -79,6 +81,9 @@ export class ShortcutManager {
     const identity = (shortcut: string) =>
       shortcutIdentity(shortcut, process.platform === "darwin" ? "mac" : "windows");
     const commands = this.options.commands();
+    const overlayShortcut = this.options.toggleDesktopOverlay
+      ? (config.desktopOverlayShortcut ?? "Ctrl+Alt+D")
+      : "";
     // Lifecycle changes must free unavailable commands even when another new
     // binding fails to register. Keep unrelated working host bindings intact.
     for (const [id, shortcut] of Object.entries(this.configuration.commandShortcuts ?? {})) {
@@ -94,6 +99,7 @@ export class ShortcutManager {
     const configured: Array<[string, string]> = [
       [config.globalShortcut, english ? "Open launcher" : "打开启动器"],
       [config.toggleVisibilityShortcut, english ? "Show/hide note windows" : "显示/隐藏便签窗口"],
+      [overlayShortcut, english ? "Show/hide desktop plugin bar" : "显示/隐藏桌面插件栏"],
       ...Object.entries(config.commandShortcuts ?? {}).map(([id, shortcut]): [string, string] => {
         const entry = commands.find(
           (command) => command.pluginId + ":" + command.command.id === id,
@@ -122,6 +128,8 @@ export class ShortcutManager {
       [config.globalShortcut, this.options.showLauncher],
       [config.toggleVisibilityShortcut, this.options.toggleVisibility],
     ];
+    if (this.options.toggleDesktopOverlay)
+      bindings.push([overlayShortcut, this.options.toggleDesktopOverlay]);
     for (const [id, shortcut] of Object.entries(config.commandShortcuts ?? {})) {
       const target = commands.find((entry) => entry.pluginId + ":" + entry.command.id === id);
       if (target && shortcut)

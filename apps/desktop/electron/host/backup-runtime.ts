@@ -45,6 +45,8 @@ export function createBackupRuntime(
     | "clearLauncherContext"
     | "registerShortcuts"
     | "publishPluginTheme"
+    | "flushDesktopLayer"
+    | "reloadDesktopLayer"
   >,
 ) {
   async function pauseForBackup(): Promise<() => void> {
@@ -64,6 +66,7 @@ export function createBackupRuntime(
       resumePlugins = await ctx.pluginHost?.pauseMutations();
       ctx.mcpServer?.stop();
       await ctx.mutations.catch(() => {});
+      await ctx.flushDesktopLayer();
       const saved = await Promise.all(
         [...ctx.windows.values()]
           .filter((win) => ctx.layouts.get(ctx.labelOf(win))?.view === "launcher")
@@ -148,6 +151,7 @@ export function createBackupRuntime(
     ctx.launcher.clear();
     ctx.pluginHost?.reloadAfterRestore();
     ctx.hostConfig = new HostConfigStore(ctx.hostConfigDir, dataDir);
+    await ctx.reloadDesktopLayer();
     ctx.launcher = new LauncherController({
       commandMatcher: ctx.commandMatcher,
       getWarnings: () => (ctx.shortcutWarning ? [ctx.shortcutWarning] : []),

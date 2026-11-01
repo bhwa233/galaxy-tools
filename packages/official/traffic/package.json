@@ -1,0 +1,300 @@
+{
+  "name": "@spark233/plugin-traffic",
+  "version": "0.2.3",
+  "private": true,
+  "description": "Desktop traffic monitor with process ETW collection and history",
+  "license": "MIT",
+  "files": [
+    "backend.mjs",
+    "collector.ps1",
+    "native/**",
+    "licenses/**",
+    "renderer/**",
+    "widgets/**",
+    "README.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.traffic",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@spark233/sdk": "workspace:*",
+    "@spark233/ui": "workspace:*",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "45.1.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "spark233": {
+    "schemaVersion": 1,
+    "id": "spark233.traffic",
+    "displayName": "流量监控",
+    "translations": {
+      "en-US": {
+        "displayName": "Traffic monitor"
+      }
+    },
+    "api": ">=1.5.0 <2.0.0",
+    "host": ">=0.0.1 <1",
+    "platforms": [
+      "win32"
+    ],
+    "architectures": [
+      "x64"
+    ],
+    "activation": "on-startup",
+    "entry": "renderer/index.html",
+    "backend": {
+      "entry": "backend.mjs"
+    },
+    "native": {
+      "traffic": {
+        "path": "native/spark233.TrafficClient.exe",
+        "args": [
+          "--bridge"
+        ]
+      }
+    },
+    "capabilities": [
+      "node.backend",
+      "native.process"
+    ],
+    "commands": [
+      {
+        "id": "open",
+        "title": "流量监控",
+        "keywords": [
+          "流量",
+          "网速",
+          "traffic",
+          "network"
+        ],
+        "window": "main",
+        "translations": {
+          "en-US": {
+            "title": "Traffic monitor"
+          }
+        }
+      },
+      {
+        "id": "snapshot",
+        "title": "读取网卡流量",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "subscribe",
+        "title": "订阅流量卡片",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "pause",
+        "title": "设置流量采集暂停",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "process.enable",
+        "title": "启用进程采集",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "process.scope",
+        "title": "切换流量范围",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "history",
+        "title": "查询流量历史",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "history.clear",
+        "title": "清空流量历史",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "connections",
+        "title": "查询程序连接",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "retry",
+        "title": "重新连接流量采集",
+        "launcher": {
+          "role": "hidden"
+        }
+      }
+    ],
+    "ui": {
+      "theme": "^1.0.0",
+      "windows": {
+        "main": {
+          "entry": "renderer/index.html",
+          "title": "流量监控",
+          "size": {
+            "width": 1000,
+            "height": 680
+          },
+          "minSize": {
+            "width": 800,
+            "height": 540
+          },
+          "resizable": true,
+          "maximizable": true,
+          "taskbar": true,
+          "reuse": "singleton",
+          "presentation": "standard",
+          "titleBar": "custom"
+        }
+      },
+      "widgets": {
+        "hud": {
+          "kind": "declarative",
+          "template": "widgets/hud.json",
+          "title": "桌面流量窗",
+          "translations": {
+            "en-US": {
+              "title": "Desktop traffic monitor"
+            }
+          },
+          "size": {
+            "width": 120,
+            "height": 52
+          },
+          "minSize": {
+            "width": 120,
+            "height": 52
+          },
+          "maxSize": {
+            "width": 120,
+            "height": 52
+          },
+          "resizable": false,
+          "group": "top",
+          "clickThrough": false,
+          "interactive": true,
+          "desktopInteractions": {
+            "primaryAction": "open",
+            "hover": {
+              "template": "widgets/traffic-hover.json",
+              "size": {
+                "width": 260,
+                "height": 300
+              }
+            },
+            "menu": {
+              "openLabel": "查看流量详情",
+              "hideLabel": "关闭流量提示"
+            },
+            "edgeAutoHide": false,
+            "fullscreenAutoHide": true
+          },
+          "refreshMs": 1000,
+          "commands": [
+            "subscribe",
+            "open"
+          ],
+          "actions": {
+            "open": {
+              "mode": "open-main",
+              "commandId": "open"
+            },
+            "subscribe": {
+              "mode": "query",
+              "commandId": "subscribe"
+            }
+          },
+          "data": {
+            "upload-top": {
+              "source": "backend",
+              "format": "rows",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "download-top": {
+              "source": "backend",
+              "format": "rows",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "process-status": {
+              "source": "backend",
+              "format": "text",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "rx": {
+              "source": "backend",
+              "format": "number",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "tx": {
+              "source": "backend",
+              "format": "number",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "rx-text": {
+              "source": "backend",
+              "format": "text",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "tx-text": {
+              "source": "backend",
+              "format": "text",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "rx-series": {
+              "source": "backend",
+              "format": "series",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "tx-series": {
+              "source": "backend",
+              "format": "series",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "status": {
+              "source": "backend",
+              "format": "text",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            },
+            "scope": {
+              "source": "backend",
+              "format": "text",
+              "event": "traffic.snapshot",
+              "subscriptionAction": "subscribe"
+            }
+          }
+        }
+      }
+    }
+  }
+}

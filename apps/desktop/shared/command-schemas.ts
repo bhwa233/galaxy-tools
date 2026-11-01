@@ -19,6 +19,13 @@ const size = z.strictObject({
   height: z.number().int().min(1).max(32768),
 });
 const bounds = position.extend(size.shape);
+const layerUpdate = z.strictObject({
+  group: z.enum(["top", "normal"]).optional(),
+  inputMode: z.enum(["passive", "interactive"]).optional(),
+  visible: z.boolean().optional(),
+  bounds: bounds.optional(),
+  displayId: z.string().min(1).max(160).optional(),
+});
 const note = z.strictObject({
   title: z.string().max(1000),
   content: text,
@@ -176,6 +183,13 @@ const translationRequest = z.discriminatedUnion("action", [
 
 /** Exhaustive: new policies require a reviewed boundary schema. */
 export const commandSchemas = {
+  layer_listTemplates: empty,
+  desktop_overlay_toggle: empty,
+  layer_create: z.strictObject({ pluginId: plugin, widgetDefinitionId: z.string().min(1).max(80) }),
+  layer_remove: z.strictObject({ widgetInstanceId: z.uuid() }),
+  layer_retry: z.strictObject({ widgetInstanceId: z.uuid() }),
+  layer_update: z.strictObject({ widgetInstanceId: z.uuid(), patch: layerUpdate }),
+  layer_edit: z.strictObject({ displayId: z.string().min(1).max(160).optional() }),
   app_exec_path: empty,
   app_mcp_command: empty,
   app_name: empty,
@@ -223,6 +237,7 @@ export const commandSchemas = {
       .strictObject({
         globalShortcut: z.string().max(100),
         toggleVisibilityShortcut: z.string().max(100),
+        desktopOverlayShortcut: z.string().max(100).optional(),
       })
       .optional(),
   }),
@@ -445,6 +460,7 @@ export const commandSchemas = {
         "marketplace",
         "backup",
         "diagnostics",
+        "desktop",
       ])
       .optional(),
     pluginId: plugin.optional(),

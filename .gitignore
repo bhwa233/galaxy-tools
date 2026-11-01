@@ -81,3 +81,5 @@ packages/ui/dist/
 
 .playwright-mcp/console-*.log
 packages/official/notes/backend.mjs
+packages/official/quicklinks/backend.mjs
+packages/official/traffic/backend.mjs

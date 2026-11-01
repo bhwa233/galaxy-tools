@@ -28,6 +28,16 @@ export function createWindowClose(
   let retained: BrowserWindow | undefined;
 
   async function prepare(win: BrowserWindow): Promise<boolean> {
+    if (process.env.SPARK233_SMOKE === "1")
+      console.info(
+        "smoke-prepare",
+        JSON.stringify({
+          at: Date.now(),
+          windowId: win.id,
+          ready: ctx.ready.has(win.id),
+          destroyed: win.isDestroyed(),
+        }),
+      );
     if (win.isDestroyed()) return true;
     // A dead renderer cannot acknowledge saving. Its plugin has already been
     // marked failed; preserve the last durable state and let live owners save.
@@ -63,6 +73,11 @@ export function createWindowClose(
   }
 
   function releaseWindow(win: BrowserWindow, fold: boolean): Promise<void> {
+    if (process.env.SPARK233_SMOKE === "1")
+      console.info(
+        "smoke-release",
+        JSON.stringify({ at: Date.now(), windowId: win.id, fold, stack: new Error().stack }),
+      );
     const existing = ctx.releasing.get(win.id);
     if (existing) return existing;
     const operation = (async () => {

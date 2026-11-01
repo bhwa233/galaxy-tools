@@ -38,6 +38,7 @@ export default defineConfig(async (env) => {
     "src/features/translation/*.browser.test.tsx",
     "src/features/search/*.browser.test.tsx",
     "src/features/windows/*.browser.test.tsx",
+    "src/features/desktop-layer/*.browser.test.tsx",
     "src/features/ocr/*.browser.test.tsx",
   ];
   config.test!.exclude = [...configDefaults.exclude, "**/local-build/**", "**/dist/**"];

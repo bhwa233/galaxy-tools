@@ -8,6 +8,7 @@ import { createBackupCommands } from "./backup-commands.js";
 import { createDiagnosticCommands } from "./diagnostic-commands.js";
 import type { CommandHandler, CommandInvocation } from "./invocation.js";
 import { createLauncherCommands } from "./launcher-commands.js";
+import { createLayerCommands } from "./layer-commands.js";
 import { createNoteCommands } from "./note-commands.js";
 import { createPlatformCommands } from "./platform-commands.js";
 import { createPluginCommands } from "./plugin-commands.js";
@@ -17,6 +18,7 @@ import { createWindowCommands } from "./window-commands.js";
 import { createWorkspaceCommands } from "./workspace-commands.js";
 export function createDispatch(ctx: RuntimeContext) {
   const handlers = {
+    ...createLayerCommands(ctx),
     ...createLauncherCommands(ctx),
     ...createSettingsCommands(ctx),
     ...createDiagnosticCommands(ctx),

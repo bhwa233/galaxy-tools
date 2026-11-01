@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import type { BrowserWindow } from "electron";
+import { computeShape, LayerWindow } from "./layer-window";
+import type { LayerCard } from "../shared/layer-contract";
 import {
   insertMembers,
   members,
@@ -25,6 +29,24 @@ function entry(id: string, order: number, visible = true): CapsuleEntry {
   };
 }
 describe("capsule placement and queue ownership", () => {
+  it("bounds live queue slots without losing the tail when geometry exposes more notes", () => {
+    // A larger work area or shorter titles can expose more pills than the
+    // shared-layer budget. They must remain scrollable rather than disappearing.
+    const spacious = { x: 0, y: 0, width: 1600, height: 1200 };
+    const queue = { key: "a:top", offset: 0, collapsed: false, scroll: 1_000_000 };
+    const top = queueGeometry(spacious, "top", queue, [160, 96, 160, 96], 2);
+    const tail = intersectRect(top.slot(3), top.viewport)!;
+    expect(tail.width).toBe(96);
+    expect(tail.x + tail.width).toBe(top.viewport.x + top.viewport.width);
+    expect(top.bounds.width).toBeLessThan(spacious.width);
+    const side = queueGeometry(spacious, "left", queue, [96, 96, 96, 96], 2);
+    expect(side.slot(3).y + side.slot(3).height).toBeLessThanOrEqual(side.bounds.height);
+    expect(side.slot(3).y).toBeGreaterThanOrEqual(side.viewport.y);
+    expect(side.slot(2).y).toBeGreaterThanOrEqual(side.viewport.y);
+    expect(side.slot(1).y).toBeLessThan(side.viewport.y);
+    const collapsed = queueGeometry(spacious, "top", { ...queue, collapsed: true }, [160, 96], 1);
+    expect(collapsed.bounds.width).toBe(collapsed.master.width);
+  });
   it("chooses edges and constrains previews in a monitor with a negative origin", () => {
     expect(nearestEdge({ id: "a", workArea: area }, { x: -1800, y: 400 })).toBe("left");
     const preview = previewGeometry(area, { x: -52, y: 1000, width: 52, height: 32 }, "right");
@@ -170,5 +192,224 @@ describe("capsule placement and queue ownership", () => {
     expect(members(all, "b:right").map((e) => e.noteId)).toEqual(["c", "b", "a"]);
     expect(hidden.capsule!.displayId).toBe("a");
     expect(all.map((e) => e.bounds)).toEqual(before);
+  });
+});
+
+describe("layer native hit regions and release", () => {
+  const card: LayerCard = {
+    id: "clipped",
+    displayId: "negative",
+    group: "top",
+    inputMode: "interactive",
+    bounds: { x: -1910.5, y: 100.25, width: 80, height: 80 },
+    clip: { x: -5, y: 30.5, width: 30.75, height: 18.5 },
+    order: 0,
+    visible: true,
+  };
+  it("intersects card-local clips with screen bounds before converting to outward-rounded client DIP", () => {
+    expect(computeShape([card], area)).toEqual([{ x: 9, y: 10, width: 27, height: 20 }]);
+    // Crossing the work-area edge must not leave an invisible native hit region.
+    expect(
+      computeShape([{ ...card, bounds: { x: -1930.5, y: 100.25, width: 80, height: 80 } }], area),
+    ).toEqual([{ x: 0, y: 10, width: 16, height: 20 }]);
+  });
+  it("returns an empty shape for absent, hidden and fully clipped cards", () => {
+    expect(computeShape([], area)).toEqual([]);
+    expect(
+      computeShape(
+        [
+          { ...card, visible: false },
+          { ...card, clip: { x: 100, y: 0, width: 20, height: 20 } },
+          { ...card, bounds: { x: 100, y: 100, width: 20, height: 20 } },
+        ],
+        area,
+      ),
+    ).toEqual([]);
+  });
+  it("unions duplicate, overlapping and adjacent rectangles without filling gaps", () => {
+    const rectangles = [
+      { x: 0, y: 0, width: 20, height: 20 },
+      { x: 10, y: 10, width: 20, height: 20 },
+      { x: 0, y: 0, width: 20, height: 20 },
+      { x: 30, y: 10, width: 10, height: 20 },
+    ];
+    expect(
+      computeShape(
+        rectangles.map((bounds) => ({ ...card, bounds, clip: undefined })),
+        { x: 0, y: 0, width: 100, height: 100 },
+      ),
+    ).toEqual([
+      { x: 0, y: 0, width: 20, height: 10 },
+      { x: 0, y: 10, width: 40, height: 10 },
+      { x: 10, y: 20, width: 30, height: 10 },
+    ]);
+  });
+  it("keeps interleaved lock/suspend recovery fenced and cancels late restoration on release", () => {
+    vi.useFakeTimers();
+    const screen = new EventEmitter(),
+      power = new EventEmitter();
+    const restored = vi.fn(),
+      changed = vi.fn(),
+      suppressed = new Set<string>();
+    const release = LayerWindow.observeEnvironment({
+      screen,
+      powerMonitor: power,
+      timers: { setTimeout, clearTimeout },
+      onDisplayChange: changed,
+      onSuppressed: (reason, value) => {
+        if (value) suppressed.add(reason);
+        else suppressed.delete(reason);
+      },
+      onRestore: restored,
+    });
+    try {
+      power.emit("lock-screen");
+      power.emit("suspend");
+      power.emit("unlock-screen");
+      vi.advanceTimersByTime(3000);
+      expect(restored).not.toHaveBeenCalled();
+      expect(suppressed).toEqual(new Set(["locked", "suspend"]));
+      power.emit("resume");
+      vi.advanceTimersByTime(2000);
+      expect(suppressed.size).toBe(0);
+      expect(restored).toHaveBeenCalledOnce();
+      expect(changed).toHaveBeenCalledOnce();
+      power.emit("lock-screen");
+      power.emit("unlock-screen");
+      release();
+      screen.emit("display-removed");
+      power.emit("resume");
+      vi.advanceTimersByTime(6000);
+      expect(restored).toHaveBeenCalledOnce();
+      expect(changed).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  });
+  it("hides before clearing native hit regions and retires pending loads when destroyed", async () => {
+    vi.useFakeTimers();
+    let visible = false;
+    let actualBounds = { ...area };
+    let rejectLoad!: (error: Error) => void;
+    const diagnostic = vi.fn(),
+      publish = vi.fn();
+    const native = Object.assign(new EventEmitter(), {
+      webContents: Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn() }),
+      setIgnoreMouseEvents: vi.fn(),
+      setMenu: vi.fn(),
+      setBounds: vi.fn((bounds: typeof area) => {
+        actualBounds = { ...bounds };
+      }),
+      getBounds: () => ({ ...actualBounds }),
+      setAlwaysOnTop: vi.fn(),
+      loadURL: () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectLoad = reject;
+        }),
+      isVisible: () => visible,
+      showInactive: vi.fn(() => {
+        visible = true;
+      }),
+      hide: vi.fn(() => {
+        visible = false;
+      }),
+      // Electron resets an empty shape to its full window rectangle. It must
+      // already be hidden at this native boundary, not merely hidden afterward.
+      setShape: vi.fn((shape: unknown[]) => {
+        if (!shape.length) expect(visible).toBe(false);
+      }),
+      destroy: () => {
+        visible = false;
+        native.emit("closed");
+      },
+    });
+    const layer = new LayerWindow({
+      id: "isolated",
+      mode: "shared",
+      bounds: area,
+      group: "top",
+      inputMode: "interactive",
+      title: "",
+      entryURL: "about:blank",
+      preloadPath: "",
+      label: "isolated",
+      screen: { getDisplayMatching: vi.fn() },
+      timers: { setTimeout, clearTimeout },
+      createBrowserWindow: () => native as unknown as BrowserWindow,
+      diagnostic,
+      onClosed: vi.fn(),
+    });
+    try {
+      layer.apply([card], area, publish);
+      layer.markReady();
+      layer.show();
+      expect(visible).toBe(true);
+      // HUD pointer moves used to repeat unchanged native window operations
+      // every frame. Geometry/visibility reuse must retain later OS corrections.
+      native.setBounds.mockClear();
+      native.setShape.mockClear();
+      native.setAlwaysOnTop.mockClear();
+      native.showInactive.mockClear();
+      // Native region updates may announce resize without changing bounds;
+      // those notifications must not invalidate the shape cache in a loop.
+      native.emit("resize");
+      layer.apply([card], { ...area }, publish);
+      layer.apply([card], { ...area }, publish);
+      layer.setSuppressed("user", false);
+      layer.setFullscreen([]);
+      expect(native.setBounds).not.toHaveBeenCalled();
+      expect(native.setShape).not.toHaveBeenCalled();
+      expect(native.setAlwaysOnTop).not.toHaveBeenCalled();
+      expect(native.showInactive).not.toHaveBeenCalled();
+      actualBounds = { ...area, x: area.x + 10 };
+      native.emit("move");
+      layer.apply([card], area, publish);
+      expect(actualBounds).toEqual(area);
+      native.setBounds.mockClear();
+      native.setShape.mockClear();
+      layer.invalidateGeometry();
+      layer.apply([card], area, publish);
+      expect(native.setBounds).toHaveBeenCalledOnce();
+      expect(native.setShape).toHaveBeenCalledOnce();
+      layer.setFullscreen([area]);
+      expect(native.setAlwaysOnTop.mock.lastCall?.[0]).toBe(false);
+      expect(visible).toBe(false);
+      native.setAlwaysOnTop.mockClear();
+      layer.setFullscreen([{ ...area }]);
+      expect(native.setAlwaysOnTop).not.toHaveBeenCalled();
+      layer.setFullscreenBehavior("lower");
+      expect(visible).toBe(true);
+      layer.setFullscreen([]);
+      expect(native.setAlwaysOnTop.mock.lastCall?.[0]).toBe(true);
+      layer.setSuppressed("user", true);
+      expect(visible).toBe(false);
+      layer.setSuppressed("user", false);
+      expect(visible).toBe(true);
+      // A fractional negative origin must use one outward-rounded native
+      // rectangle for both HWND bounds and client-local hit regions.
+      layer.apply([card], { x: -1910.5, y: 100.25, width: 80.4, height: 80.1 }, publish);
+      expect(native.setBounds).toHaveBeenLastCalledWith({
+        x: -1911,
+        y: 100,
+        width: 81,
+        height: 81,
+      });
+      layer.apply([], area, publish);
+      layer.show();
+      expect(visible).toBe(false);
+      await layer.destroy();
+      rejectLoad(new Error("Load completed after disposal"));
+      await Promise.resolve();
+      vi.advanceTimersByTime(6000);
+      expect(diagnostic).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(layer.apply([card], area, publish)).toBe(false);
+      expect(visible).toBe(false);
+    } finally {
+      await layer.destroy();
+      vi.useRealTimers();
+    }
   });
 });

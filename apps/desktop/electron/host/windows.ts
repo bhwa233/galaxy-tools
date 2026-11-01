@@ -52,6 +52,29 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
   });
   win.setMenu(null);
   win.on("page-title-updated", (event) => event.preventDefault());
+  bindDevToolsShortcut(win);
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.webContents.on("will-navigate", (event) => event.preventDefault());
+  win.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  win.webContents.on("render-process-gone", (_event, details) =>
+    console.error("renderer-gone", options.label, details.reason),
+  );
+  return win;
+}
+
+/** Share the host shortcut with independently managed plugin windows. */
+export function bindDevToolsShortcut(
+  win: BrowserWindow,
+  options: { isolatedSession?: boolean } = {},
+): void {
+  let tools: BrowserWindow | undefined;
+  const releaseTools = () => {
+    const current = tools;
+    tools = undefined;
+    if (current && !current.isDestroyed()) current.destroy();
+  };
+  win.once("closed", releaseTools);
+  win.webContents.on("devtools-closed", releaseTools);
   win.webContents.on("before-input-event", (event, input) => {
     if (
       input.type !== "keyDown" ||
@@ -64,14 +87,36 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     )
       return;
     event.preventDefault();
-    if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
-    else win.webContents.openDevTools({ mode: "detach" });
+    if (win.webContents.isDevToolsOpened() || tools) {
+      win.webContents.closeDevTools();
+      releaseTools();
+      return;
+    }
+    if (options.isolatedSession) {
+      // Electron's default frontend inherits the plugin's restricted session.
+      // Use its documented custom frontend API with a separate, preload-free window.
+      const frontend = new BrowserWindow({
+        width: 1000,
+        height: 700,
+        title: "DevTools",
+        show: true,
+        webPreferences: {
+          partition: `spark233-devtools-${win.id}`,
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      });
+      tools = frontend;
+      frontend.setMenu(null);
+      frontend.once("closed", () => {
+        if (tools === frontend) {
+          tools = undefined;
+          if (!win.isDestroyed()) win.webContents.closeDevTools();
+        }
+      });
+      win.webContents.setDevToolsWebContents(frontend.webContents);
+    }
+    win.webContents.openDevTools({ mode: "detach" });
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  win.webContents.on("will-navigate", (event) => event.preventDefault());
-  win.webContents.on("will-attach-webview", (event) => event.preventDefault());
-  win.webContents.on("render-process-gone", (_event, details) =>
-    console.error("renderer-gone", options.label, details.reason),
-  );
-  return win;
 }

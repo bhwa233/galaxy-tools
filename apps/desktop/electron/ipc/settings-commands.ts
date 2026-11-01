@@ -1,5 +1,6 @@
 import { app } from "electron";
 import { z } from "zod";
+import { DEFAULT_DESKTOP_LAYER_PREFERENCES } from "../../shared/config-schema.js";
 import { configPatchSchema } from "../host-config.js";
 import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
@@ -19,6 +20,7 @@ export function createSettingsCommands(
     | "registerShortcuts"
     | "notesActive"
     | "syncMcp"
+    | "syncDesktopLayer"
     | "publishPluginTheme"
     | "refreshTray"
     | "refreshWindowPresentations"
@@ -62,6 +64,7 @@ export function createSettingsCommands(
               "shortcuts",
               "tray",
               "entries",
+              "desktop",
               "plugins",
               "marketplace",
               "backup",
@@ -92,17 +95,30 @@ export function createSettingsCommands(
         const parsed = configPatchSchema.safeParse(args.patch);
         if (!parsed.success) throw new AppError("invalidPayload", "设置补丁包含不支持的字段或值");
         const patch = parsed.data;
+        if (patch.desktopLayer && !ctx.isAdminView(layout))
+          throw new AppError("permissionDenied", "桌面卡片开关仅限宿主管理界面");
+        if (
+          patch.desktopLayer?.notesEnabled === true &&
+          !(
+            patch.desktopLayer.enabled ??
+            previous.desktopLayer?.enabled ??
+            DEFAULT_DESKTOP_LAYER_PREFERENCES.enabled
+          )
+        )
+          throw new AppError("layer.disabled", "请先启用桌面卡片，再迁移便签胶囊");
         if (args.expectedShortcuts !== undefined) {
           const expected = z
             .strictObject({
               globalShortcut: z.string().max(100),
               toggleVisibilityShortcut: z.string().max(100),
+              desktopOverlayShortcut: z.string().max(100).optional(),
             })
             .parse(args.expectedShortcuts);
           if (
             Object.entries(expected).some(
               ([key, value]) =>
-                previous[key as "globalShortcut" | "toggleVisibilityShortcut"] !== value,
+                (previous[key as keyof typeof expected] ??
+                  (key === "desktopOverlayShortcut" ? "Ctrl+Alt+D" : "")) !== value,
             )
           )
             throw new AppError("settingsConflict", "快捷键设置已变化，请重新加载并核对");
@@ -122,6 +138,16 @@ export function createSettingsCommands(
         const config = {
           ...previous,
           ...patch,
+          desktopLayer: {
+            ...DEFAULT_DESKTOP_LAYER_PREFERENCES,
+            ...previous.desktopLayer,
+            ...patch.desktopLayer,
+            ...((patch.desktopLayer?.enabled ??
+            previous.desktopLayer?.enabled ??
+            DEFAULT_DESKTOP_LAYER_PREFERENCES.enabled)
+              ? {}
+              : { notesEnabled: false }),
+          },
           ...(patch.commandShortcuts
             ? {
                 commandShortcuts: { ...previous.commandShortcuts, ...patch.commandShortcuts },
@@ -140,6 +166,7 @@ export function createSettingsCommands(
         const shortcutsChanged =
           patch.globalShortcut !== undefined ||
           patch.toggleVisibilityShortcut !== undefined ||
+          patch.desktopOverlayShortcut !== undefined ||
           patch.commandShortcuts !== undefined;
         try {
           if (shortcutsChanged) ctx.registerShortcuts(config);
@@ -147,8 +174,16 @@ export function createSettingsCommands(
             app.setLoginItemSettings({ openAtLogin: config.autostart, path: process.execPath });
           if (ctx.notesActive && config.locale !== previous.locale)
             await ctx.notesClient.initialize(config.locale);
+          if (patch.desktopLayer) await ctx.syncDesktopLayer(true);
         } catch (error) {
           ctx.hostConfig.save(previous);
+          if (patch.desktopLayer) {
+            try {
+              await ctx.syncDesktopLayer();
+            } catch (restoreError) {
+              console.error("desktop-layer-rollback", restoreError);
+            }
+          }
           if (shortcutsChanged) {
             try {
               ctx.registerShortcuts(previous);

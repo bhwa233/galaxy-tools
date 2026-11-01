@@ -3,6 +3,7 @@ import { clipboard, dialog, nativeImage, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import semver from "semver";
 import { AppError, atomicWrite, confined } from "../persistence.js";
 import { type DesktopPluginHostOptions } from "../plugins/desktop-host.js";
 import { resolvePluginEntries } from "../plugins/manifest.js";
@@ -20,6 +21,7 @@ import { createClipboardRuntime } from "../plugins/official/clipboard.js";
 import { NotesDataClient } from "../plugins/official/notes-data-client.js";
 import { createNotesRuntime } from "../plugins/official/notes.js";
 import { createSearchRuntime } from "../plugins/official/search.js";
+import { createQuicklinksRuntime } from "../plugins/official/quicklinks.js";
 import type { RuntimeContext } from "../runtime.js";
 export function createOfficialRuntimeFactory(
   ctx: Pick<
@@ -49,11 +51,15 @@ export function createOfficialRuntimeFactory(
     | "notesStartupClient"
     | "notesMaintenanceClient"
     | "capsules"
+    | "desktopLayer"
+    | "screenshotLayer"
     | "mcpServer"
     | "refreshTray"
     | "publishNoteStates"
     | "layoutsRestored"
     | "hostConfig"
+    | "getPluginTheme"
+    | "subscribePluginTheme"
     | "restoreNotesLayout"
     | "crashedWindows"
     | "tray"
@@ -86,6 +92,7 @@ export function createOfficialRuntimeFactory(
       "spark233.translation": "@spark233/plugin-translation",
       "spark233.search": "@spark233/plugin-search",
       "spark233.clipboard": "@spark233/plugin-clipboard",
+      "spark233.quicklinks": "@spark233/plugin-quicklinks",
     };
     if (!Object.hasOwn(expectedPackages, id) || metadata.name !== expectedPackages[id]) return;
     if (!installation.grant.native)
@@ -320,6 +327,20 @@ export function createOfficialRuntimeFactory(
         },
       };
     }
+    if (id === "spark233.quicklinks") {
+      if (!backend) throw new Error("Quicklinks backend entry is required");
+      if (!ctx.pluginHost) throw new Error("Plugin host is unavailable");
+      return createQuicklinksRuntime({
+        installation,
+        metadata,
+        scope,
+        backend,
+        manager: ctx.pluginHost.manager,
+        getLocale: () => ctx.hostConfig.value.locale,
+        getTheme: () => ctx.getPluginTheme(),
+        subscribeTheme: (listener) => ctx.subscribePluginTheme(listener),
+      });
+    }
     if (id === "spark233.translation") {
       if (!backend) throw new Error("Translation backend entry is required");
       ctx.bindOfficialRenderer(id, installation.directory, scope);
@@ -503,11 +524,11 @@ export function createOfficialRuntimeFactory(
               ctx.hideHostWindow(win);
         },
         openWorkspace: async (presentation) => {
-          const hostFocused =
-            [...ctx.windows.values()].some((win) => !win.isDestroyed() && win.isFocused()) ||
-            [...(ctx.capsules?.surfaces.values() ?? [])].some(
-              (surface) => !surface.win.isDestroyed() && surface.win.isFocused(),
-            );
+          const hostFocused = [
+            ...ctx.windows.values(),
+            ...(ctx.capsules?.presentationWindows() ?? []),
+            ...(ctx.desktopLayer?.windows() ?? []),
+          ].some((win) => !win.isDestroyed() && win.isFocused());
           if (!hostFocused) await ctx.clipboardRuntime?.rememberTarget();
           await ctx.openPluginWindow(
             id,
@@ -630,6 +651,8 @@ export function createOfficialRuntimeFactory(
     }
     if (id === "spark233.screenshot") {
       if (!entries.native.capture) throw new Error("Screenshot executable entry is required");
+      // Older native packages ignore edit-pin argv and would start a new capture.
+      const hostPinProtocol = semver.gte(installation.version, "0.1.5");
       // An older package has no renderer build; capture must keep working there,
       // and only the history view reports that the plugin needs an update.
       try {
@@ -655,6 +678,22 @@ export function createOfficialRuntimeFactory(
             ),
           reason: "请先启用 OCR 插件",
         }),
+        canPinToDesktop: () =>
+          hostPinProtocol &&
+          !!ctx.screenshotLayer &&
+          ctx.desktopLayer?.options.flags().enabled === true,
+        onPin: (image, isCurrent) => {
+          if (!ctx.screenshotLayer) throw new Error("截图桌面层当前不可用");
+          return ctx.screenshotLayer.publish(image, isCurrent);
+        },
+        onPinAborted: (pinId) => {
+          if (!ctx.screenshotLayer) throw new Error("截图桌面层已停止");
+          return ctx.screenshotLayer.abortPublication(pinId);
+        },
+        onPinAcknowledged: (pinId) => {
+          if (!ctx.screenshotLayer) throw new Error("截图桌面层已停止");
+          return ctx.screenshotLayer.acknowledgePublication(pinId);
+        },
         onResult: (image, action) => {
           ctx.pluginImages.set(image.resource.id, image);
           ctx.emit("screenshot-result", {
@@ -672,8 +711,21 @@ export function createOfficialRuntimeFactory(
           });
         },
       });
+      if (hostPinProtocol)
+        ctx.screenshotLayer?.attach({
+          owner: scope.owner,
+          scope,
+          dataDir: common.dataDir,
+          cacheDir: common.cacheDir,
+          edit: (input) => runtime.editPin(input),
+        });
       return {
         activate: async (activation) => {
+          // Startup restores durable pins without starting a selection or history.
+          if (!activation.commandId) {
+            ctx.screenshotLayer?.refresh();
+            return;
+          }
           // The plugin entry opens history; the capture itself is an action.
           if (activation.commandId === "history") {
             await ctx.openPluginWindow(
@@ -688,10 +740,17 @@ export function createOfficialRuntimeFactory(
             const launcherWindow = ctx.windows.get("launcher");
             if (launcherWindow) ctx.hideHostWindow(launcherWindow);
           }
+          let pinned = false;
           try {
-            return await runtime.activate(activation);
+            const result = await runtime.activate(activation);
+            pinned =
+              !!result &&
+              typeof result === "object" &&
+              !Array.isArray(result) &&
+              result.status === "pinned";
+            return result;
           } finally {
-            if (!ctx.hostShutdown.isQuitting && !ctx.exiting && scope.state === "active")
+            if (!pinned && !ctx.hostShutdown.isQuitting && !ctx.exiting && scope.state === "active")
               ctx.requestLauncher();
           }
         },

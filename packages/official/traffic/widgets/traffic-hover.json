@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "padding": 12,
+  "background": "card",
+  "root": {
+    "type": "stack",
+    "direction": "column",
+    "gap": 8,
+    "align": "start",
+    "children": [
+      {
+        "type": "text",
+        "value": { "text": "上传排行" },
+        "size": "body",
+        "tone": "upload",
+        "maxLines": 1
+      },
+      { "type": "rank-list", "dataKey": "upload-top", "tone": "upload" },
+      {
+        "type": "text",
+        "value": { "text": "下载排行" },
+        "size": "body",
+        "tone": "download",
+        "maxLines": 1
+      },
+      { "type": "rank-list", "dataKey": "download-top", "tone": "download" },
+      {
+        "type": "text",
+        "value": { "dataKey": "process-status" },
+        "size": "caption",
+        "tone": "muted",
+        "maxLines": 2
+      }
+    ]
+  }
+}

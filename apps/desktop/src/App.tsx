@@ -18,6 +18,11 @@ const SettingsWindow = lazy(() =>
 const CapsuleHost = lazy(() =>
   import("./features/capsules/CapsuleHost").then((module) => ({ default: module.CapsuleHost })),
 );
+const LayerPage = lazy(() =>
+  import("./features/desktop-layer/DesktopLayerView").then((module) => ({
+    default: module.LayerPage,
+  })),
+);
 // Compatibility for installed notes packages predating declared renderer entries.
 // New plugin entries mount their own page and never import this host router.
 const MainWindow = lazy(() =>
@@ -37,6 +42,12 @@ export default function App() {
       <Spinner />
     </div>
   );
+  if (route.view === "layer")
+    return (
+      <Suspense fallback={null}>
+        <LayerPage />
+      </Suspense>
+    );
   if (route.view === "capsule")
     return (
       <Suspense fallback={loading}>

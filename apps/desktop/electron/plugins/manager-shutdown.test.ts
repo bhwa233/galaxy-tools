@@ -14,7 +14,7 @@ afterEach(async () => {
 
 // Reuse the source-command tests' real Manager/package-file fixture pattern;
 // controlled resources exercise shutdown recovery without an Electron renderer or process.
-async function fixture() {
+async function fixture(withWidget = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-shutdown-"));
   const versionsRoot = path.join(root, "versions"),
     stateFile = path.join(root, "state.json");
@@ -30,18 +30,50 @@ async function fixture() {
         schemaVersion: 1,
         id: pluginId,
         displayName: `Shutdown ${name}`,
-        api: "^1.2.0",
+        api: withWidget ? ">=1.4.0 <2.0.0" : "^1.2.0",
         host: "^1.2.0",
         platforms: [process.platform],
         architectures: [process.arch],
         entry: "index.html",
         activation: "on-startup",
         commands: [{ id: "ping", title: "Ping" }],
+        ...(withWidget
+          ? {
+              capabilities: ["node.backend"],
+              backend: { entry: "backend.js" },
+              ui: {
+                theme: "^1.0.0",
+                widgets: {
+                  panel: {
+                    kind: "declarative",
+                    template: "widgets/panel.json",
+                    title: "Panel",
+                    size: { width: 160, height: 60 },
+                    commands: ["ping"],
+                    actions: { run: { mode: "action", commandId: "ping" } },
+                  },
+                },
+              },
+            }
+          : {}),
       },
     };
     const packageFile = path.join(directory, "package.json");
     fs.writeFileSync(packageFile, JSON.stringify(metadata));
     fs.writeFileSync(path.join(directory, "index.html"), "<p>Owned inert fixture</p>");
+    if (withWidget) {
+      fs.writeFileSync(path.join(directory, "backend.js"), "export default () => ({})");
+      fs.mkdirSync(path.join(directory, "widgets"));
+      fs.writeFileSync(
+        path.join(directory, "widgets", "panel.json"),
+        JSON.stringify({
+          version: 1,
+          padding: 4,
+          background: "card",
+          root: { type: "button", label: "Run", actionId: "run", tone: "default" },
+        }),
+      );
+    }
     plugins[pluginId] = {
       pluginId,
       packageName: metadata.name,
@@ -51,13 +83,14 @@ async function fixture() {
       integrity: "owned-fixture",
       manifestDigest: createHash("sha256").update(fs.readFileSync(packageFile)).digest("hex"),
       source: { kind: "directory", location: directory },
-      grant: { capabilities: [], native: false },
+      grant: { capabilities: withWidget ? ["node.backend"] : [], native: withWidget },
     };
   }
   fs.writeFileSync(stateFile, JSON.stringify({ schemaVersion: 1, plugins }));
   const controls = { failRelease: true, failRestart: false };
   const generations = new Map<string, number>();
   const activations = new Map<string, number>();
+  const widgetExecutions = new Map<string, number>();
   const disposals = new Map<string, number>();
   const scopes = new Map<string, PluginResourceScope>();
   const manager = new PluginManager({
@@ -92,6 +125,14 @@ async function fixture() {
         },
       });
       return {
+        ...(withWidget
+          ? {
+              executeWidget: async () => {
+                widgetExecutions.set(name, (widgetExecutions.get(name) ?? 0) + 1);
+                return { name, generation, headless: true };
+              },
+            }
+          : {}),
         activate: async () => {
           if (paused) throw new Error("Owned service is still paused");
           activations.set(name, (activations.get(name) ?? 0) + 1);
@@ -110,7 +151,7 @@ async function fixture() {
     }
   });
   await manager.initialize();
-  return { manager, controls, generations, activations, disposals, scopes };
+  return { manager, controls, generations, activations, disposals, scopes, widgetExecutions };
 }
 
 test("cancelled shutdown restores released startup services and resumes later prepared instances", async () => {
@@ -160,4 +201,43 @@ test("shutdown reports release and recovery failures together while still resumi
     name: "c",
     generation: 1,
   });
+});
+
+test("widget commands execute without activating a window and reject forged or retired owners", async () => {
+  const { manager, activations, widgetExecutions } = await fixture(true);
+  const owner = await manager.ensureWidgetOwner("fixture.shutdown-a");
+  const binding = {
+    pluginId: owner.pluginId,
+    owner,
+    widgetDefinitionId: "panel",
+    widgetInstanceId: "877fe7fb-b17c-473a-ad41-31e77deed461",
+    loadGeneration: 1,
+  };
+  const request = {
+    binding,
+    actionId: "run",
+    origin: "widget" as const,
+    mode: "action" as const,
+    commandId: "ping",
+    signal: new AbortController().signal,
+  };
+  const previousActivations = activations.get("a");
+  await expect(manager.executeWidgetOwned(request)).resolves.toEqual({
+    owner,
+    value: { name: "a", generation: 1, headless: true },
+  });
+  expect(activations.get("a")).toBe(previousActivations);
+  await expect(manager.executeWidgetOwned({ ...request, actionId: "ping" })).rejects.toThrow(
+    /授权/,
+  );
+  await expect(
+    manager.executeWidgetOwned({
+      ...request,
+      binding: { ...binding, owner: { ...owner, instanceId: "retired" } },
+    }),
+  ).rejects.toThrow(/失效/);
+  expect(widgetExecutions.get("a")).toBe(1);
+  await manager.setEnabled(owner.pluginId, false);
+  await expect(manager.executeWidgetOwned(request)).rejects.toThrow(/失效/);
+  expect(widgetExecutions.get("a")).toBe(1);
 });

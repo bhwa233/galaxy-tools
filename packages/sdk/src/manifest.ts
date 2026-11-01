@@ -1,7 +1,8 @@
 /* eslint-disable no-control-regex -- Package paths must reject control characters. */
 import { z } from "zod";
+import { isWidgetRankRows } from "./widget.js";
 
-export const HOST_API_VERSION = "1.3.0";
+export const HOST_API_VERSION = "1.5.0";
 export const THEME_API_VERSION = "1.0.0";
 
 // Reuse Zod already present in the toolchain for one shared runtime/type schema;
@@ -104,6 +105,7 @@ export const pluginWindowSchema = z.strictObject({
   taskbar: z.boolean().optional(),
   reuse: z.enum(["singleton", "document"]).optional(),
   presentation: z.enum(["standard", "compact"]).optional(),
+  titleBar: z.enum(["native", "custom"]).optional(),
   legacyLabels: z.array(localId).max(8).optional(),
 });
 export type PluginWindow = z.infer<typeof pluginWindowSchema>;
@@ -195,6 +197,257 @@ const nativeSchema = z.strictObject({
   args: z.array(z.string().max(4096)).max(64).default([]),
 });
 
+const widgetSizeSchema = z.strictObject({
+  width: z.number().int().min(80).max(1200),
+  height: z.number().int().min(32).max(900),
+});
+const widgetValueSchema = z.union([
+  z.string().max(2048),
+  z.number().finite().min(-1e15).max(1e15),
+  z.boolean(),
+  z.null(),
+  z.array(z.number().finite().min(-1e15).max(1e15)).max(120),
+  z.custom<import("./widget.js").WidgetRankRow[]>(isWidgetRankRows),
+]);
+const widgetFormatSchema = z.enum(["text", "number", "progress", "icon", "series", "rows"]);
+export const widgetDataSourceSchema = z.discriminatedUnion("source", [
+  z.strictObject({
+    source: z.literal("static"),
+    format: widgetFormatSchema,
+    value: widgetValueSchema,
+  }),
+  z.strictObject({
+    source: z.literal("host"),
+    format: widgetFormatSchema,
+    provider: z.literal("host.clock"),
+  }),
+  z.strictObject({
+    source: z.literal("backend"),
+    format: widgetFormatSchema,
+    event: localId,
+    subscriptionAction: localId,
+  }),
+  z.strictObject({
+    source: z.literal("native"),
+    format: widgetFormatSchema,
+    event: localId,
+    entryId: localId.optional(),
+    subscriptionAction: localId,
+  }),
+]);
+export const widgetActionSchema = z.discriminatedUnion("mode", [
+  z.strictObject({
+    mode: z.literal("query"),
+    commandId: localId,
+    entryId: localId.optional(),
+  }),
+  z.strictObject({
+    mode: z.literal("action"),
+    commandId: localId,
+    entryId: localId.optional(),
+  }),
+  z.strictObject({
+    mode: z.literal("open-main"),
+    commandId: localId,
+  }),
+]);
+const widgetCommon = {
+  title: label,
+  translations: z
+    .strictObject({
+      "zh-CN": z.strictObject({ title: label }).optional(),
+      "en-US": z.strictObject({ title: label }).optional(),
+    })
+    .optional(),
+  size: widgetSizeSchema,
+  minSize: widgetSizeSchema.optional(),
+  maxSize: widgetSizeSchema.optional(),
+  resizable: z.boolean().default(false),
+  group: z.enum(["normal", "top"]).default("normal"),
+  clickThrough: z.boolean().default(false),
+  interactive: z.boolean().default(true),
+  commands: z.array(localId).max(8).default([]),
+  refreshMs: z.number().int().min(250).max(60000).default(1000),
+  data: z.record(localId, widgetDataSourceSchema).default({}),
+  actions: z.record(localId, widgetActionSchema).default({}),
+};
+export const pluginWidgetSchema = z
+  .discriminatedUnion("kind", [
+    z.strictObject({
+      ...widgetCommon,
+      kind: z.literal("web"),
+      entry: packagePath
+        .refine((v) => v.startsWith("widgets/"), "Widget entry must live under widgets/")
+        .refine((v) => /\.html$/i.test(v), "Widget web entry must be an .html file"),
+    }),
+    z.strictObject({
+      ...widgetCommon,
+      kind: z.literal("declarative"),
+      template: packagePath
+        .refine((v) => v.startsWith("widgets/"), "Widget template must live under widgets/")
+        .refine((v) => /\.json$/i.test(v), "Widget template must be a .json file"),
+      desktopInteractions: z
+        .strictObject({
+          primaryAction: localId,
+          hover: z
+            .strictObject({
+              template: packagePath.refine(
+                (v) => v.startsWith("widgets/") && /\.json$/i.test(v),
+                "Hover template must be a widget JSON file",
+              ),
+              size: widgetSizeSchema,
+            })
+            .optional(),
+          menu: z.strictObject({ openLabel: label, hideLabel: label }).optional(),
+          edgeAutoHide: z.boolean().default(false),
+          fullscreenAutoHide: z.boolean().default(true),
+        })
+        .optional(),
+    }),
+  ])
+  .superRefine((w, ctx) => {
+    const issue = (path: (string | number)[], message: string) =>
+      ctx.addIssue({ code: "custom", path, message });
+    const min = w.minSize ?? { width: 80, height: 32 };
+    const max = w.maxSize ?? { width: 1200, height: 900 };
+    if (min.width > max.width || min.height > max.height)
+      issue(["minSize"], "Widget minimum size cannot exceed its maximum size");
+    if (
+      w.size.width < min.width ||
+      w.size.height < min.height ||
+      w.size.width > max.width ||
+      w.size.height > max.height
+    )
+      issue(["size"], "Widget size must be within minSize and maxSize");
+    if (w.clickThrough === w.interactive)
+      issue(["interactive"], "Widget must be either passive or interactive");
+    if (new Set(w.commands).size !== w.commands.length)
+      issue(["commands"], "Duplicate widget command ID");
+    if (Object.keys(w.data).length > 16) issue(["data"], "Widget can declare at most 16 data keys");
+    if (Object.keys(w.actions).length > 8)
+      issue(["actions"], "Widget can declare at most 8 actions");
+    if (!w.interactive && Object.values(w.actions).some((a) => a.mode !== "query"))
+      issue(["actions"], "Passive widget cannot declare user actions");
+    if (
+      w.kind === "declarative" &&
+      w.desktopInteractions &&
+      (!w.interactive || w.actions[w.desktopInteractions.primaryAction]?.mode !== "open-main")
+    )
+      issue(
+        ["desktopInteractions", "primaryAction"],
+        "Desktop primary action must reference an interactive open-main action",
+      );
+    for (const key of [...Object.keys(w.data), ...Object.keys(w.actions)])
+      if (["__proto__", "prototype", "constructor"].includes(key))
+        issue(["data"], "Reserved widget key");
+    for (const [key, d] of Object.entries(w.data)) {
+      if (d.source !== "static") continue;
+      const valid =
+        d.value === null ||
+        (d.format === "text" && typeof d.value === "string") ||
+        (d.format === "number" && typeof d.value === "number") ||
+        (d.format === "progress" && typeof d.value === "number" && d.value >= 0 && d.value <= 1) ||
+        (d.format === "icon" &&
+          typeof d.value === "string" &&
+          /^[a-z][a-z0-9.-]{0,79}$/.test(d.value)) ||
+        (d.format === "series" &&
+          Array.isArray(d.value) &&
+          d.value.every((v) => typeof v === "number")) ||
+        (d.format === "rows" && isWidgetRankRows(d.value));
+      if (!valid) issue(["data", key], "Widget static value does not match its format");
+    }
+  });
+export type PluginWidget = z.infer<typeof pluginWidgetSchema>;
+export type WidgetDataSource = z.infer<typeof widgetDataSourceSchema>;
+export type WidgetAction = z.infer<typeof widgetActionSchema>;
+export type WidgetDataFormat = WidgetDataSource["format"];
+
+type WidgetManifestChecks = {
+  entry?: string;
+  backend?: { entry: string };
+  native: Record<string, { path: string; args: string[] }>;
+  commands: Array<{
+    id: string;
+    internal: boolean;
+    window?: string;
+    inputs: string[];
+    match?: string;
+    sourceApplications?: string[];
+  }>;
+  ui?: { widgets?: Record<string, PluginWidget>; windows?: Record<string, unknown> };
+};
+function refineWidgets(m: WidgetManifestChecks, ctx: z.RefinementCtx): void {
+  const issue = (path: (string | number)[], message: string) =>
+    ctx.addIssue({ code: "custom", path, message });
+  const widgets = m.ui?.widgets ?? {};
+  if (!m.entry && !m.backend && !Object.keys(m.native).length && !Object.keys(widgets).length)
+    issue([], "A plugin needs a web, backend, native or widget entry");
+  if (Object.keys(widgets).length > 8)
+    issue(["ui", "widgets"], "A plugin can declare at most 8 widget definitions");
+  const nativeEntry = (id?: string) =>
+    id
+      ? Object.hasOwn(m.native, id)
+      : Object.keys(m.native).length === 1 || Object.hasOwn(m.native, "main");
+  for (const [id, w] of Object.entries(widgets)) {
+    const p = ["ui", "widgets", id];
+    if (Object.hasOwn(m.ui?.windows ?? {}, id))
+      issue(p, "Widget ID must not duplicate a window ID");
+    for (const commandId of w.commands) {
+      if (!m.commands.some((c) => c.id === commandId && !c.internal))
+        issue([...p, "commands"], "Widget command must be a public command of this plugin");
+    }
+    for (const [key, d] of Object.entries(w.data)) {
+      if (d.source === "backend" && !m.backend)
+        issue([...p, "data", key], "Widget backend data requires a backend entry");
+      if (d.source === "native" && !nativeEntry(d.entryId))
+        issue([...p, "data", key], "Widget native data needs an unambiguous declared entry");
+      if (d.source === "host" && !["text", "number"].includes(d.format))
+        issue([...p, "data", key], "host.clock supports text or number data only");
+      if (d.source === "backend" || d.source === "native") {
+        const a = w.actions[d.subscriptionAction];
+        if (!a || a.mode !== "query") {
+          issue([...p, "data", key], "Widget subscription must reference a query action");
+        } else {
+          if (d.source === "backend" && a.entryId)
+            issue([...p, "data", key], "Widget backend subscription cannot select a native entry");
+          const keys = Object.keys(m.native);
+          const selected =
+            d.source === "native"
+              ? (d.entryId ?? (keys.length === 1 ? keys[0] : "main"))
+              : undefined;
+          if (
+            d.source === "native" &&
+            ((a.entryId && a.entryId !== selected) || (!a.entryId && !!m.backend))
+          )
+            issue([...p, "data", key], "Widget subscription action must select its data source");
+        }
+      }
+    }
+    for (const [key, a] of Object.entries(w.actions)) {
+      const at = [...p, "actions", key];
+      const c = m.commands.find((c) => c.id === a.commandId && !c.internal);
+      if (!c || !w.commands.includes(a.commandId)) {
+        issue(at, "Widget action must reference an allowed public command");
+        continue;
+      }
+      if (
+        c.sourceApplications ||
+        c.match === "window" ||
+        c.inputs.some((i) => ["files", "image", "window"].includes(i))
+      )
+        issue(at, "Widget action cannot require a host source or resource context");
+      if (a.mode === "open-main") {
+        if (!c.window || !Object.hasOwn(m.ui?.windows ?? {}, c.window))
+          issue(at, "Widget open-main requires a declared command window");
+      } else {
+        if (c.window) issue(at, "Widget headless action cannot reference a window command");
+        if (a.entryId ? !nativeEntry(a.entryId) : !m.backend && !nativeEntry())
+          issue(at, "Widget headless action requires a backend or unambiguous native entry");
+      }
+    }
+  }
+}
+
 export const pluginManifestSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
@@ -233,6 +486,7 @@ export const pluginManifestSchema = z
         theme: range,
         icon: pluginIconSchema.optional(),
         windows: z.record(localId, pluginWindowSchema).optional(),
+        widgets: z.record(localId, pluginWidgetSchema).optional(),
       })
       .optional(),
   })
@@ -243,8 +497,7 @@ export const pluginManifestSchema = z
       Object.values(manifest.native).some((entry) => !/\.exe$/i.test(entry.path))
     )
       issue("Windows native entries must use .exe files");
-    if (!manifest.entry && !manifest.backend && !Object.keys(manifest.native).length)
-      issue("A plugin needs a web, backend or native entry");
+    refineWidgets(manifest, context);
     if (manifest.backend && !manifest.capabilities.includes("node.backend"))
       issue("Backend entry requires node.backend");
     if (manifest.migration && !manifest.capabilities.includes("node.backend"))
@@ -349,6 +602,16 @@ export function localizePluginManifest(manifest: PluginManifest, locale: string)
                         ...window,
                         ...window.translations?.[language],
                       },
+                    ]),
+                  ),
+                }
+              : {}),
+            ...(manifest.ui.widgets
+              ? {
+                  widgets: Object.fromEntries(
+                    Object.entries(manifest.ui.widgets).map(([id, widget]) => [
+                      id,
+                      { ...widget, ...widget.translations?.[language] },
                     ]),
                   ),
                 }

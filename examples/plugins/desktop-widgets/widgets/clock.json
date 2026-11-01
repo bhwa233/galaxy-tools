@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "padding": 12,
+  "background": "card",
+  "root": {
+    "type": "stack",
+    "direction": "column",
+    "gap": 4,
+    "align": "start",
+    "children": [
+      {
+        "type": "text",
+        "value": { "text": "现在" },
+        "size": "caption",
+        "tone": "muted",
+        "maxLines": 1
+      },
+      {
+        "type": "text",
+        "value": { "dataKey": "time" },
+        "size": "title",
+        "tone": "default",
+        "maxLines": 1
+      }
+    ]
+  }
+}
