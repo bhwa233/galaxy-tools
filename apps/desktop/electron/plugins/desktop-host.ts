@@ -49,6 +49,7 @@ import {
 import { resolveRegistryPluginPackage } from "./package-source.js";
 import { createWebPluginRuntime, type WebPluginController } from "./web-host.js";
 import { createNativePluginRuntime } from "./native-runtime.js";
+import { createUToolsRuntime } from "./utools-runtime.js";
 import { runPluginDataMigration } from "./migration.js";
 import { createCapabilityBroker } from "./capabilities.js";
 import { registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
@@ -259,6 +260,27 @@ export class DesktopPluginHost {
           cacheDir: confined(this.paths.cacheRoot, "migration", installation.pluginId),
         }),
       createRuntime: async (installation, metadata, scope, startupCheckOnly, purpose) => {
+        if (metadata.spark233.compatibility)
+          return createUToolsRuntime({
+            scope,
+            metadata,
+            directory: installation.directory,
+            dataDir: this.manager.dataDirectory(installation.pluginId),
+            cacheDir: confined(this.paths.cacheRoot, "utools", scope.owner.instanceId),
+            hostVersion: options.hostVersion,
+            trusted: installation.grant.native,
+            startupCheckOnly,
+            resolveResource: options.resolveResource,
+            getTheme: options.getTheme,
+            subscribeTheme: options.subscribeTheme,
+            onCrash: (error) => {
+              void this.manager
+                .reportCrash(scope.owner, error)
+                .catch((failure) => console.error("utools-crash", failure));
+            },
+            onDiagnostic: (message) =>
+              console.error("utools-compatibility", scope.owner.pluginId, message),
+          });
         const updateTray = this.trayStates.attach(scope, metadata.spark233);
         const widgetDefinitions = Object.keys(metadata.spark233.ui?.widgets ?? {});
         if (widgetDefinitions.length && !startupCheckOnly) {
@@ -641,6 +663,7 @@ export class DesktopPluginHost {
       ...(task ? { taskId: task.snapshot.taskId } : {}),
       ...(record.updateFrom ? { currentVersion: record.updateFrom.version } : {}),
       requiresNativeTrust:
+        !!metadata.spark233.compatibility ||
         !!metadata.spark233.backend ||
         !!metadata.spark233.migration ||
         Object.keys(metadata.spark233.native).length > 0,
@@ -904,6 +927,7 @@ export class DesktopPluginHost {
       let dependencies: Record<string, string> = {};
       let optionalDependencies: Record<string, string> = {};
       let lastError = record.lastError;
+      let compatibility: "utools" | undefined;
       try {
         // Listings reuse validated display metadata; execution still revalidates.
         const metadata = this.manager.describe(record.pluginId, true);
@@ -912,6 +936,7 @@ export class DesktopPluginHost {
           this.options.getLocale?.() ?? "zh-CN",
         );
         displayName = localized.displayName;
+        compatibility = metadata.spark233.compatibility?.kind;
         iconMonochrome = localized.ui?.icon?.monochrome === true;
         tray = localized.tray;
         capabilities = metadata.spark233.capabilities;
@@ -928,6 +953,7 @@ export class DesktopPluginHost {
         pluginId: record.pluginId,
         packageName: record.packageName,
         displayName,
+        ...(compatibility ? { compatibility } : {}),
         icon: this.options.getPluginIcon?.(record.pluginId),
         iconMonochrome,
         version: record.version,
@@ -1457,7 +1483,7 @@ export class DesktopPluginHost {
         }
         case "plugins_import_directory": {
           const result = await dialog.showOpenDialog(parent, {
-            title: "Import spark233 development plugin directory",
+            title: "Import spark233 or uTools plugin directory",
             properties: ["openDirectory"],
           });
           if (result.canceled || !result.filePaths[0]) return undefined;

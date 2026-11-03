@@ -38,6 +38,7 @@ export async function extractPluginArchive(
   destination: string,
   limits: PluginPackageLimits,
   signal?: AbortSignal,
+  allowUToolsManifest = false,
 ): Promise<void> {
   const tarFile = path.join(path.dirname(archive), "validated-package.tar");
   await pipeline(
@@ -138,8 +139,16 @@ export async function extractPluginArchive(
   }
   signal?.throwIfAborted();
   if (invalid) throw invalid;
-  const manifest = paths.get("PACKAGE/PACKAGE.JSON");
-  if (!manifest || manifest.directory || manifest.spelling !== "package/package.json") {
+  const manifest =
+    paths.get("PACKAGE/PACKAGE.JSON") ??
+    (allowUToolsManifest ? paths.get("PACKAGE/PLUGIN.JSON") : undefined);
+  if (
+    !manifest ||
+    manifest.directory ||
+    !["package/package.json", ...(allowUToolsManifest ? ["package/plugin.json"] : [])].includes(
+      manifest.spelling,
+    )
+  ) {
     throw new Error("Plugin archive is missing package/package.json");
   }
   await tar.x({

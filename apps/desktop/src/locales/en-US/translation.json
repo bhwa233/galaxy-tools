@@ -787,11 +787,12 @@
     "commandRunningHint": "You can still disable the plugin. The host will ask it to save and cancel its tasks first.",
     "add": {
       "title": "Add plugin",
-      "description": "Accepts .tgz, development folders and npm packages."
+      "description": "Accepts .tgz, npm packages, and prebuilt spark233 / uTools folders."
     },
     "importing": "Importing plugin package",
     "importingDirectory": "Preparing development directory",
-    "importDirectory": "Import development directory",
+    "importDirectory": "Import plugin folder",
+    "utoolsLocalOnly": "Local uTools compatibility. Accounts, purchases and cloud sync are unavailable.",
     "directoryPackage": "Development directory snapshot",
     "import": "Import local .tgz",
     "preparing": "Preparing installation preview",

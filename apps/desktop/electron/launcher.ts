@@ -356,9 +356,11 @@ export class LauncherController {
     context = this.options.getContext?.(callerId)?.context,
   ) {
     const command = this.declaredCommand(pluginId, commandId);
-    // Existing providers retain their original parameter-only activation. Only
-    // commands explicitly using this API's source/window contract gain context.
+    // Legacy providers retain their parameter-only activation. The explicitly
+    // trusted compatibility provider also needs its declared captured resources.
     if (!command || !context) return;
+    if (command.compatibilityQuery === "utools" && command.inputs.includes(context.kind))
+      return context;
     if (
       !command.sourceApplications &&
       !command.inputs.includes("window") &&
@@ -1366,8 +1368,9 @@ export class LauncherController {
     }
     for (const entry of commands.filter(
       ({ command, pluginId }) =>
-        command.launcher?.role !== "hidden" &&
+        (command.launcher?.role !== "hidden" || command.compatibilityQuery === "utools") &&
         (needle ||
+          (command.compatibilityQuery === "utools" && inputContext) ||
           (pluginId === "spark233.applications" &&
             command.id === "search" &&
             applicationIds.length)) &&
