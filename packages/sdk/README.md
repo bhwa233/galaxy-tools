@@ -3,6 +3,15 @@
 Local SDK under development. `@spark233/sdk` is a working package name, not a
 claim that its npm scope has been registered. Publishing is a separate step.
 
+Host API 1.6 adds an optional uTools compatibility runtime. Its generated package
+declares `spark233.compatibility: {kind: "utools", manifest: "payload/plugin.json"}`
+and requires explicit full-code trust, including when there is no plugin preload.
+The hidden `compat-search` command uses `compatibilityQuery: "utools"`; only a
+validated compatibility package can declare that query provider. Original SDK
+plugins retain their sandbox and asynchronous API. See the
+[compatibility plan](../../Docs/utools-compatibility-todo.md) for the supported
+local APIs, import identity requirements, and unsupported platform services.
+
 Browser pages with an explicitly granted `node.backend` capability can call their
 current backend using `client.capability("node.backend", "invoke", { commandId,
 parameters })`. Only the same plugin's public headless commands are accepted;
@@ -14,7 +23,7 @@ checks before dispatch and before returning. The host never falls back to
 
 A plugin is a prebuilt npm package with a `spark233` manifest in `package.json`.
 The manifest is validated without running plugin code or npm lifecycle scripts.
-`schemaVersion` is 1; the current host API is 1.2.0 and theme protocol is 1.0.0.
+`schemaVersion` is 1; the current host API is 1.6.0 and theme protocol is 1.0.0.
 Package, plugin data and host API versions are independent.
 
 Web entry paths, backend entry paths and native executable paths are relative to

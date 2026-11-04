@@ -787,11 +787,12 @@
     "commandRunningHint": "你仍可以停用插件；宿主会先请求保存并取消任务。",
     "add": {
       "title": "添加插件",
-      "description": "支持 .tgz、开发目录与 npm 包。"
+      "description": "支持 .tgz、npm 包及 spark233 / uTools 预构建目录。"
     },
     "importing": "正在导入插件包",
     "importingDirectory": "正在准备开发目录",
-    "importDirectory": "导入开发目录",
+    "importDirectory": "导入插件目录",
+    "utoolsLocalOnly": "uTools 本地兼容，不含账号、付费授权和云同步。",
     "directoryPackage": "开发目录快照",
     "import": "导入本地 .tgz",
     "preparing": "正在准备安装预览",

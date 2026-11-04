@@ -480,7 +480,11 @@ async function copyBusinessRenderer(packageRoot, source, metadata) {
         },
       ],
       publicDir: false,
-      build: { outDir: hostRenderer, emptyOutDir: true },
+      build: {
+        outDir: hostRenderer,
+        emptyOutDir: true,
+        rolldownOptions: { input: path.join(source, "renderer/index.html") },
+      },
     });
   }
   const uiPackage = JSON.parse(

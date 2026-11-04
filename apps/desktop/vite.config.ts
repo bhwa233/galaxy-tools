@@ -84,6 +84,10 @@ export default defineConfig(async () => ({
     assetsInlineLimit: (file: string) =>
       /(?:HarmonyOS_Sans_SC\.ttf|SourceHanSerifSC-Regular\.woff2)$/.test(file) ? false : undefined,
     rolldownOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        utools: fileURLToPath(new URL("./utools.html", import.meta.url)),
+      },
       output: {
         // 把体积最大的第三方库拆成独立 chunk：markdown 渲染链（懒加载后
         // 仅预览时才拉取）与基础 vendor 分离，提升窗口间磁盘缓存复用

@@ -604,6 +604,7 @@ export class PluginManager {
     }
     if (
       (metadata.spark233.backend ||
+        metadata.spark233.compatibility ||
         metadata.spark233.migration ||
         Object.keys(metadata.spark233.native).length) &&
       !grant.native

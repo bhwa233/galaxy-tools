@@ -24,6 +24,7 @@ async function fixture(
     commands?: Array<Record<string, unknown>>;
     modes?: Array<Record<string, unknown>>;
     host?: string;
+    compatibility?: boolean;
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-source-commands-"));
@@ -39,7 +40,10 @@ async function fixture(
       schemaVersion: 1,
       id: pluginId,
       displayName: "Owned source actions",
-      api: "^1.0.0",
+      api: options.compatibility ? ">=1.6.0 <2.0.0" : "^1.0.0",
+      ...(options.compatibility
+        ? { compatibility: { kind: "utools", manifest: "plugin.json" } }
+        : {}),
       host: options.host ?? ">=0.0.1 <1",
       platforms: [process.platform],
       architectures: [process.arch],
@@ -90,6 +94,15 @@ async function fixture(
   const packageFile = path.join(directory, "package.json"),
     stateFile = path.join(root, "state.json");
   fs.writeFileSync(packageFile, JSON.stringify(metadata));
+  if (options.compatibility)
+    fs.writeFileSync(
+      path.join(directory, "plugin.json"),
+      JSON.stringify({
+        name: "fixture.compat",
+        main: "index.html",
+        features: [{ code: "open", cmds: ["Fixture"] }],
+      }),
+    );
   fs.writeFileSync(
     path.join(directory, "index.html"),
     "<p>Owned fixture; no renderer launched.</p>",
@@ -108,7 +121,7 @@ async function fixture(
           integrity: "owned-fixture",
           manifestDigest: createHash("sha256").update(fs.readFileSync(packageFile)).digest("hex"),
           source: { kind: "directory", location: directory },
-          grant: { capabilities: [], native: false },
+          grant: { capabilities: [], native: !!options.compatibility },
         },
       },
     }),
@@ -256,6 +269,35 @@ it("replaces a host-incompatible installed plugin without executing it or losing
 });
 
 describe("source application command authority", () => {
+  it("forwards declared file context to the compatibility provider without widening legacy providers", async () => {
+    const context: PluginContext = {
+      kind: "files",
+      resources: [{ id: "owned-file", kind: "file" }],
+    };
+    const compatible = await fixture({
+      compatibility: true,
+      commands: [
+        {
+          id: "compat-search",
+          title: "Compatibility",
+          search: "default",
+          compatibilityQuery: "utools",
+          inputs: ["files"],
+          launcher: { role: "hidden" },
+        },
+      ],
+    });
+    compatible.setContext(context);
+    await compatible.controller.query({ query: "", sessionId: "compat-files" }, caller);
+    await vi.waitFor(() => expect(compatible.queries.at(-1)?.context).toEqual(context));
+    const legacy = await fixture({
+      commands: [{ id: "lookup", title: "Legacy", search: "default", inputs: ["files"] }],
+    });
+    legacy.setContext(context);
+    await legacy.controller.query({ query: "anything", sessionId: "legacy-files" }, caller);
+    await vi.waitFor(() => expect(legacy.queries.length).toBeGreaterThan(0));
+    expect(legacy.queries.at(-1)?.context).toBeUndefined();
+  });
   it("offers dictionary lookup with the typed text without querying the provider", async () => {
     const manifest = JSON.parse(
       fs.readFileSync(path.resolve("../../packages/official/translation/package.json"), "utf8"),

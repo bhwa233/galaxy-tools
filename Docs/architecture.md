@@ -16,6 +16,8 @@ spark233 是 Windows 11 x64 启动器和插件工具集。应用使用 Electron�
 
 启动器、设置页由 `spark233://app` 提供；笔记页面由 `spark233://notes` 提供；官方工作区和外部 Web 插件使用各自受控入口。注册窗口、主 frame 和 origin 在主进程重新验证，来源路径不能替代命令授权。
 
+常用 uTools 插件使用独立 Electron 兼容运行器，按需启动，页面和 preload 不进入主宿主进程。导入、完整代码信任、启停、数据备份和更新仍由同一插件管理器负责。首版支持本地 API，不包含 uTools 账号、付费和云同步；范围及证据见 [兼容 TODO](utools-compatibility-todo.md)。
+
 ## 查询与写入
 
 输入进入启动器查询会话，提供方按 session、request 和 revision 发布增量结果。不同调用方的查询相互独立。执行动作使用独立身份，不能废弃仍在返回的查询分组。

@@ -758,8 +758,7 @@ export function PluginManagementDialog({
                       <CardTitle>{t("plugins.add.title", { defaultValue: "添加插件" })}</CardTitle>
                       <CardDescription>
                         {t("plugins.add.description", {
-                          defaultValue:
-                            "支持本地 .tgz、预构建开发目录和 npm 包。只有符合 spark233 清单的插件才能安装。",
+                          defaultValue: "支持 .tgz、npm 包及 spark233 / uTools 预构建目录。",
                         })}
                       </CardDescription>
                     </CardHeader>
@@ -889,6 +888,9 @@ export function PluginManagementDialog({
                               i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN"
                             ]?.displayName ?? preview.metadata.spark233.displayName}{" "}
                             <Badge variant="outline">{preview.metadata.version}</Badge>
+                            {preview.metadata.spark233.compatibility && (
+                              <Badge variant="secondary">uTools</Badge>
+                            )}
                           </CardTitle>
                           <CardDescription className="break-all">
                             {preview.metadata.name} ·{" "}
@@ -900,6 +902,11 @@ export function PluginManagementDialog({
                           </CardDescription>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-3">
+                          {preview.metadata.spark233.compatibility && (
+                            <p className="text-sm text-muted-foreground">
+                              {t("plugins.utoolsLocalOnly")}
+                            </p>
+                          )}
                           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
                             <span>
                               {preview.currentVersion

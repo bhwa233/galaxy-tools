@@ -47,6 +47,7 @@ export interface PackageTaskSnapshot {
   error?: string;
 }
 export interface PluginSummary {
+  compatibility?: "utools";
   pluginId: string;
   packageName: string;
   displayName: string;

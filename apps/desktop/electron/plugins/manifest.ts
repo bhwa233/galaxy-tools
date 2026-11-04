@@ -11,6 +11,7 @@ import {
   type PluginPackageMetadata,
 } from "@spark233/sdk";
 import { AppError, canonical, confined, inside } from "../persistence.js";
+import { compatibilityManifest } from "./utools-manifest.js";
 
 export interface HostEnvironment {
   version: string;
@@ -66,6 +67,8 @@ export function validatePluginMetadata(
   }
   const metadata = parsed.data;
   const manifest = metadata.spark233;
+  if (manifest.compatibility && !semver.subset(manifest.api, ">=1.6.0 <2.0.0"))
+    throw new AppError("incompatiblePlugin", "uTools 兼容运行时要求最低 API 1.6.0");
   if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(metadata.name)) {
     throw new AppError("invalidPlugin", "插件 npm 包名不合法");
   }
@@ -286,5 +289,6 @@ export function validatePluginDirectory(
     options,
   );
   resolvePluginEntries(directory, metadata);
+  if (metadata.spark233.compatibility) compatibilityManifest(directory, metadata);
   return metadata;
 }

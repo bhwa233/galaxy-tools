@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { isWidgetRankRows } from "./widget.js";
 
-export const HOST_API_VERSION = "1.5.0";
+export const HOST_API_VERSION = "1.6.0";
 export const THEME_API_VERSION = "1.0.0";
 
 // Reuse Zod already present in the toolchain for one shared runtime/type schema;
@@ -150,6 +150,7 @@ const commandSchema = z.strictObject({
     .transform((values) => [...new Set(values)])
     .optional(),
   search: z.enum(["mode", "word", "default"]).optional(),
+  compatibilityQuery: z.literal("utools").optional(),
   mode: localId.optional(),
   requiresPlugins: z.array(localId).max(32).optional(),
   translations: z
@@ -482,6 +483,7 @@ export const pluginManifestSchema = z
     activation: z.enum(["on-command", "on-startup"]).default("on-command"),
     capabilities: z.array(pluginCapabilitySchema).max(32).default([]),
     entry: packagePath.optional(),
+    compatibility: z.strictObject({ kind: z.literal("utools"), manifest: packagePath }).optional(),
     backend: z.strictObject({ entry: packagePath }).optional(),
     migration: z.strictObject({ entry: packagePath }).optional(),
     native: z.record(localId, nativeSchema).default({}),
@@ -525,6 +527,11 @@ export const pluginManifestSchema = z
         issue("Tray item must reference this plugin's public command: " + item.commandId);
     }
     for (const command of manifest.commands) {
+      if (
+        command.compatibilityQuery &&
+        (!manifest.compatibility || command.id !== "compat-search" || command.search !== "default")
+      )
+        issue("Compatibility queries require the uTools runtime and its declared provider");
       if (command.window && !Object.hasOwn(manifest.ui?.windows ?? {}, command.window))
         issue(`Unknown command window: ${command.window}`);
       if (

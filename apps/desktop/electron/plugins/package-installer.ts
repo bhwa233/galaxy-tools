@@ -21,6 +21,7 @@ import {
 } from "./package-archive.js";
 import { limitPackageBytes, registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
 import type { ResolvedRegistryPluginPackage } from "./package-source.js";
+import { normalizeUToolsPackage } from "./utools-manifest.js";
 
 export { DEFAULT_PLUGIN_PACKAGE_LIMITS, type PluginPackageLimits } from "./package-archive.js";
 
@@ -194,7 +195,14 @@ async function stagePackage(
       await ssri.fromStream(createReadStream(archive), { algorithms: ["sha512"] })
     ).toString();
     await mkdir(unpacked, { mode: 0o700 });
-    await extractPluginArchive(archive, unpacked, limits, options.signal);
+    await extractPluginArchive(
+      archive,
+      unpacked,
+      limits,
+      options.signal,
+      source.kind !== "registry",
+    );
+    await normalizeUToolsPackage(unpacked);
     const metadata = validatePluginDirectory(unpacked, environment, options.expected);
     const releaseNotes = await readPluginReleaseNotes(unpacked);
     const directory = getPluginVersionDirectory(
