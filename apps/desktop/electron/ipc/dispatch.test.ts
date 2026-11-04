@@ -52,6 +52,16 @@ it("allows screenshot history only in its own plugin workspace", async () => {
     await expect(dispatch.handle(win, "plugins_list", {})).rejects.toMatchObject({
       code: "permissionDenied",
     });
+    await expect(
+      dispatch.handle(win, "plugins_utools_catalog", {
+        query: "",
+        page: 1,
+        sort: "auto",
+      }),
+    ).rejects.toMatchObject({ code: "permissionDenied" });
+    await expect(
+      dispatch.handle(win, "plugins_prepare_utools", { catalogId: "notes" }),
+    ).rejects.toMatchObject({ code: "permissionDenied" });
     layout.pluginId = "spark233.search";
     await expect(
       dispatch.handle(win, "screenshot_action", { action: "list" }),

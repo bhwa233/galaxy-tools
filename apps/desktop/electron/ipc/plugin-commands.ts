@@ -33,6 +33,7 @@ export function createPluginCommands(
     throw new AppError("invalidCommand", "Unsupported host command: " + command);
   }
   return {
+    plugins_utools_catalog: run,
     plugins_activate: run,
     plugins_cancel_install: run,
     plugins_cancel_package_task: run,
@@ -44,6 +45,7 @@ export function createPluginCommands(
     plugins_list: run,
     plugins_prepare_bundled: run,
     plugins_prepare_registry: run,
+    plugins_prepare_utools: run,
     plugins_prepare_update: run,
     plugins_release_notes: run,
     plugins_uninstall: run,

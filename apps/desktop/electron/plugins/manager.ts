@@ -27,6 +27,8 @@ import {
   type StagedPluginPackage,
 } from "./package-installer.js";
 import { PluginResourceScope, samePluginOwner } from "./resources.js";
+import { pluginPackageSourceSchema } from "../../shared/plugin-sources.js";
+import { compatibilityManifest, utoolsUpstreamVersion } from "./utools-manifest.js";
 import { diagnosticErrorCode, type DiagnosticEvent } from "../diagnostics.js";
 
 export const pluginTrustGrantSchema = z.strictObject({
@@ -41,12 +43,7 @@ const installationSchema = z.strictObject({
   enabled: z.boolean(),
   integrity: z.string(),
   manifestDigest: z.string(),
-  source: z.strictObject({
-    kind: z.enum(["registry", "file", "directory"]),
-    location: z.string(),
-    registry: z.string().optional(),
-    channel: z.string().optional(),
-  }),
+  source: pluginPackageSourceSchema,
   grant: pluginTrustGrantSchema,
   lastError: z.string().optional(),
 });
@@ -1052,7 +1049,10 @@ export class PluginManager {
     if (!record.enabled || record.lastError)
       throw new AppError("pluginDisabled", "插件已停用或存在错误");
     const metadata = this.metadata(record);
-    if (!Object.keys(metadata.spark233.ui?.widgets ?? {}).length)
+    if (
+      !metadata.spark233.compatibility &&
+      !Object.keys(metadata.spark233.ui?.widgets ?? {}).length
+    )
       throw new AppError("invalidPlugin", "插件未声明桌面卡片");
     this.assertDispatch(metadata);
     const runtime = await this.start(record, false, false, "widget");
@@ -1344,6 +1344,46 @@ export class PluginManager {
   }
 
   /** Caller presents package/version/capabilities and obtains this grant first. */
+  bindUToolsSource(
+    staged: StagedPluginPackage,
+    expected: { version: string; integrity: string },
+  ): Promise<void> {
+    return this.mutate(staged.metadata.spark233.id, async () => {
+      if (this.state.transaction)
+        throw new AppError("pluginRecoveryRequired", "需要先恢复未完成的插件事务");
+      const record = this.find(staged.metadata.spark233.id);
+      const source = pluginPackageSourceSchema.parse(staged.source);
+      if (
+        !record ||
+        source.kind !== "utools" ||
+        record.version !== expected.version ||
+        record.integrity !== expected.integrity ||
+        record.packageName !== staged.metadata.name ||
+        canonical(record.directory) !== canonical(staged.directory)
+      )
+        throw new AppError("pluginIdentityMismatch", "来源绑定目标已变化，请重新检查");
+      const metadata = this.metadata(record);
+      if (
+        !metadata.spark233.compatibility ||
+        compatibilityManifest(record.directory, metadata).name !== source.catalogId ||
+        !record.grant.native ||
+        source.artifactIntegrity !== staged.integrity ||
+        source.upstreamVersion !== utoolsUpstreamVersion(metadata)
+      )
+        throw new AppError("pluginIdentityMismatch", "商店来源与现有插件实际身份不一致");
+      const previous = { source: record.source, integrity: record.integrity };
+      record.source = source;
+      record.integrity = staged.integrity;
+      try {
+        this.persist();
+      } catch (error) {
+        record.source = previous.source;
+        record.integrity = previous.integrity;
+        throw error;
+      }
+      this.notifyChange();
+    });
+  }
   install(
     staged: StagedPluginPackage,
     grant: PluginTrustGrant,
@@ -1370,6 +1410,14 @@ export class PluginManager {
         pluginId: staged.metadata.spark233.id,
       });
       const id = metadata.spark233.id;
+      if (
+        staged.source.kind === "utools" &&
+        (!metadata.spark233.compatibility ||
+          compatibilityManifest(staged.directory, metadata).name !== staged.source.catalogId ||
+          staged.source.artifactIntegrity !== staged.integrity ||
+          staged.source.upstreamVersion !== utoolsUpstreamVersion(metadata))
+      )
+        throw new AppError("pluginIdentityMismatch", "商店安装来源未绑定实际包身份与内容");
       this.assertMutationDependencies(metadata);
       this.assertGrant(metadata, grant);
       const before = this.find(id);
@@ -1414,7 +1462,7 @@ export class PluginManager {
         version: metadata.version,
         directory: staged.directory,
         enabled: before?.enabled ?? enabled,
-        source: staged.source,
+        source: pluginPackageSourceSchema.parse(staged.source),
         integrity: staged.integrity,
         manifestDigest: this.digest(staged.directory),
         grant: structuredClone(grant),

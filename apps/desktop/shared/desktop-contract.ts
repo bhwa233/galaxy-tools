@@ -216,8 +216,10 @@ interface CommandResults {
   plugins_import: InstallPreview | undefined;
   plugins_import_directory: InstallPreview | undefined;
   plugins_list: PluginManagementState;
+  plugins_utools_catalog: import("./plugin-market.js").UToolsCatalogPage;
   plugins_prepare_bundled: InstallPreview | undefined;
   plugins_prepare_registry: InstallPreview | undefined;
+  plugins_prepare_utools: InstallPreview | undefined;
   plugins_prepare_update: InstallPreview | undefined;
   plugins_release_notes: PluginReleaseNotes;
   plugins_uninstall: PluginManagementState;

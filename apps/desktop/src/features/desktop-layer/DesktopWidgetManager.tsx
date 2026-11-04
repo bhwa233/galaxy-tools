@@ -254,7 +254,9 @@ export function DesktopWidgetManager({
               instance.status === "fault" &&
               enabled &&
               instance.visible &&
-              (screenshot || (!!template && (template.kind !== "web" || webEnabled)));
+              (screenshot ||
+                instance.widgetDefinitionId === "utools-main" ||
+                (!!template && (template.kind !== "web" || webEnabled)));
             const details = instance as LayerInstanceSummary & {
               group?: "normal" | "top";
               inputMode?: "passive" | "interactive";

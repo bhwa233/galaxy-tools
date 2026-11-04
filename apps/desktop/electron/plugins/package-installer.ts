@@ -1,4 +1,6 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import { createReadStream, createWriteStream, type Stats } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, opendir, realpath, rm, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
@@ -22,6 +24,9 @@ import {
 import { limitPackageBytes, registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
 import type { ResolvedRegistryPluginPackage } from "./package-source.js";
 import { normalizeUToolsPackage } from "./utools-manifest.js";
+import { readUToolsManifest, utoolsUpstreamVersion } from "./utools-manifest.js";
+import { extractUToolsArchive } from "./utools-package.js";
+import { utoolsDownloadURL, type PluginPackageSource } from "../../shared/plugin-sources.js";
 
 export { DEFAULT_PLUGIN_PACKAGE_LIMITS, type PluginPackageLimits } from "./package-archive.js";
 
@@ -32,6 +37,9 @@ export interface PluginPackagePaths {
 }
 
 export interface PackageInstallOptions {
+  fetch?: typeof fetch;
+  utools?: boolean;
+  reuseExisting?: boolean;
   expected?: PluginExpectation;
   signal?: AbortSignal;
   limits?: Partial<PluginPackageLimits>;
@@ -48,16 +56,12 @@ export interface PluginReleaseNotes {
 }
 
 export interface StagedPluginPackage {
+  warnings?: string[];
   metadata: PluginPackageMetadata;
   directory: string;
   integrity: string;
   releaseNotes?: PluginReleaseNotes;
-  source: {
-    kind: "registry" | "file" | "directory";
-    location: string;
-    registry?: string;
-    channel?: string;
-  };
+  source: PluginPackageSource;
 }
 
 /** Package-local display text only. Existing archive validation rejects links;
@@ -195,15 +199,31 @@ async function stagePackage(
       await ssri.fromStream(createReadStream(archive), { algorithms: ["sha512"] })
     ).toString();
     await mkdir(unpacked, { mode: 0o700 });
-    await extractPluginArchive(
-      archive,
-      unpacked,
-      limits,
-      options.signal,
-      source.kind !== "registry",
-    );
+    let warnings: string[] | undefined;
+    if (options.utools)
+      warnings = await extractUToolsArchive(archive, unpacked, limits, options.signal);
+    else
+      await extractPluginArchive(
+        archive,
+        unpacked,
+        limits,
+        options.signal,
+        source.kind !== "registry",
+      );
+    if (source.kind === "utools") {
+      const manifest = readUToolsManifest(unpacked);
+      if (
+        manifest.name !== source.catalogId ||
+        (source.upstreamVersion &&
+          semver.valid(manifest.version) !== semver.valid(source.upstreamVersion))
+      )
+        throw new Error("商店包清单与目录身份或版本不一致");
+      source = { ...source, upstreamVersion: manifest.version, artifactIntegrity: integrity };
+    }
     await normalizeUToolsPackage(unpacked);
     const metadata = validatePluginDirectory(unpacked, environment, options.expected);
+    if (source.kind === "utools")
+      source = { ...source, upstreamVersion: utoolsUpstreamVersion(metadata) };
     const releaseNotes = await readPluginReleaseNotes(unpacked);
     const directory = getPluginVersionDirectory(
       { versionsRoot },
@@ -211,6 +231,72 @@ async function stagePackage(
       metadata.version,
     );
     let identity: Stats;
+    if (options.reuseExisting) {
+      const existing = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return undefined;
+      });
+      if (existing) {
+        if (existing.isSymbolicLink() || !existing.isDirectory())
+          throw new Error("已有插件版本目录无效");
+        validatePluginDirectory(directory, environment, {
+          name: metadata.name,
+          version: metadata.version,
+          pluginId: metadata.spark233.id,
+        });
+        // Compare the bounded normalized tree, not only its manifest, before
+        // reusing an immutable version for an explicit source-binding preview.
+        const fingerprint = async (root: string): Promise<string> => {
+          const hash = createHash("sha512");
+          let count = 0,
+            expanded = 0;
+          const walk = async (relative: string): Promise<void> => {
+            options.signal?.throwIfAborted();
+            if (relative.split(path.sep).length > limits.maxPathDepth)
+              throw new Error("已有版本目录过深");
+            const handle = await opendir(path.join(root, relative));
+            const names: string[] = [];
+            for await (const entry of handle) names.push(entry.name);
+            for (const name of names.sort()) {
+              const rel = path.join(relative, name),
+                file = path.join(root, rel),
+                info = await lstat(file);
+              if (
+                ++count > limits.maxEntries ||
+                !isPluginPackagePath(rel.split(path.sep).join("/"))
+              )
+                throw new Error("已有版本路径或数量超限");
+              expanded += info.isFile() ? info.size : 0;
+              if (expanded > limits.maxExpandedBytes) throw new Error("已有版本体积超限");
+              if (info.isSymbolicLink()) throw new Error("不可变版本含链接");
+              hash.update(
+                JSON.stringify([
+                  info.isDirectory() ? "directory" : "file",
+                  rel.split(path.sep).join("/"),
+                  info.isFile() ? info.size : 0,
+                ]) + "\n",
+              );
+              if (info.isDirectory()) await walk(rel);
+              else if (info.isFile() && info.size <= limits.maxFileBytes) {
+                for await (const bytes of createReadStream(file)) hash.update(bytes);
+              } else throw new Error("不可变版本含不支持的文件");
+            }
+          };
+          await walk("");
+          return hash.digest("hex");
+        };
+        if ((await fingerprint(directory)) !== (await fingerprint(unpacked)))
+          throw new Error("已有不可变版本的实际内容不一致");
+        return {
+          metadata,
+          directory,
+          integrity,
+          source,
+          releaseNotes,
+          ...(warnings?.length ? { warnings } : {}),
+        };
+      }
+    }
     await renameWithRetry(unpacked, directory, {
       signal: options.signal,
       beforeAttempt: async () => {
@@ -221,7 +307,14 @@ async function stagePackage(
     createdDirectory = directory;
     createdIdentity = identity!;
     options.signal?.throwIfAborted();
-    return { metadata, directory, integrity, source, releaseNotes };
+    return {
+      metadata,
+      directory,
+      integrity,
+      source,
+      releaseNotes,
+      ...(warnings?.length ? { warnings } : {}),
+    };
   } catch (error) {
     if (createdDirectory && createdIdentity) {
       const current = await lstat(createdDirectory).catch((failure: NodeJS.ErrnoException) => {
@@ -241,6 +334,65 @@ async function stagePackage(
   } finally {
     await rm(work, { recursive: true, force: true });
   }
+}
+
+export interface UToolsRelease {
+  catalogId: string;
+  pageURL: string;
+  downloadURL: string;
+  version?: string;
+  displayName: string;
+}
+
+export async function stageUToolsPluginPackage(
+  release: UToolsRelease,
+  environment: HostEnvironment,
+  paths: PluginPackagePaths,
+  options: PackageInstallOptions = {},
+): Promise<StagedPluginPackage> {
+  const url = utoolsDownloadURL(release.downloadURL);
+  return stagePackage(
+    async (archive, limits) => {
+      const response = await (options.fetch ?? fetch)(url, {
+        redirect: "error",
+        signal: AbortSignal.any([
+          AbortSignal.timeout(120000),
+          ...(options.signal ? [options.signal] : []),
+        ]),
+      });
+      if (!response.ok || !response.body)
+        throw new Error("uTools 安装包下载失败: HTTP " + response.status);
+      const length = Number(response.headers.get("content-length"));
+      const totalBytes =
+        Number.isSafeInteger(length) && length > 0 && !response.headers.get("content-encoding")
+          ? length
+          : undefined;
+      if (totalBytes && totalBytes > limits.maxArchiveBytes)
+        throw new Error("uTools 安装包超出大小限制");
+      await pipeline(
+        Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>),
+        limitPackageBytes(limits.maxArchiveBytes, "uTools package", (receivedBytes) =>
+          options.onProgress?.({
+            receivedBytes,
+            ...(totalBytes && receivedBytes <= totalBytes ? { totalBytes } : {}),
+          }),
+        ),
+        createWriteStream(archive, { flags: "wx", mode: 0o600 }),
+        { signal: options.signal },
+      );
+    },
+    environment,
+    paths,
+    { ...options, utools: true, reuseExisting: true },
+    {
+      kind: "utools",
+      location: url,
+      catalogId: release.catalogId,
+      pageURL: release.pageURL,
+      upstreamVersion: release.version,
+      checkedAt: Date.now(),
+    },
+  );
 }
 
 export async function stageRegistryPluginPackage(
@@ -322,7 +474,7 @@ export async function stageLocalPluginPackage(
 ): Promise<StagedPluginPackage> {
   const source = path.resolve(tarballPath);
   const info = await stat(source);
-  if (!info.isFile()) throw new Error("Local plugin import must be a regular npm .tgz file");
+  if (!info.isFile()) throw new Error("Local plugin import must be a regular package file");
   const expectedIntegrity =
     options.integrity === undefined ? undefined : requirePackageIntegrity(options.integrity);
   return stagePackage(
@@ -338,7 +490,7 @@ export async function stageLocalPluginPackage(
     },
     environment,
     paths,
-    options,
+    { ...options, utools: /\.upxs?$/i.test(source) },
     { kind: "file", location: source },
     expectedIntegrity,
   );

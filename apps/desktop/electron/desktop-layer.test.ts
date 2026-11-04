@@ -8,6 +8,10 @@ import type { LayerCard, LayerClientRequest, LayerEvent } from "../shared/layer-
 import { DesktopLayer } from "./desktop-layer.js";
 import { LayerWindow } from "./layer-window.js";
 import { LayerLayoutStore } from "./layer-layout-store.js";
+import { UToolsDesktopHost } from "./plugins/utools-desktop.js";
+import { PluginResourceScope } from "./plugins/resources.js";
+import type { PluginPackageMetadata } from "@spark233/sdk";
+import type { UToolsDesktopPresentation } from "../shared/utools-desktop.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -197,6 +201,136 @@ it("reuses source windows, moves only bar geometry and restores native presentat
   expect(f.store.load().revision).toBe(revision);
   expect(f.cards).toEqual(original);
   expect(f.restored).toHaveBeenCalledTimes(3);
+});
+
+it("projects compatibility-owned windows without creating content surfaces and keeps desktop and bar placement independent", async () => {
+  const f = await fixture();
+  const host = new UToolsDesktopHost({
+    layer: f.layer,
+    store: f.store,
+    pluginHost: () => undefined,
+  });
+  const scope = new PluginResourceScope({
+    pluginId: "utools.fixture",
+    version: "1.0.0",
+    instanceId: "first",
+  });
+  cleanups.unshift(async () => {
+    await scope.stop("disable");
+  });
+  const presentations: Array<UToolsDesktopPresentation | null> = [];
+  let refuseUnpin = false;
+  const request = host.attach(
+    scope,
+    { spark233: { displayName: "Fixture editor" } } as PluginPackageMetadata,
+    async (value) => {
+      if (value === null && refuseUnpin) throw new Error("runner restore failed");
+      presentations.push(value);
+    },
+  );
+  const desktop = { x: -1100, y: 100, width: 500, height: 300 };
+  await request({ type: "pin", featureCode: "edit", bounds: desktop });
+  await expect.poll(() => presentations.at(-1)?.mode).toBe("desktop");
+  const instance = host.list()[0]!;
+  const id = "utools:" + instance.widgetInstanceId;
+  expect(f.layer.windows()).toEqual(f.natives);
+  await f.layer.openOverlay();
+  const bar = presentations.at(-1)!;
+  expect(bar?.mode).toBe("overlay");
+  expect(f.layer.snapshot(f.layer.surfaceForCard("note")!).overlay?.panels).toContainEqual(
+    expect.objectContaining({ cardId: id, kind: "utools" }),
+  );
+  const moved = { x: -700, y: 350, width: 600, height: 260 };
+  await request({ type: "bounds", revision: bar!.revision, bounds: moved });
+  await expect.poll(() => presentations.at(-1)?.card.bounds).toEqual(moved);
+  await request({ type: "panel", revision: presentations.at(-1)!.revision, action: "hide" });
+  await expect.poll(() => presentations.at(-1)?.visible).toBe(false);
+  const stale = presentations.at(-1)!.revision;
+  await f.layer.closeOverlay(false);
+  await expect.poll(() => presentations.at(-1)?.mode).toBe("desktop");
+  expect(presentations.at(-1)?.visible).toBe(true);
+  expect(presentations.at(-1)?.card.bounds).toEqual({
+    ...desktop,
+    width: moved.width,
+    height: moved.height,
+  });
+  await expect(request({ type: "bounds", revision: stale, bounds: moved })).rejects.toThrow(
+    "布局已变化",
+  );
+  await f.layer.openOverlay();
+  expect(presentations.at(-1)?.card.bounds).toEqual(moved);
+  expect(presentations.at(-1)?.visible).toBe(false);
+  // A failed unpin used to delete the durable card and management/retry entry
+  // before the compatibility window acknowledged restoration.
+  refuseUnpin = true;
+  await expect(request({ type: "unpin" })).rejects.toThrow("runner restore failed");
+  expect(f.store.load().cards[id]).toBeDefined();
+  expect(host.has(instance.widgetInstanceId)).toBe(true);
+  expect(host.list()[0]?.status).toBe("fault");
+  refuseUnpin = false;
+  const failedCommit = vi
+    .spyOn(f.store, "removeUTools")
+    .mockRejectedValueOnce(new Error("layout write failed"));
+  await expect(request({ type: "unpin" })).rejects.toThrow("layout write failed");
+  expect(f.store.load().cards[id]).toBeDefined();
+  expect(presentations.at(-1)?.mode).toBe("desktop");
+  failedCommit.mockRestore();
+  await request({ type: "unpin" });
+  expect(presentations.at(-1)).toBeNull();
+  expect(host.list()).toEqual([]);
+  expect(f.store.load().cards[id]).toBeUndefined();
+  expect(f.layer.windows()).toEqual(f.natives);
+});
+
+it("rejects requests from a replaced compatibility owner and restores the saved desktop identity", async () => {
+  const f = await fixture();
+  const host = new UToolsDesktopHost({
+    layer: f.layer,
+    store: f.store,
+    pluginHost: () => undefined,
+  });
+  const metadata = { spark233: { displayName: "Fixture editor" } } as PluginPackageMetadata;
+  const first = new PluginResourceScope({
+    pluginId: "utools.fixture",
+    version: "1.0.0",
+    instanceId: "first",
+  });
+  const old = host.attach(first, metadata, async () => {});
+  await old({
+    type: "pin",
+    featureCode: "edit",
+    bounds: { x: -1100, y: 100, width: 500, height: 300 },
+  });
+  const identity = host.list()[0]!.widgetInstanceId;
+  const second = new PluginResourceScope({
+    pluginId: "utools.fixture",
+    version: "1.0.1",
+    instanceId: "second",
+  });
+  const presentations: UToolsDesktopPresentation[] = [];
+  let failPresentation = false;
+  host.attach(second, metadata, async (value) => {
+    if (failPresentation) throw new Error("presentation refused");
+    if (value) presentations.push(value);
+  });
+  cleanups.unshift(async () => {
+    await first.stop("disable");
+    await second.stop("disable");
+  });
+  await expect.poll(() => presentations.length).toBeGreaterThan(0);
+  await expect(old({ type: "unpin" })).rejects.toThrow("实例已失效");
+  expect(host.list()[0]!.widgetInstanceId).toBe(identity);
+  f.layer.setVisibility("locked", true);
+  await expect.poll(() => presentations.at(-1)?.visible).toBe(false);
+  f.layer.setVisibility("locked", false);
+  await expect.poll(() => presentations.at(-1)?.visible).toBe(true);
+  failPresentation = true;
+  f.layer.setVisibility("locked", true);
+  await expect.poll(() => host.list()[0]?.status).toBe("fault");
+  failPresentation = false;
+  await host.retry(identity);
+  await expect.poll(() => host.list()[0]?.status).toBe("active");
+  expect(host.list()[0]?.widgetInstanceId).toBe(identity);
 });
 
 it("rejects old sessions and cross-surface authority, and derives native drag from trusted cursor DIPs", async () => {

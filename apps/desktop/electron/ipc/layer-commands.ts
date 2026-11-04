@@ -7,6 +7,7 @@ export function createLayerCommands(
     RuntimeContext,
     | "widgetHost"
     | "desktopLayer"
+    | "utoolsDesktop"
     | "screenshotLayer"
     | "notesMigrationError"
     | "isAdminView"
@@ -23,7 +24,11 @@ export function createLayerCommands(
         const state = ctx.widgetHost.list();
         return {
           ...state,
-          instances: [...state.instances, ...(ctx.screenshotLayer?.list() ?? [])],
+          instances: [
+            ...state.instances,
+            ...(ctx.screenshotLayer?.list() ?? []),
+            ...(ctx.utoolsDesktop?.list() ?? []),
+          ],
           notesMigrationError: ctx.notesMigrationError,
         };
       }
@@ -36,12 +41,14 @@ export function createLayerCommands(
         };
       case "layer_remove": {
         const id = String(args.widgetInstanceId);
+        if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.remove(id);
         return ctx.screenshotLayer?.has(id)
           ? ctx.screenshotLayer.close(id)
           : ctx.widgetHost.remove(id);
       }
       case "layer_retry": {
         const id = String(args.widgetInstanceId);
+        if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.retry(id);
         return ctx.screenshotLayer?.has(id)
           ? ctx.screenshotLayer.retry(id)
           : ctx.widgetHost.retry(id);
@@ -49,6 +56,7 @@ export function createLayerCommands(
       case "layer_update": {
         const id = String(args.widgetInstanceId);
         const patch = args.patch as Parameters<typeof ctx.widgetHost.update>[1];
+        if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.update(id, patch);
         return ctx.screenshotLayer?.has(id)
           ? ctx.screenshotLayer.update(id, patch)
           : ctx.widgetHost.update(id, patch);

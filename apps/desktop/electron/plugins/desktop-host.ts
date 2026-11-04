@@ -43,6 +43,7 @@ import {
   stageLocalPluginPackage,
   stageDevelopmentPluginPackage,
   stageRegistryPluginPackage,
+  stageUToolsPluginPackage,
   type PluginPackagePaths,
   type StagedPluginPackage,
 } from "./package-installer.js";
@@ -50,6 +51,13 @@ import { resolveRegistryPluginPackage } from "./package-source.js";
 import { createWebPluginRuntime, type WebPluginController } from "./web-host.js";
 import { createNativePluginRuntime } from "./native-runtime.js";
 import { createUToolsRuntime } from "./utools-runtime.js";
+import { UToolsCatalog } from "./utools-catalog.js";
+import { compatibilityManifest, utoolsPluginId, utoolsUpstreamVersion } from "./utools-manifest.js";
+import {
+  pluginPackageSourceSchema,
+  utoolsSourceIdentitySchema,
+  type RegistryPluginUpdateSource,
+} from "../../shared/plugin-sources.js";
 import { runPluginDataMigration } from "./migration.js";
 import { createCapabilityBroker } from "./capabilities.js";
 import { registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
@@ -65,6 +73,8 @@ export interface WidgetSourceEvent {
 }
 
 export interface DesktopPluginHostOptions {
+  utoolsDesktop?: import("./utools-desktop.js").UToolsDesktopHost;
+  utoolsFetch?: typeof fetch;
   getPluginIcon?: (pluginId: string) => string | undefined;
   root: string;
   hostVersion: string;
@@ -102,20 +112,17 @@ export interface DesktopPluginHostOptions {
     reason?: StopReason,
   ) => void | Promise<void>;
 }
-const sourceSchema = z.strictObject({
-  kind: z.enum(["registry", "file", "directory"]),
-  location: z.string(),
-  registry: z.string().optional(),
-  channel: z.string().optional(),
-});
+const sourceSchema = pluginPackageSourceSchema;
 const pendingSchema = z.strictObject({
   previewId: z.uuid(),
   createdAt: z.number().finite(),
+  expectAbsent: z.literal(true).optional(),
   staged: z.strictObject({
     metadata: pluginPackageSchema,
     directory: z.string(),
     integrity: z.string(),
     source: sourceSchema,
+    warnings: z.array(z.string().max(2000)).max(16).optional(),
     releaseNotes: z
       .strictObject({
         status: z.enum(["available", "missing", "error"]),
@@ -125,13 +132,39 @@ const pendingSchema = z.strictObject({
       .optional(),
   }),
   updateFrom: z
-    .strictObject({
-      pluginId: z.string(),
-      name: z.string(),
-      version: z.string(),
-      registry: z.string(),
-      channel: z.string(),
-    })
+    .union([
+      z
+        .strictObject({
+          pluginId: z.string(),
+          name: z.string(),
+          version: z.string(),
+          registry: z.string(),
+          channel: z.string(),
+        })
+        .transform(({ registry, channel, ...identity }) => ({
+          ...identity,
+          integrity: undefined,
+          installedSource: undefined,
+          source: { registry, channel, kind: undefined as "registry" | undefined },
+        })),
+      z.strictObject({
+        pluginId: z.string(),
+        name: z.string(),
+        version: z.string(),
+        integrity: z.string().optional(),
+        installedSource: sourceSchema.optional(),
+        source: z
+          .union([
+            z.strictObject({
+              kind: z.literal("registry").optional(),
+              registry: z.string(),
+              channel: z.string(),
+            }),
+            utoolsSourceIdentitySchema,
+          ])
+          .optional(),
+      }),
+    ])
     .optional(),
 });
 type PendingPackage = z.infer<typeof pendingSchema>;
@@ -207,6 +240,7 @@ export class DesktopPluginHost {
   private readonly stateFile: string;
   private readonly previewsFile: string;
   private readonly checksFile: string;
+  private readonly utoolsCatalog: UToolsCatalog;
   private readonly environment;
   private pending = new Map<string, PendingPackage>();
   private readonly packageTasks = new Map<string, PackageTask>();
@@ -224,7 +258,10 @@ export class DesktopPluginHost {
   private maintenanceDrained = false;
   private restoreEpoch = 0;
   private abort = new AbortController();
-  private readonly bundledUpdates = new Map<string, { name: string; source: PluginUpdateSource }>();
+  private readonly bundledUpdates = new Map<
+    string,
+    { name: string; source: RegistryPluginUpdateSource }
+  >();
   private readonly bundledCatalog = new Map<string, BundledEntry>();
   private readonly widgetSubscribers = new Map<string, Set<(event: WidgetSourceEvent) => void>>();
 
@@ -238,6 +275,10 @@ export class DesktopPluginHost {
       versionsRoot: confined(this.root, "versions"),
       cacheRoot: confined(this.root, "cache"),
     };
+    this.utoolsCatalog = new UToolsCatalog({
+      cacheFile: confined(this.paths.cacheRoot, "utools-catalog.json"),
+      fetch: options.utoolsFetch,
+    });
     this.stateFile = confined(this.root, "state.json");
     this.previewsFile = confined(this.root, "previews.json");
     this.checksFile = confined(this.root, "update-check.json");
@@ -270,6 +311,7 @@ export class DesktopPluginHost {
             hostVersion: options.hostVersion,
             trusted: installation.grant.native,
             startupCheckOnly,
+            desktop: options.utoolsDesktop,
             resolveResource: options.resolveResource,
             getTheme: options.getTheme,
             subscribeTheme: options.subscribeTheme,
@@ -649,10 +691,36 @@ export class DesktopPluginHost {
     });
     if (JSON.stringify(metadata) !== JSON.stringify(record.staged.metadata))
       throw new Error("Pending plugin manifest changed; cancel and import it again");
+    if (record.staged.source.kind === "utools") {
+      const source = pluginPackageSourceSchema.parse(record.staged.source);
+      const manifest = compatibilityManifest(directory, metadata);
+      if (
+        source.catalogId !== manifest.name ||
+        source.upstreamVersion !== utoolsUpstreamVersion(metadata) ||
+        source.artifactIntegrity !== record.staged.integrity
+      )
+        throw new Error("商店候选的身份、版本或内容绑定已变化");
+    }
   }
   private preview(record: PendingPackage): InstallPreview {
-    const { metadata, source, integrity, releaseNotes } = record.staged;
+    const { metadata, source, integrity, releaseNotes, warnings } = record.staged;
     const task = this.taskForPreview(record.previewId);
+    let change: InstallPreview["change"];
+    if (source.kind === "utools" && record.updateFrom) {
+      try {
+        change =
+          metadata.version === record.updateFrom.version
+            ? "source"
+            : semver.eq(
+                  utoolsUpstreamVersion(metadata),
+                  utoolsUpstreamVersion(this.manager.describe(record.updateFrom.pluginId, true)),
+                )
+              ? "content"
+              : "version";
+      } catch {
+        /* A restored stale preview remains visible and cancellable. */
+      }
+    }
     return structuredClone({
       previewId: record.previewId,
       metadata,
@@ -660,8 +728,10 @@ export class DesktopPluginHost {
       integrity,
       createdAt: record.createdAt,
       ...(releaseNotes ? { releaseNotes } : {}),
+      ...(warnings ? { warnings } : {}),
       ...(task ? { taskId: task.snapshot.taskId } : {}),
       ...(record.updateFrom ? { currentVersion: record.updateFrom.version } : {}),
+      ...(change ? { change } : {}),
       requiresNativeTrust:
         !!metadata.spark233.compatibility ||
         !!metadata.spark233.backend ||
@@ -672,12 +742,14 @@ export class DesktopPluginHost {
   private addPreview(
     staged: StagedPluginPackage,
     updateFrom?: PendingPackage["updateFrom"],
+    expectAbsent?: true,
   ): InstallPreview {
     const record = {
       previewId: randomUUID(),
       createdAt: Date.now(),
       staged,
       ...(updateFrom ? { updateFrom } : {}),
+      ...(expectAbsent ? { expectAbsent } : {}),
     };
     this.pending.set(record.previewId, record);
     try {
@@ -906,6 +978,12 @@ export class DesktopPluginHost {
       throw new Error(`Development plugin installation failed:\n${this.bundleError}`);
   }
   private updateSource(record: PluginInstallation): PluginUpdateSource | undefined {
+    if (record.source.kind === "utools")
+      return utoolsSourceIdentitySchema.parse({
+        kind: "utools",
+        catalogId: record.source.catalogId,
+        pageURL: record.source.pageURL,
+      });
     if (record.source.kind === "registry" && record.source.registry)
       return { registry: record.source.registry, channel: record.source.channel ?? "latest" };
     const bundled = this.bundledUpdates.get(record.pluginId);
@@ -1056,6 +1134,16 @@ export class DesktopPluginHost {
     if (task && task.owner !== caller)
       throw new AppError("permissionDenied", "安装任务属于其他窗口文档");
   }
+  private updateBaseline(installed: PluginInstallation): NonNullable<PendingPackage["updateFrom"]> {
+    return {
+      pluginId: installed.pluginId,
+      name: installed.packageName,
+      version: installed.version,
+      integrity: installed.integrity,
+      installedSource: installed.source,
+      source: this.updateSource(installed),
+    };
+  }
   private assertUpdateCurrent(
     staged: StagedPluginPackage,
     update?: PendingPackage["updateFrom"],
@@ -1067,14 +1155,23 @@ export class DesktopPluginHost {
       !installed ||
       installed.packageName !== update.name ||
       installed.version !== update.version ||
-      !source ||
-      source.registry !== update.registry ||
-      source.channel !== update.channel ||
+      (update.integrity !== undefined && installed.integrity !== update.integrity) ||
+      (update.installedSource &&
+        JSON.stringify(installed.source) !== JSON.stringify(update.installedSource)) ||
+      JSON.stringify(source) !== JSON.stringify(update.source) ||
       staged.metadata.spark233.id !== update.pluginId ||
-      staged.metadata.name !== update.name ||
-      !semver.gt(staged.metadata.version, installed.version)
+      staged.metadata.name !== update.name
     )
       throw new Error("The installed plugin or update source changed; check for updates again");
+    if (staged.source?.kind === "utools") {
+      const current = utoolsUpstreamVersion(this.manager.describe(installed.pluginId));
+      const candidate = utoolsUpstreamVersion(staged.metadata);
+      if (semver.lt(candidate, current))
+        throw new Error("商店版本早于已安装版本，不能作为更新安装");
+      if (source?.kind === "utools" && staged.source.catalogId !== source.catalogId)
+        throw new Error("商店条目身份已变化");
+    } else if (!semver.gt(staged.metadata.version, installed.version))
+      throw new Error("The candidate is not a newer registry version");
   }
   private discardStaged(staged: StagedPluginPackage): void {
     const directory = this.exactDirectory(staged);
@@ -1150,30 +1247,55 @@ export class DesktopPluginHost {
       }
     }
   }
+  private prepareUToolsTask(
+    caller: string,
+    catalogId: string,
+  ): Promise<InstallPreview | undefined> {
+    const installed = this.manager
+      .list()
+      .find((item) => item.pluginId === utoolsPluginId(catalogId));
+    return this.prepareRegistryTask(
+      caller,
+      "uTools:" + catalogId,
+      undefined,
+      undefined,
+      installed ? this.updateBaseline(installed) : undefined,
+      catalogId,
+    );
+  }
   private prepareRegistryTask(
     caller: string,
     name: string,
     registry?: string,
     channel?: string,
     update?: PendingPackage["updateFrom"],
+    catalogId?: string,
   ): Promise<InstallPreview | undefined> {
     if (this.stopped || this.maintenance)
       return Promise.reject(new Error("Plugin host is unavailable"));
-    const source = updateSourceSchema.parse({
-      registry: registry ?? "https://registry.npmjs.org/",
-      channel: channel ?? "latest",
-    });
-    const requestKey = JSON.stringify([name, source.registry, source.channel, update?.pluginId]);
+    const source: RegistryPluginUpdateSource | { kind: "utools"; catalogId: string } = catalogId
+      ? { kind: "utools", catalogId }
+      : updateSourceSchema.parse({
+          registry: registry ?? "https://registry.npmjs.org/",
+          channel: channel ?? "latest",
+        });
+    const requestKey = JSON.stringify([name, source, update?.pluginId]);
     const existing = [...this.packageTasks.values()].find(
       (task) =>
-        task.snapshot.packageName === name &&
+        (task.requestKey === requestKey || (!catalogId && task.snapshot.packageName === name)) &&
         !["completed", "cancelled", "failed", "recovery-required"].includes(task.snapshot.stage),
     );
     if (existing) {
       if (existing.owner === caller && existing.requestKey === requestKey) return existing.promise;
       return Promise.reject(new Error("An installation task for this package already exists"));
     }
-    if ([...this.pending.values()].some((record) => record.staged.metadata.name === name))
+    if (
+      [...this.pending.values()].some((record) =>
+        catalogId
+          ? record.staged.source.catalogId === catalogId
+          : record.staged.metadata.name === name,
+      )
+    )
       return Promise.reject(new Error("Confirm or cancel this package's pending preview first"));
     this.ensurePreviewCapacity();
     const task: PackageTask = {
@@ -1214,7 +1336,7 @@ export class DesktopPluginHost {
   }
   private async runRegistryTask(
     task: PackageTask,
-    source: PluginUpdateSource,
+    source: RegistryPluginUpdateSource | { kind: "utools"; catalogId: string },
     update?: PendingPackage["updateFrom"],
   ): Promise<InstallPreview | undefined> {
     let staged: StagedPluginPackage | undefined;
@@ -1223,19 +1345,27 @@ export class DesktopPluginHost {
     try {
       task.abort.signal.throwIfAborted();
       this.taskChanged(task, { stage: "resolving" });
-      const selection = await resolveRegistryPluginPackage(
-        {
-          name: task.snapshot.packageName,
-          registry: source.registry,
-          channel: source.channel,
-          expected: update ? { pluginId: update.pluginId } : undefined,
-          cacheRoot: confined(this.paths.cacheRoot, "registry-metadata"),
-          signal: task.abort.signal,
-        },
-        this.environment,
-      );
+      let selection: Awaited<ReturnType<typeof resolveRegistryPluginPackage>> | undefined;
+      const release =
+        source.kind === "utools"
+          ? await this.utoolsCatalog.release(source.catalogId, task.abort.signal)
+          : undefined;
+      if (source.kind !== "utools")
+        selection = await resolveRegistryPluginPackage(
+          {
+            name: task.snapshot.packageName,
+            registry: source.registry,
+            channel: source.channel,
+            expected: update ? { pluginId: update.pluginId } : undefined,
+            cacheRoot: confined(this.paths.cacheRoot, "registry-metadata"),
+            signal: task.abort.signal,
+          },
+          this.environment,
+        );
       task.abort.signal.throwIfAborted();
-      const pluginId = selection.metadata.spark233.id;
+      const pluginId = release
+        ? utoolsPluginId(release.catalogId)
+        : selection!.metadata.spark233.id;
       if (
         [...this.packageTasks.values()].some(
           (other) =>
@@ -1245,26 +1375,50 @@ export class DesktopPluginHost {
         ) ||
         [...this.pending.values()].some((record) => record.staged.metadata.spark233.id === pluginId)
       )
-        throw new Error("A package task or pending preview already owns this plugin identity");
+        throw new Error("A package task or pending preview already owns this plugin");
       this.taskChanged(task, {
         pluginId,
-        candidateVersion: selection.version,
-        stage: "downloading",
+        ...(release
+          ? { packageName: release.displayName }
+          : { candidateVersion: selection!.version }),
       });
-      if (update)
+      if (selection && update)
         this.assertUpdateCurrent({ metadata: selection.metadata } as StagedPluginPackage, update);
-      staged = await stageRegistryPluginPackage(selection, this.environment, this.paths, {
+      const options = {
         signal: task.abort.signal,
-        onProgress: (progress) => this.taskChanged(task, progress),
-        onPhase: (stage) => this.taskChanged(task, { stage }),
-      });
+        fetch: this.options.utoolsFetch,
+        expected: { pluginId },
+        onProgress: (progress: { receivedBytes: number; totalBytes?: number }) =>
+          this.taskChanged(task, progress),
+        onPhase: (stage: "downloading" | "verifying") => this.taskChanged(task, { stage }),
+      };
+      staged = release
+        ? await stageUToolsPluginPackage(release, this.environment, this.paths, options)
+        : await stageRegistryPluginPackage(selection!, this.environment, this.paths, options);
+      this.taskChanged(task, { candidateVersion: staged.metadata.version });
       task.abort.signal.throwIfAborted();
       return await this.serial(async () => {
         task.abort.signal.throwIfAborted();
         if (this.packageTasks.get(task.snapshot.taskId) !== task)
           throw new Error("Package task no longer exists");
         this.assertUpdateCurrent(staged!, update);
-        const preview = this.addPreview(staged!, update);
+        if (
+          source.kind === "utools" &&
+          !update &&
+          this.manager.list().some((item) => item.pluginId === staged!.metadata.spark233.id)
+        )
+          throw new Error("准备安装期间插件已变化，请重新检查");
+        if (
+          [...this.pending.values()].some(
+            (record) => record.staged.metadata.spark233.id === staged!.metadata.spark233.id,
+          )
+        )
+          throw new Error("此插件已有待确认安装");
+        const preview = this.addPreview(
+          staged!,
+          update,
+          source.kind === "utools" && !update ? true : undefined,
+        );
         this.taskChanged(task, { stage: "awaiting-confirmation", previewId: preview.previewId });
         return { ...preview, taskId: task.snapshot.taskId };
       });
@@ -1302,6 +1456,30 @@ export class DesktopPluginHost {
         const source = this.updateSource(installed);
         if (!source) continue;
         try {
+          if (source.kind === "utools") {
+            const release = await this.utoolsCatalog.release(source.catalogId, this.abort.signal);
+            if (!release.version) throw new Error("商店未提供可比较版本，请从目录手动下载并检查");
+            if (
+              semver.gt(
+                release.version,
+                utoolsUpstreamVersion(this.manager.describe(installed.pluginId)),
+              )
+            )
+              updates.push({
+                pluginId: installed.pluginId,
+                currentVersion: installed.version,
+                version: release.version,
+                packageName: installed.packageName,
+                source: {
+                  kind: "utools",
+                  location: release.downloadURL,
+                  catalogId: release.catalogId,
+                  pageURL: release.pageURL,
+                  upstreamVersion: release.version,
+                },
+              });
+            continue;
+          }
           const selection = await resolveRegistryPluginPackage(
             {
               name: installed.packageName,
@@ -1398,6 +1576,31 @@ export class DesktopPluginHost {
       return this.cancelPackageTask(task, caller);
     }
     if (this.maintenance) throw new Error("插件正在备份或恢复，请稍后重试");
+    if (command === "plugins_utools_catalog") {
+      if (this.stopped) throw new Error("Plugin host is shutting down");
+      const epoch = this.restoreEpoch;
+      const result = await this.utoolsCatalog.query(args, this.abort.signal);
+      if (this.stopped || this.maintenance || epoch !== this.restoreEpoch)
+        throw new Error("Plugin catalog request expired");
+      const installed = this.manager.list();
+      return {
+        ...result,
+        items: result.items.map((item) => {
+          const current = installed.find(
+            (plugin) => plugin.pluginId === utoolsPluginId(item.pluginId),
+          );
+          return current
+            ? {
+                ...item,
+                installedPluginId: current.pluginId,
+                installedVersion: current.version,
+                sourceBound:
+                  current.source.kind === "utools" && current.source.catalogId === item.pluginId,
+              }
+            : item;
+        }),
+      };
+    }
     if (command === "plugins_check_updates") {
       await this.checkUpdates();
       return this.list(caller);
@@ -1409,7 +1612,7 @@ export class DesktopPluginHost {
       const input = pluginIdArgs.extend({ commandId: z.string().max(80).optional() }).parse(args);
       const metadata = this.manager.describe(input.pluginId);
       const commandId =
-        input.commandId ?? metadata.spark233.commands.find((command) => !command.internal)?.id;
+        input.commandId ?? metadata.spark233.commands.find((entry) => !entry.internal)?.id;
       if (!commandId) throw new Error("Plugin does not expose a command to open");
       await this.manager.activate(input.pluginId, { commandId });
       return this.list(caller);
@@ -1443,18 +1646,31 @@ export class DesktopPluginHost {
         .parse(args);
       return this.prepareRegistryTask(caller, input.name, input.registry, input.channel);
     }
+    if (command === "plugins_prepare_utools") {
+      const { catalogId } = z
+        .strictObject({
+          catalogId: z
+            .string()
+            .min(1)
+            .max(160)
+            .regex(/^[a-zA-Z0-9_.-]+$/),
+        })
+        .parse(args);
+      return this.prepareUToolsTask(caller, catalogId);
+    }
     if (command === "plugins_prepare_update") {
       const { pluginId } = pluginIdArgs.parse(args);
       const installed = this.manager.list().find((record) => record.pluginId === pluginId);
       const source = installed && this.updateSource(installed);
       if (!installed || !source)
         throw new Error("This plugin has no configured registry update source");
+      if (source.kind === "utools") return this.prepareUToolsTask(caller, source.catalogId);
       return this.prepareRegistryTask(
         caller,
         installed.packageName,
         source.registry,
         source.channel,
-        { pluginId, name: installed.packageName, version: installed.version, ...source },
+        this.updateBaseline(installed),
       );
     }
     const reserving = [
@@ -1470,9 +1686,9 @@ export class DesktopPluginHost {
       switch (command) {
         case "plugins_import": {
           const result = await dialog.showOpenDialog(parent, {
-            title: "Import spark233 plugin",
+            title: "Import spark233 or uTools plugin package",
             properties: ["openFile"],
-            filters: [{ name: "npm plugin package", extensions: ["tgz"] }],
+            filters: [{ name: "Plugin package", extensions: ["tgz", "upx", "upxs"] }],
           });
           if (result.canceled || !result.filePaths[0]) return undefined;
           return this.addPreview(
@@ -1526,21 +1742,36 @@ export class DesktopPluginHost {
           this.assertTaskOwner(task, caller);
           this.validatePending(record);
           this.assertUpdateCurrent(record.staged, record.updateFrom);
+          if (
+            record.expectAbsent &&
+            this.manager.list().some((item) => item.pluginId === record.staged.metadata.spark233.id)
+          )
+            throw new Error("准备安装后插件状态已变化，请重新检查");
           if (this.preview(record).requiresNativeTrust && !input.trustNative)
             throw new AppError("pluginTrustRequired", "第三方 Node 或原生执行需要显式信任");
           if (task) this.taskChanged(task, { stage: "saving" });
           try {
-            await this.manager.install(
-              record.staged,
-              {
-                capabilities: [...record.staged.metadata.spark233.capabilities],
-                native: input.trustNative,
-              },
-              true,
-              (stage) => {
-                if (task) this.taskChanged(task, { stage });
-              },
-            );
+            if (
+              record.staged.source.kind === "utools" &&
+              record.updateFrom?.version === record.staged.metadata.version
+            ) {
+              if (!record.updateFrom.integrity) throw new Error("来源绑定缺少已安装内容基线");
+              await this.manager.bindUToolsSource(record.staged, {
+                version: record.updateFrom.version,
+                integrity: record.updateFrom.integrity,
+              });
+            } else
+              await this.manager.install(
+                record.staged,
+                {
+                  capabilities: [...record.staged.metadata.spark233.capabilities],
+                  native: input.trustNative,
+                },
+                true,
+                (stage) => {
+                  if (task) this.taskChanged(task, { stage });
+                },
+              );
           } catch (error) {
             if (task)
               this.taskChanged(task, {

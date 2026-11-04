@@ -41,10 +41,18 @@ const screenshotCardSchema = z.strictObject({
   kind: z.literal("screenshot"),
   screenshotId: z.uuid(),
 });
+const utoolsCardSchema = z.strictObject({
+  ...common,
+  kind: z.literal("utools"),
+  pluginId: localId,
+  utoolsInstanceId: z.uuid(),
+  featureCode: z.string().min(1).max(160),
+});
 const storedCardSchema = z.discriminatedUnion("kind", [
   widgetCardSchema,
   noteCardSchema,
   screenshotCardSchema,
+  utoolsCardSchema,
 ]);
 const placementSchema = z.strictObject({
   kind: z.enum(["docked", "floating"]),
@@ -111,18 +119,30 @@ export const desktopLayoutSchema = z
     if (Object.keys(state.cards).length > 512)
       context.addIssue({ code: "custom", message: "Desktop layout exceeds 512 stored cards" });
     const removed = new Set(state.removedInstances.map((entry) => entry.id));
+    const compatibilityPlugins = new Set<string>();
     if (removed.size !== state.removedInstances.length)
       context.addIssue({
         code: "custom",
         message: "Desktop layout has duplicate removed instances",
       });
     for (const [id, card] of Object.entries(state.cards)) {
+      if (card.kind === "utools") {
+        if (compatibilityPlugins.has(card.pluginId))
+          context.addIssue({
+            code: "custom",
+            path: ["cards", id],
+            message: "A compatibility plugin has more than one desktop window",
+          });
+        compatibilityPlugins.add(card.pluginId);
+      }
       const expected =
         card.kind === "widget"
           ? `widget:${card.widgetInstanceId}`
           : card.kind === "screenshot"
             ? `screenshot:${card.screenshotId}`
-            : `notes:${card.noteId}`;
+            : card.kind === "utools"
+              ? `utools:${card.utoolsInstanceId}`
+              : `notes:${card.noteId}`;
       if (id !== expected || removed.has(id))
         context.addIssue({
           code: "custom",
@@ -137,7 +157,12 @@ export const desktopLayoutSchema = z
 export type WidgetLayoutCard = z.infer<typeof widgetCardSchema>;
 export type NotesLayoutCard = z.infer<typeof noteCardSchema>;
 export type ScreenshotLayoutCard = z.infer<typeof screenshotCardSchema>;
-export type StoredLayerCard = WidgetLayoutCard | NotesLayoutCard | ScreenshotLayoutCard;
+export type UToolsLayoutCard = z.infer<typeof utoolsCardSchema>;
+export type StoredLayerCard =
+  | WidgetLayoutCard
+  | NotesLayoutCard
+  | ScreenshotLayoutCard
+  | UToolsLayoutCard;
 export type DesktopLayoutV1 = z.infer<typeof desktopLayoutSchema>;
 export interface NotesLayoutV2 {
   version: 2;
@@ -410,6 +435,9 @@ export class LayerLayoutStore {
   removeScreenshot(screenshotId: string): Promise<void> {
     return this.removeCard(`screenshot:${z.uuid().parse(screenshotId)}`);
   }
+  removeUTools(instanceId: string): Promise<void> {
+    return this.removeCard(`utools:${z.uuid().parse(instanceId)}`);
+  }
   private async removeCard(id: string): Promise<void> {
     const next = this.load();
     if (!Object.hasOwn(next.cards, id)) return;
@@ -439,14 +467,19 @@ export function constrainLayerCard<T extends StoredLayerCard>(
   const area = rectSchema.parse(display.workArea),
     old = original.workAreaAtSave;
   const sameDisplay = display.id === original.displayId;
+  const compatibility = original.kind === "utools";
+  const topInset = compatibility ? Math.min(40, Math.max(0, area.height - 1)) : 0;
   const width = Math.min(
     area.width,
-    Math.max(limits?.min?.width ?? 1, Math.min(original.bounds.width, limits?.max?.width ?? 32768)),
+    Math.max(
+      limits?.min?.width ?? (compatibility ? 320 : 1),
+      Math.min(original.bounds.width, limits?.max?.width ?? 32768),
+    ),
   );
   const height = Math.min(
-    area.height,
+    area.height - topInset,
     Math.max(
-      limits?.min?.height ?? 1,
+      limits?.min?.height ?? (compatibility ? 160 : 1),
       Math.min(original.bounds.height, limits?.max?.height ?? 32768),
     ),
   );
@@ -456,7 +489,7 @@ export function constrainLayerCard<T extends StoredLayerCard>(
     area.y + (original.bounds.y - old.y) * (sameDisplay ? 1 : area.height / old.height);
   const bounds = {
     x: Math.max(area.x, Math.min(area.x + area.width - width, proposedX)),
-    y: Math.max(area.y, Math.min(area.y + area.height - height, proposedY)),
+    y: Math.max(area.y + topInset, Math.min(area.y + area.height - height, proposedY)),
     width,
     height,
   };
@@ -504,7 +537,7 @@ export function findLayerPlacement(
 export interface LayerQuotaCard {
   id: string;
   card: StoredLayerCard;
-  renderKind: "notes" | "declarative" | "web" | "screenshot";
+  renderKind: "notes" | "declarative" | "web" | "screenshot" | "utools";
 }
 export interface LayerQuotas {
   perPlugin: number;
@@ -538,7 +571,7 @@ export function allocateLayerCards(
   )) {
     if (!card.visible || !card.restore) continue;
     const plugin =
-        card.kind === "widget"
+        card.kind === "widget" || card.kind === "utools"
           ? card.pluginId
           : card.kind === "screenshot"
             ? "spark233.screenshot"

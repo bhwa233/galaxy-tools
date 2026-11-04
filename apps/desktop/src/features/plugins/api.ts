@@ -1,4 +1,5 @@
 import { invoke, listen } from "../../platform/desktop";
+import type { UToolsCatalogPage, UToolsCatalogRequest } from "../../../shared/plugin-market";
 import type {
   InstallPreview,
   PackageTaskSnapshot,
@@ -9,6 +10,12 @@ import type {
 
 export function listPlugins(): Promise<PluginManagementState> {
   return invoke("plugins_list");
+}
+export function queryUToolsCatalog(input: UToolsCatalogRequest): Promise<UToolsCatalogPage> {
+  return invoke("plugins_utools_catalog", input);
+}
+export function prepareUToolsPlugin(catalogId: string): Promise<InstallPreview | undefined> {
+  return invoke("plugins_prepare_utools", { catalogId });
 }
 export function importPluginPackage(): Promise<InstallPreview | undefined> {
   return invoke("plugins_import");

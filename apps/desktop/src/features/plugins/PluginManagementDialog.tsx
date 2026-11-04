@@ -56,6 +56,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { MarkdownPreviewLazy } from "../markdown/MarkdownPreviewLazy";
+import { PluginMarketSortControl } from "./PluginMarketSort";
+import { UToolsCatalogList } from "./UToolsCatalogList";
+import {
+  pluginMarketSorts,
+  sortPluginMarketEntries,
+  type PluginMarketSort,
+} from "../../../shared/plugin-market";
 import {
   activatePlugin,
   cancelPluginInstall,
@@ -69,6 +76,7 @@ import {
   preparePluginUpdate,
   prepareBundledPlugin,
   prepareRegistryPlugin,
+  prepareUToolsPlugin,
   setPluginEnabled,
   uninstallPlugin,
   watchPluginsChanged,
@@ -98,6 +106,37 @@ const capabilityLabels: Record<PluginSummary["capabilities"][number], string> = 
   "search.index": "搜索索引",
   commands: "调用其他插件的公开命令",
 };
+
+const marketPreferenceKey = "spark233.plugin-market.preferences.v1";
+type MarketSource = "spark233" | "utools";
+interface MarketPreferences {
+  source: MarketSource;
+  sort: Record<MarketSource | "installed", PluginMarketSort>;
+}
+function readMarketPreferences(): MarketPreferences {
+  const defaults: MarketPreferences = {
+    source: "spark233",
+    sort: { spark233: "auto", utools: "auto", installed: "auto" },
+  };
+  // Match the search workspace's optional local preferences; storage failures
+  // must never prevent discovery or installation.
+  try {
+    const saved = JSON.parse(localStorage.getItem(marketPreferenceKey) ?? "null");
+    if (!saved || saved.version !== 1) return defaults;
+    if (saved.source === "utools") defaults.source = "utools";
+    for (const source of ["spark233", "utools", "installed"] as const) {
+      const value = saved.sort?.[source];
+      if (
+        pluginMarketSorts.includes(value) &&
+        (source === "utools" || (value !== "rating" && value !== "voters"))
+      )
+        defaults.sort[source] = value;
+    }
+  } catch {
+    /* A malformed or unavailable preference uses the default order. */
+  }
+  return defaults;
+}
 
 export interface PluginManagementDialogProps {
   mode?: "configuration" | "market";
@@ -129,6 +168,18 @@ export function PluginManagementDialog({
     pluginId ?? initialState?.plugins[0]?.pluginId,
   );
   const [pluginFilter, setPluginFilter] = useState("");
+  const [marketPreferences, setMarketPreferences] = useState(readMarketPreferences);
+  const [utoolsVisited, setUToolsVisited] = useState(() => marketPreferences.source === "utools");
+  const requestedPluginCard = useRef<HTMLDivElement>(null);
+  const scrolledPlugin = useRef<string | undefined>(undefined);
+  const rememberMarket = (next: MarketPreferences) => {
+    setMarketPreferences(next);
+    try {
+      localStorage.setItem(marketPreferenceKey, JSON.stringify({ version: 1, ...next }));
+    } catch {
+      /* Sorting remains usable when browser storage is blocked. */
+    }
+  };
   const [detailTab, setDetailTab] = useState(initialTab === "info" ? "config" : initialTab);
   const [marketTab, setMarketTab] = useState<"discover" | "installed" | "tasks">(
     pluginId ? "installed" : "discover",
@@ -151,6 +202,22 @@ export function PluginManagementDialog({
   };
   const initialSnapshot = useRef(initialState);
   const [state, setState] = useState<PluginManagementState | null>(initialState ?? null);
+  useEffect(() => {
+    if (!open) {
+      scrolledPlugin.current = undefined;
+      return;
+    }
+    if (
+      mode === "market" &&
+      marketTab === "installed" &&
+      pluginId &&
+      scrolledPlugin.current !== pluginId &&
+      requestedPluginCard.current
+    ) {
+      requestedPluginCard.current.scrollIntoView({ block: "nearest" });
+      scrolledPlugin.current = pluginId;
+    }
+  }, [mode, marketTab, pluginId, state?.plugins, open]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<string>();
   const [activating, setActivating] = useState<string[]>([]);
@@ -420,11 +487,27 @@ export function PluginManagementDialog({
                   ? t("plugins.status.released", { defaultValue: "已停止" })
                   : t("plugins.status.enabled", { defaultValue: "已启用" });
 
-  const visiblePlugins = state?.plugins.filter((plugin) =>
-    `${plugin.displayName} ${plugin.pluginId}`
-      .toLocaleLowerCase()
-      .includes(pluginFilter.trim().toLocaleLowerCase()),
+  const visiblePlugins =
+    mode === "market"
+      ? sortPluginMarketEntries(
+          state?.plugins ?? [],
+          marketPreferences.sort.installed,
+          pluginFilter,
+        )
+      : (state?.plugins ?? []).filter((plugin) =>
+          `${plugin.displayName} ${plugin.pluginId}`
+            .toLocaleLowerCase()
+            .includes(pluginFilter.trim().toLocaleLowerCase()),
+        );
+  const visiblePluginOrder = new Map(
+    visiblePlugins.map((plugin, index) => [plugin.pluginId, index]),
   );
+  const visibleCatalog = sortPluginMarketEntries(
+    state?.catalog ?? [],
+    marketPreferences.sort.spark233,
+    pluginFilter,
+  );
+  const sortContext = marketTab === "installed" ? "installed" : marketPreferences.source;
   const updateIssues = state?.updateIssues ?? [];
   const unpublishedUpdates = updateIssues.filter((issue) => issue.reason === "notPublished");
   const failedUpdateChecks = updateIssues.filter((issue) => issue.reason === "failed");
@@ -465,11 +548,43 @@ export function PluginManagementDialog({
                 <Input
                   className="ml-auto w-56"
                   value={pluginFilter}
+                  maxLength={256}
                   aria-label={t("pluginConfig.findPlugin")}
                   placeholder={t("pluginConfig.findPlugin")}
                   onChange={(event) => setPluginFilter(event.target.value)}
                 />
               )}
+            </div>
+          )}
+          {mode === "market" && marketTab !== "tasks" && (
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+              {marketTab === "discover" && (
+                <SlidingButtonGroup
+                  value={marketPreferences.source}
+                  options={(["spark233", "utools"] as const).map((value) => ({
+                    value,
+                    label: t(`pluginMarket.sources.${value}`),
+                  }))}
+                  onChange={(value) => {
+                    if (value !== "spark233" && value !== "utools") return;
+                    if (value === "utools") setUToolsVisited(true);
+                    rememberMarket({ ...marketPreferences, source: value });
+                  }}
+                />
+              )}
+              <div className="ml-auto">
+                <PluginMarketSortControl
+                  value={marketPreferences.sort[sortContext]}
+                  query={pluginFilter}
+                  ratings={sortContext === "utools"}
+                  onChange={(value) =>
+                    rememberMarket({
+                      ...marketPreferences,
+                      sort: { ...marketPreferences.sort, [sortContext]: value },
+                    })
+                  }
+                />
+              </div>
             </div>
           )}
           <div className="flex min-h-0 flex-1 gap-6 overflow-hidden">
@@ -687,22 +802,39 @@ export function PluginManagementDialog({
                     {t("pluginMarket.noTasks")}
                   </p>
                 )}
-                {marketTab === "discover" && !!state?.catalog.length && (
-                  <Card size="sm">
-                    <CardHeader>
-                      <CardTitle>{t("plugins.catalog.title")}</CardTitle>
-                      <CardDescription>{t("plugins.catalog.description")}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-col gap-3">
-                      {state.catalog
-                        .filter((item) =>
-                          `${item.displayName} ${item.packageName}`
-                            .toLocaleLowerCase()
-                            .includes(pluginFilter.trim().toLocaleLowerCase()),
-                        )
-                        .map((item) => (
+                {utoolsVisited && mode === "market" && (
+                  <div hidden={marketTab !== "discover" || marketPreferences.source !== "utools"}>
+                    <UToolsCatalogList
+                      onPrepare={(id) =>
+                        void prepare(`utools:${id}`, () => prepareUToolsPlugin(id))
+                      }
+                      key={`${marketPreferences.sort.utools}:${pluginFilter}`}
+                      active={
+                        open && marketTab === "discover" && marketPreferences.source === "utools"
+                      }
+                      query={pluginFilter}
+                      sort={marketPreferences.sort.utools}
+                    />
+                  </div>
+                )}
+                {marketTab === "discover" &&
+                  marketPreferences.source === "spark233" &&
+                  !!state?.catalog.length && (
+                    <Card size="sm">
+                      <CardHeader>
+                        <CardTitle>{t("plugins.catalog.title")}</CardTitle>
+                        <CardDescription>{t("plugins.catalog.description")}</CardDescription>
+                      </CardHeader>
+                      <CardContent
+                        className="flex flex-col gap-3"
+                        role="list"
+                        aria-label={t("plugins.catalog.title")}
+                      >
+                        {visibleCatalog.map((item) => (
                           <div
                             key={item.pluginId}
+                            role="listitem"
+                            aria-label={item.displayName}
                             className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
                           >
                             <div className="flex min-w-0 flex-col gap-1">
@@ -748,11 +880,11 @@ export function PluginManagementDialog({
                             </Button>
                           </div>
                         ))}
-                    </CardContent>
-                  </Card>
-                )}
+                      </CardContent>
+                    </Card>
+                  )}
 
-                {marketTab === "discover" && (
+                {marketTab === "discover" && marketPreferences.source === "spark233" && (
                   <Card size="sm">
                     <CardHeader>
                       <CardTitle>{t("plugins.add.title", { defaultValue: "添加插件" })}</CardTitle>
@@ -898,10 +1030,24 @@ export function PluginManagementDialog({
                               ? t("plugins.directoryPackage")
                               : preview.source.kind === "file"
                                 ? t("plugins.localPackage", { defaultValue: "本地包" })
-                                : t("plugins.registryPackage", { defaultValue: "Registry 包" })}
+                                : preview.source.kind === "utools"
+                                  ? t("pluginMarket.utools.storePackage")
+                                  : t("plugins.registryPackage", { defaultValue: "Registry 包" })}
                           </CardDescription>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-3">
+                          {preview.change && (
+                            <Alert>
+                              <AlertDescription>
+                                {t(`pluginMarket.utools.change.${preview.change}`)}
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                          {preview.warnings?.map((warning) => (
+                            <Alert key={warning}>
+                              <AlertDescription>{warning}</AlertDescription>
+                            </Alert>
+                          ))}
                           {preview.metadata.spark233.compatibility && (
                             <p className="text-sm text-muted-foreground">
                               {t("plugins.utoolsLocalOnly")}
@@ -1044,7 +1190,9 @@ export function PluginManagementDialog({
                               );
                             }}
                           >
-                            {t("plugins.confirmInstall", { defaultValue: "确认安装" })}
+                            {preview.change === "source"
+                              ? t("pluginMarket.utools.bindSource")
+                              : t("plugins.confirmInstall", { defaultValue: "确认安装" })}
                           </Button>
                           <Button
                             variant="outline"
@@ -1196,20 +1344,24 @@ export function PluginManagementDialog({
                   .filter((plugin) =>
                     mode === "configuration"
                       ? plugin.pluginId === selectedPlugin
-                      : visiblePlugins?.includes(plugin),
+                      : visiblePluginOrder.has(plugin.pluginId),
                   )
                   .sort((a, b) =>
                     mode === "market"
-                      ? Number(b.pluginId === pluginId) - Number(a.pluginId === pluginId)
+                      ? visiblePluginOrder.get(a.pluginId)! - visiblePluginOrder.get(b.pluginId)!
                       : 0,
                   )
                   .map((plugin) => {
-                    const update = state.updates.find((item) => item.pluginId === plugin.pluginId);
+                    const update = state?.updates.find((item) => item.pluginId === plugin.pluginId);
                     const notesKey = `${plugin.pluginId}@${plugin.version}`;
                     const notes = releaseNotes[notesKey] ?? plugin.releaseNotes;
                     const notesLoading = loadingNotes.includes(notesKey);
                     return (
-                      <Card key={plugin.pluginId} size="sm">
+                      <Card
+                        key={plugin.pluginId}
+                        size="sm"
+                        ref={plugin.pluginId === pluginId ? requestedPluginCard : undefined}
+                      >
                         <CardHeader>
                           <CardTitle className="flex flex-wrap items-center gap-2">
                             <PluginIcon
@@ -1367,8 +1519,10 @@ export function PluginManagementDialog({
                             </p>
                             {plugin.updateSource && (
                               <p className="break-all text-xs text-muted-foreground">
-                                {t("plugins.updateSource")}:{plugin.updateSource.registry} ·{" "}
-                                {plugin.updateSource.channel}
+                                {t("plugins.updateSource")}:
+                                {plugin.updateSource.kind === "utools"
+                                  ? `uTools · ${plugin.updateSource.catalogId}`
+                                  : `${plugin.updateSource.registry} · ${plugin.updateSource.channel}`}
                               </p>
                             )}
                             <div className="flex flex-wrap gap-1.5">

@@ -53,6 +53,7 @@ import { ScreenshotLayerCoordinator } from "./screenshot-layer.js";
 import { DEFAULT_DESKTOP_LAYER_PREFERENCES } from "../shared/config-schema.js";
 import { NotesLayerCoordinator, parseNotesLayout } from "./notes-layer.js";
 import { WidgetHost, widgetScheme } from "./plugins/widget-host.js";
+import { UToolsDesktopHost } from "./plugins/utools-desktop.js";
 import { parseCliArgs, type CliCommand } from "./cli-args.js";
 import { HostConfigStore, persistedConfigSchema } from "./host-config.js";
 import { ShortcutManager } from "./host/shortcuts.js";
@@ -75,6 +76,7 @@ import { initializeWindowsRuntime, watchFullscreen } from "./windows-runtime.js"
 
 export interface RuntimeContext {
   readonly desktopLayer: typeof desktopLayer;
+  readonly utoolsDesktop: typeof utoolsDesktop;
   readonly toggleDesktopOverlay: typeof toggleDesktopOverlay;
   readonly widgetHost: typeof widgetHost;
   readonly notesLayer: typeof notesLayer;
@@ -267,6 +269,9 @@ const runtimeContext: RuntimeContext = {
   },
   get desktopLayer(): typeof desktopLayer {
     return desktopLayer;
+  },
+  get utoolsDesktop(): typeof utoolsDesktop {
+    return utoolsDesktop;
   },
   get toggleDesktopOverlay(): typeof toggleDesktopOverlay {
     return toggleDesktopOverlay;
@@ -1094,6 +1099,7 @@ function toggleDesktopOverlay(): Promise<void> {
   return task;
 }
 let widgetHost: WidgetHost | undefined;
+let utoolsDesktop: UToolsDesktopHost | undefined;
 let notesLayer: NotesLayerCoordinator | undefined;
 let screenshotLayer: ScreenshotLayerCoordinator | undefined;
 let notesMigrationError: string | undefined;
@@ -1130,6 +1136,7 @@ async function syncDesktopLayer(strict = false): Promise<void> {
   await desktopLayer?.setEnabled(layerFlags().enabled);
   screenshotLayer?.refresh();
   await widgetHost?.sync();
+  await utoolsDesktop?.sync();
   desktopLayer?.refresh();
 }
 async function flushDesktopLayer(): Promise<void> {
@@ -1623,11 +1630,20 @@ export function startDesktopHost(): void {
           return { window: layer, entryURL };
         },
       });
+      utoolsDesktop = new UToolsDesktopHost({
+        layer: desktopLayer,
+        store: layerStore,
+        pluginHost: () => pluginHost,
+      });
       widgetHost = new WidgetHost({
         layer: desktopLayer,
         store: layerStore,
         notesActive: () => notesActive && notesLayer?.isEnabled === true,
-        trustedCards: () => [...capsules.quotaCards(), ...(screenshotLayer?.quotaCards() ?? [])],
+        trustedCards: () => [
+          ...capsules.quotaCards(),
+          ...(screenshotLayer?.quotaCards() ?? []),
+          ...(utoolsDesktop?.quotaCards() ?? []),
+        ],
         resolveScreenshotImage: async (handle) => screenshotLayer?.resolveImage(handle),
         pluginHost: () => pluginHost,
         rendererRoot,
@@ -1854,6 +1870,7 @@ export function startDesktopHost(): void {
       setupIpc();
       try {
         pluginHost = new DesktopPluginHost({
+          utoolsDesktop,
           root: path.join(configDir, "plugins"),
           bundledRoot: app.isPackaged
             ? path.join(process.resourcesPath, "plugins")

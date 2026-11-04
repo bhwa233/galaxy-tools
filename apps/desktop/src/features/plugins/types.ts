@@ -1,15 +1,7 @@
 import type { PluginCapability, PluginCommand, PluginPackageMetadata } from "@spark233/sdk";
 
-export interface PluginPackageSource {
-  kind: "registry" | "file" | "directory";
-  location: string;
-  registry?: string;
-  channel?: string;
-}
-export interface PluginUpdateSource {
-  registry: string;
-  channel: string;
-}
+import type { PluginPackageSource, PluginUpdateSource } from "../../../shared/plugin-sources.js";
+export type { PluginPackageSource, PluginUpdateSource } from "../../../shared/plugin-sources.js";
 export interface PluginReleaseNotes {
   status: "available" | "missing" | "error";
   content?: string;
@@ -67,6 +59,8 @@ export interface PluginSummary {
   releaseNotes?: PluginReleaseNotes;
 }
 export interface InstallPreview {
+  change?: "source" | "content" | "version";
+  warnings?: string[];
   previewId: string;
   metadata: PluginPackageMetadata;
   source: PluginPackageSource;
@@ -112,10 +106,12 @@ export interface BundledPluginCatalogItem {
   canPrepare: boolean;
 }
 export interface PluginCommandArguments {
+  plugins_utools_catalog: import("../../../shared/plugin-market.js").UToolsCatalogRequest;
   plugins_list: undefined;
   plugins_import: undefined;
   plugins_import_directory: undefined;
   plugins_prepare_registry: { name: string; registry?: string; channel?: string };
+  plugins_prepare_utools: { catalogId: string };
   plugins_prepare_bundled: { pluginId: string };
   plugins_confirm_install: { previewId: string; trustNative: boolean };
   plugins_cancel_install: { previewId: string };

@@ -794,7 +794,7 @@
     "importDirectory": "导入插件目录",
     "utoolsLocalOnly": "uTools 本地兼容，不含账号、付费授权和云同步。",
     "directoryPackage": "开发目录快照",
-    "import": "导入本地 .tgz",
+    "import": "导入本地插件包",
     "preparing": "正在准备安装预览",
     "packageName": "npm 包名",
     "registry": "Registry",
@@ -1091,6 +1091,45 @@
     "retryCard": "重新加载卡片：{{title}}"
   },
   "pluginMarket": {
+    "sources": {
+      "spark233": "spark233",
+      "utools": "uTools"
+    },
+    "sort": {
+      "title": "插件排序",
+      "current": "排序：{{value}}",
+      "auto": "自动（名称／搜索相关度）",
+      "relevance": "相关度",
+      "name-asc": "名称 A→Z",
+      "name-desc": "名称 Z→A",
+      "rating": "评分最高",
+      "voters": "评价最多"
+    },
+    "utools": {
+      "title": "uTools 公开目录",
+      "description": "浏览官方目录，下载检查后通过现有安装确认流程安装。插件兼容性以实际运行为准。",
+      "refresh": "刷新目录",
+      "loading": "正在读取 uTools 目录…",
+      "failed": "无法刷新目录。",
+      "cached": "使用缓存目录（{{time}}），可稍后刷新。",
+      "rating": "评分 {{rating}}",
+      "unrated": "暂无评分",
+      "voters": "评价人数：{{count}}",
+      "officialPage": "官方详情",
+      "empty": "没有符合条件的插件",
+      "page": "共 {{count}} 个插件 · 第 {{page}} / {{pages}} 页",
+      "previous": "上一页",
+      "next": "下一页",
+      "prepare": "下载并检查",
+      "installed": "已安装",
+      "storePackage": "uTools 商店包",
+      "change": {
+        "source": "候选内容与已安装版本一致。确认后仅绑定商店更新来源，保留现有进程和数据。",
+        "content": "上游版本号相同，但包内容发生变化。确认后替换代码，并按现有流程保存和备份数据。",
+        "version": "发现新的商店版本。确认后按现有保存、备份和更新流程安装。"
+      },
+      "bindSource": "绑定更新来源"
+    },
     "tabs": {
       "discover": "发现插件",
       "installed": "已安装",

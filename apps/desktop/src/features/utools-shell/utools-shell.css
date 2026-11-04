@@ -1,0 +1,17 @@
+/* Geometry only; controls, theme and card chrome reuse the desktop layer. */
+.utools-desktop-frame {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding-top: 40px;
+  background: transparent;
+}
+.utools-desktop-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--card);
+}

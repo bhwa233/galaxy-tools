@@ -10,6 +10,11 @@ import { DesktopPluginHost } from "./desktop-host.js";
 import { PluginBackupService } from "./backup.js";
 import { resolveRegistryPluginPackage } from "./package-source.js";
 import { HostConfigStore } from "../host-config.js";
+import { createPackage } from "@electron/asar";
+import { gzipSync } from "node:zlib";
+import { stageLocalPluginPackage } from "./package-installer.js";
+import { defaultHostEnvironment } from "./manifest.js";
+import { createUToolsRuntime } from "./utools-runtime.js";
 import type {
   InstallPreview,
   PackageTaskSnapshot,
@@ -31,11 +36,180 @@ vi.mock("./package-source.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./package-source.js")>()),
   resolveRegistryPluginPackage: vi.fn(),
 }));
+vi.mock("./utools-runtime.js", () => ({ createUToolsRuntime: vi.fn() }));
 
 const directories: string[] = [];
 const hosts: DesktopPluginHost[] = [];
 const parent = { webContents: { id: 1 } } as BrowserWindow;
 const caller = "restore-test:document";
+
+test("binds an inspected store source without restarting identical code and preserves a refused update and its data", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-utools-market-"));
+  directories.push(root);
+  const pluginRoot = path.join(root, "plugins"),
+    source = path.join(root, "source");
+  fs.mkdirSync(source);
+  let version = "1.0.0",
+    content = "first",
+    refuseStop = false;
+  let packageBytes: Buffer;
+  const alive = new Set<string>();
+  vi.mocked(createUToolsRuntime).mockImplementation((options) => {
+    if (!options.startupCheckOnly) {
+      alive.add(options.scope.owner.instanceId);
+      options.scope.own("process", {
+        prepareStop: () => (refuseStop ? { ok: false, reason: "save refused" } : { ok: true }),
+        dispose: () => {
+          alive.delete(options.scope.owner.instanceId);
+        },
+      });
+    }
+    return { activate: async () => undefined };
+  });
+  const makePackage = async () => {
+    fs.writeFileSync(
+      path.join(source, "plugin.json"),
+      JSON.stringify({
+        name: "market-fixture",
+        pluginName: "Market fixture",
+        version,
+        main: "index.html",
+        preload: "preload.js",
+        features: [{ code: "open", cmds: ["Market fixture"] }],
+      }),
+    );
+    fs.writeFileSync(path.join(source, "index.html"), "<p>" + content + "</p>");
+    fs.writeFileSync(path.join(source, "a.bin"), "asset A");
+    fs.writeFileSync(path.join(source, "b.bin"), "asset B");
+    fs.writeFileSync(
+      path.join(source, "preload.js"),
+      "throw new Error('preview must never execute preload')",
+    );
+    const archive = path.join(root, "fixture-" + version + "-" + content + ".asar");
+    await createPackage(source, archive);
+    packageBytes = gzipSync(fs.readFileSync(archive));
+  };
+  const network: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("plugins-search-index.json"))
+      return new Response(
+        JSON.stringify([
+          {
+            name: "market-fixture",
+            pluginName: "Market fixture",
+            href: "/plugins/detail/Market%20fixture/",
+          },
+        ]),
+      );
+    if (url.endsWith("/plugins/detail/Market%20fixture/"))
+      return new Response(
+        '<script type="application/ld+json">' +
+          JSON.stringify({
+            "@type": "SoftwareApplication",
+            softwareVersion: version,
+            downloadUrl: "https://res.u-tools.cn/plugins/marketfixture.upx",
+          }) +
+          "</script>",
+      );
+    if (url === "https://res.u-tools.cn/plugins/marketfixture.upx")
+      return new Response(new Uint8Array(packageBytes));
+    throw new Error("Unexpected network source");
+  };
+  const makeHost = async () => {
+    const host = new DesktopPluginHost({
+      root: pluginRoot,
+      hostVersion: "0.0.1",
+      getTheme: () => ({ version: "1.0.0", preference: "light", effective: "light" }),
+      utoolsFetch: network,
+    });
+    hosts.push(host);
+    await host.initialize();
+    return host;
+  };
+  await makePackage();
+  let host = await makeHost();
+  const paths = {
+    stagingRoot: path.join(pluginRoot, "staging"),
+    versionsRoot: path.join(pluginRoot, "versions"),
+    cacheRoot: path.join(pluginRoot, "cache"),
+  };
+  const local = path.join(root, "original.upx");
+  fs.writeFileSync(local, packageBytes!);
+  const staged = await stageLocalPluginPackage(local, defaultHostEnvironment("0.0.1"), paths);
+  await host.manager.install(staged, {
+    native: true,
+    capabilities: staged.metadata.spark233.capabilities,
+  });
+  const pluginId = staged.metadata.spark233.id,
+    commandId = staged.metadata.spark233.commands[0]!.id;
+  await host.manager.activate(pluginId, { commandId });
+  const owner = [...alive][0];
+  const data = path.join(host.manager.dataDirectory(pluginId), "kept.txt");
+  fs.writeFileSync(data, "user data");
+  const handle = (command: string, args: unknown = {}) =>
+    host.handle(command, args, parent, caller);
+  // Moving bytes across file boundaries must not make changed code eligible
+  // for provenance-only binding, even when a flat byte stream stays identical.
+  const payload = path.join(staged.directory, "payload");
+  fs.writeFileSync(path.join(payload, "a.bin"), "asset Apayload/b.bin\0asset B");
+  fs.rmSync(path.join(payload, "b.bin"));
+  await expect(handle("plugins_prepare_utools", { catalogId: "market-fixture" })).rejects.toThrow(
+    "实际内容不一致",
+  );
+  expect(host.manager.list()[0]!.source.kind).toBe("file");
+  expect(alive).toEqual(new Set([owner]));
+  fs.writeFileSync(path.join(payload, "a.bin"), "asset A");
+  fs.writeFileSync(path.join(payload, "b.bin"), "asset B");
+  let preview = (await handle("plugins_prepare_utools", {
+    catalogId: "market-fixture",
+  })) as InstallPreview;
+  expect(preview.change).toBe("source");
+  await expect(
+    handle("plugins_confirm_install", { previewId: preview.previewId, trustNative: false }),
+  ).rejects.toThrow("显式信任");
+  expect(host.manager.list()[0]!.source.kind).toBe("file");
+  await handle("plugins_confirm_install", { previewId: preview.previewId, trustNative: true });
+  expect(alive).toEqual(new Set([owner]));
+  expect(host.manager.list()[0]!.source).toMatchObject({
+    kind: "utools",
+    catalogId: "market-fixture",
+    upstreamVersion: "1.0.0",
+  });
+  await host.shutdown();
+  hosts.splice(hosts.indexOf(host), 1);
+  host = await makeHost();
+  expect(host.manager.list()[0]!.source.kind).toBe("utools");
+  await host.manager.activate(pluginId, { commandId });
+  const running = [...alive][0];
+  version = "2.0.0";
+  content = "second";
+  await makePackage();
+  const checked = (await handle("plugins_check_updates")) as PluginManagementState;
+  expect(checked.updates).toContainEqual(expect.objectContaining({ pluginId, version: "2.0.0" }));
+  preview = (await handle("plugins_prepare_update", { pluginId })) as InstallPreview;
+  refuseStop = true;
+  await expect(
+    handle("plugins_confirm_install", { previewId: preview.previewId, trustNative: true }),
+  ).rejects.toThrow("save refused");
+  expect(alive).toEqual(new Set([running]));
+  expect(host.manager.list()[0]!.version).toBe(staged.metadata.version);
+  expect(fs.readFileSync(data, "utf8")).toBe("user data");
+  refuseStop = false;
+  await handle("plugins_confirm_install", { previewId: preview.previewId, trustNative: true });
+  expect(host.manager.list()[0]!.source.upstreamVersion).toBe("2.0.0");
+  expect(fs.readFileSync(data, "utf8")).toBe("user data");
+  // Fingerprints order code snapshots, not upstream versions. A republished
+  // same-version package needs explicit content confirmation, not semver order.
+  content = "revised";
+  await makePackage();
+  preview = (await handle("plugins_prepare_utools", {
+    catalogId: "market-fixture",
+  })) as InstallPreview;
+  expect(preview.change).toBe("content");
+  await handle("plugins_confirm_install", { previewId: preview.previewId, trustNative: true });
+  expect(host.manager.list()[0]!.source.upstreamVersion).toBe("2.0.0");
+  expect(fs.readFileSync(data, "utf8")).toBe("user data");
+});
 
 test("development bundled updates replace code while preserving plugin data", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-dev-update-"));

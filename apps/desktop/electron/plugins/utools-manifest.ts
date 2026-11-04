@@ -60,6 +60,14 @@ export type UToolsFeature = z.infer<typeof utoolsFeatureSchema>;
 export function utoolsCommandId(code: string): string {
   return "feature-" + createHash("sha256").update(code).digest("hex").slice(0, 24);
 }
+export function utoolsPluginId(identity: string): string {
+  return "utools." + createHash("sha256").update(identity).digest("hex").slice(0, 32);
+}
+export function utoolsUpstreamVersion(metadata: PluginPackageMetadata): string {
+  const version = semver.valid(metadata.version.replace(/[.-]utools\.h[a-f0-9]{16}$/, ""));
+  if (!metadata.spark233.compatibility || !version) throw new Error("无效的 uTools 兼容版本");
+  return version;
+}
 
 export function readUToolsManifest(root: string, relativePath = "plugin.json"): UToolsManifest {
   const filename = confined(root, relativePath);
@@ -105,7 +113,7 @@ export async function normalizeUToolsPackage(root: string): Promise<void> {
     throw new Error(
       "uTools 插件需要稳定身份：请在构建目录保留 package.json 的 name 或 plugin.json 的 name/pluginName",
     );
-  const id = "utools." + createHash("sha256").update(identity).digest("hex").slice(0, 32);
+  const id = utoolsPluginId(identity);
   const displayName = (manifest.pluginName || pkg.description || identity).slice(0, 160);
   const baseVersion = semver.valid(manifest.version || pkg.version || "0.0.0");
   if (!baseVersion) throw new Error("uTools 插件版本不是有效的语义版本");

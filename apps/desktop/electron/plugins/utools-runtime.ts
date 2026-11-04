@@ -15,6 +15,7 @@ import type {
 } from "@spark233/sdk";
 import type { ManagedPluginRuntime } from "./manager.js";
 import type { PluginResourceScope } from "./resources.js";
+import type { UToolsDesktopHost } from "./utools-desktop.js";
 import {
   compatibilityManifest,
   utoolsFeatureSchema,
@@ -39,6 +40,7 @@ interface Options {
   trusted: boolean;
   startupCheckOnly: boolean;
   show?: boolean;
+  desktop?: UToolsDesktopHost;
   resolveResource?: (handle: ResourceHandle) => string | undefined;
   getTheme: () => PluginTheme;
   subscribeTheme?: (listener: () => void) => () => void;
@@ -112,6 +114,7 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
   let stopped = false,
     expectedExit = false;
   const token = randomUUID();
+  let desktopRequest: ((value: unknown) => Promise<unknown>) | undefined;
   const requests = new Map<
     string,
     {
@@ -202,6 +205,27 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
             return;
           }
           if (message?.token !== token) return;
+          if (message.event === "desktop-request") {
+            void Promise.resolve()
+              .then(() => {
+                if (!desktopRequest) throw new Error("桌面插件层尚未就绪");
+                return desktopRequest(message.value);
+              })
+              .then(
+                (value) =>
+                  running.connected &&
+                  running.send({ token, event: "desktop-result", id: message.id, value }),
+                (error) =>
+                  running.connected &&
+                  running.send({
+                    token,
+                    event: "desktop-result",
+                    id: message.id,
+                    error: String(error),
+                  }),
+              );
+            return;
+          }
           if (message.event === "diagnostic") options.onDiagnostic?.(String(message.message));
           if (message.event === "crash") options.onCrash(new Error(String(message.message)));
           const pending = requests.get(message.id);
@@ -236,6 +260,7 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
           cacheDir: options.cacheDir,
           theme: options.getTheme(),
           show: options.show,
+          desktopAvailable: !!options.desktop,
         });
         if (result?.ready !== true || result.pid !== running.pid)
           throw new Error("uTools 运行器 PID 握手不匹配");
@@ -247,6 +272,11 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
       }
     })());
   };
+  if (options.desktop && !options.startupCheckOnly)
+    desktopRequest = options.desktop.attach(options.scope, options.metadata, async (value) => {
+      if (value) await start();
+      if (child?.connected) await rpc("desktop", value);
+    });
   const contextFor = (
     context?: PluginContext,
     text = "",
@@ -365,7 +395,17 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
         };
       }
       await start();
-      await rpc(push ? "select" : "activate", action);
+      await rpc(
+        push ? "select" : "activate",
+        push
+          ? action
+          : {
+              ...action,
+              // A launcher entry without input only reveals an existing desktop
+              // editor. Matched text/files/images are always a fresh activation.
+              revealOnly: activation.commandId !== "compat-dispatch" && !activation.context,
+            },
+      );
       return undefined;
     },
     async query(activation, signal) {

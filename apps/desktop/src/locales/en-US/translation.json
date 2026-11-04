@@ -794,7 +794,7 @@
     "importDirectory": "Import plugin folder",
     "utoolsLocalOnly": "Local uTools compatibility. Accounts, purchases and cloud sync are unavailable.",
     "directoryPackage": "Development directory snapshot",
-    "import": "Import local .tgz",
+    "import": "Import local plugin package",
     "preparing": "Preparing installation preview",
     "packageName": "npm package name",
     "registry": "Registry",
@@ -1091,6 +1091,45 @@
     "retryCard": "Reload card: {{title}}"
   },
   "pluginMarket": {
+    "sources": {
+      "spark233": "spark233",
+      "utools": "uTools"
+    },
+    "sort": {
+      "title": "Sort plugins",
+      "current": "Sort: {{value}}",
+      "auto": "Automatic (name / search relevance)",
+      "relevance": "Relevance",
+      "name-asc": "Name A–Z",
+      "name-desc": "Name Z–A",
+      "rating": "Highest rated",
+      "voters": "Most ratings"
+    },
+    "utools": {
+      "title": "uTools public catalog",
+      "description": "Browse the official catalog, then download and inspect packages before confirming installation. Compatibility depends on the plugin.",
+      "refresh": "Refresh catalog",
+      "loading": "Loading the uTools catalog…",
+      "failed": "Could not refresh the catalog.",
+      "cached": "Using the cached catalog ({{time}}). Refresh later.",
+      "rating": "Rating {{rating}}",
+      "unrated": "Not rated",
+      "voters": "Ratings: {{count}}",
+      "officialPage": "Official details",
+      "empty": "No matching plugins",
+      "page": "Results: {{count}} · Page {{page}} / {{pages}}",
+      "previous": "Previous",
+      "next": "Next",
+      "prepare": "Download and inspect",
+      "installed": "Installed",
+      "storePackage": "uTools store package",
+      "change": {
+        "source": "The candidate matches the installed code. Confirm to bind its store update source while keeping the current process and data.",
+        "content": "The upstream version is unchanged, but the package contents differ. Confirm to save, back up and replace the code.",
+        "version": "A newer store version is available. Confirm to use the existing save, backup and update workflow."
+      },
+      "bindSource": "Bind update source"
+    },
     "tabs": {
       "discover": "Discover",
       "installed": "Installed",

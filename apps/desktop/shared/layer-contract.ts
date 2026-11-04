@@ -33,7 +33,7 @@ export interface LayerCard {
   visible: boolean;
   consumerId?: string;
   widget?: WidgetBinding;
-  renderKind?: "notes" | "declarative" | "web" | "screenshot";
+  renderKind?: "notes" | "declarative" | "web" | "screenshot" | "utools";
   renderRef?: string;
   payload?: JsonValue;
   screenshot?: LayerScreenshotImage;
@@ -62,7 +62,7 @@ export type LayerInstanceStatus = "active" | "hidden" | "suspended" | "orphan" |
 export interface LayerRenderCard extends Omit<LayerCard, "widget"> {
   title?: string;
   consumerId: string;
-  renderKind: "notes" | "declarative" | "web" | "screenshot";
+  renderKind: "notes" | "declarative" | "web" | "screenshot" | "utools";
   renderRef: string;
   widget?: Pick<
     WidgetBinding,
@@ -93,7 +93,7 @@ export interface LayerSnapshot {
 export interface DesktopOverlayPanel {
   cardId: string;
   title: string;
-  kind: "notes" | "traffic" | "screenshot";
+  kind: "notes" | "traffic" | "screenshot" | "utools";
   selected: boolean;
   pinned: boolean;
   inputMode: LayerInputMode;

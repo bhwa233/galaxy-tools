@@ -1,4 +1,5 @@
 import { searchConditions } from "./search-history.js";
+import { pluginMarketSorts } from "./plugin-market.js";
 import { z } from "zod";
 import type { CommandName } from "./command-policies.js";
 import { configPatchSchema } from "./config-schema.js";
@@ -359,11 +360,24 @@ export const commandSchemas = {
   plugins_import: empty,
   plugins_import_directory: empty,
   plugins_list: empty,
+  plugins_utools_catalog: z.strictObject({
+    query: z.string().max(256),
+    sort: z.enum(pluginMarketSorts),
+    page: z.number().int().min(1).max(10000),
+    refresh: z.boolean().optional(),
+  }),
   plugins_prepare_bundled: pluginArgs,
   plugins_prepare_registry: z.strictObject({
     name: z.string().min(1).max(214),
     registry: z.url().max(8192).optional(),
     channel: z.string().max(100).optional(),
+  }),
+  plugins_prepare_utools: z.strictObject({
+    catalogId: z
+      .string()
+      .min(1)
+      .max(160)
+      .regex(/^[a-zA-Z0-9_.-]+$/),
   }),
   plugins_prepare_update: pluginArgs,
   plugins_release_notes: pluginArgs,

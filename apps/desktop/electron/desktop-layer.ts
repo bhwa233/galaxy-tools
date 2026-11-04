@@ -20,6 +20,10 @@ import { LayerWindow, computeShape, surfaceKey } from "./layer-window.js";
 import { contains } from "./capsule-layout.js";
 import { LayerLayoutStore, constrainLayerCard } from "./layer-layout-store.js";
 import { AppError } from "./persistence.js";
+import type {
+  ExternalLayerParticipant,
+  ExternalLayerPresentation,
+} from "../shared/utools-desktop.js";
 import {
   DesktopOverlayLayout,
   overlayPanelKind,
@@ -154,6 +158,14 @@ export class DesktopLayer {
   };
   private overlayLayout: DesktopOverlayLayout;
   private consumers = new Map<string, LayerConsumer>();
+  private external = new Map<
+    string,
+    {
+      participant: ExternalLayerParticipant;
+      value?: ExternalLayerPresentation;
+      pending?: Promise<void>;
+    }
+  >();
   private surfaces = new Map<string, Surface>();
   private cards = new Map<string, LayerCard>();
   private generation = 0;
@@ -221,6 +233,82 @@ export class DesktopLayer {
       void consumer.onDispose?.();
       this.refresh();
     };
+  }
+  /** Compatibility HWNDs remain owned by their runner. Only the trusted host
+   * registers participants; renderer requests cannot acquire a window identity. */
+  registerExternal(cardId: string, participant: ExternalLayerParticipant): () => void {
+    if (this.disposed || this.external.has(cardId))
+      throw new Error("Duplicate external desktop card");
+    const entry = { participant };
+    this.external.set(cardId, entry);
+    this.refresh();
+    return () => {
+      if (this.external.get(cardId) !== entry) return;
+      this.external.delete(cardId);
+      this.refresh();
+    };
+  }
+  externalPresentation(cardId: string): ExternalLayerPresentation | undefined {
+    return this.external.get(cardId)?.value;
+  }
+  async externalBounds(cardId: string, bounds: Rect): Promise<void> {
+    const card = this.cards.get(cardId);
+    if (!card || !this.external.has(cardId) || this.editor)
+      throw new AppError("permissionDenied", "兼容桌面窗口已失效");
+    const requested = rect.parse(bounds);
+    const session = this.overlay;
+    if (session) {
+      const previous = this.external.get(cardId)?.value;
+      if (previous?.mode !== "overlay") throw new AppError("permissionDenied", "插件栏会话已失效");
+      // Native resize changes the one shared content size, while its desktop
+      // origin remains independent of the operation bar's position.
+      this.overlayLayout.position(
+        overlayPanelKey(card),
+        session.displayId,
+        this.clampOverlay(requested),
+      );
+      await this.commit(
+        [
+          {
+            cardId,
+            patch: { bounds: { ...card.bounds, width: requested.width, height: requested.height } },
+          },
+        ],
+        this.options.store.load().revision,
+      );
+      this.refresh();
+    } else {
+      const display = this.options.displays().find((d) =>
+        contains(d.workArea, {
+          x: requested.x + requested.width / 2,
+          y: requested.y + requested.height / 2,
+        }),
+      );
+      const layout = this.options.store.load();
+      const stored = layout.cards[cardId];
+      if (stored?.kind !== "utools") throw new AppError("permissionDenied", "兼容桌面窗口已失效");
+      layout.cards[cardId] = constrainLayerCard(
+        {
+          ...stored,
+          bounds: requested,
+          ...(display ? { displayId: display.id, workAreaAtSave: display.workArea } : {}),
+        },
+        this.options.displays(),
+        this.options.primaryDisplay(),
+      ).card;
+      await this.options.store.commit(
+        { ...layout, revision: layout.revision + 1 },
+        layout.revision,
+      );
+    }
+  }
+  async externalPanel(
+    cardId: string,
+    action: "show" | "hide" | "pin" | "passthrough" | "open",
+    value?: boolean,
+  ): Promise<unknown> {
+    if (!this.external.has(cardId)) throw new AppError("permissionDenied", "兼容桌面窗口已失效");
+    return this.panelAction(cardId, action, value);
   }
   private cancelConsumerPointers(): void {
     for (const consumer of this.consumers.values()) {
@@ -307,6 +395,7 @@ export class DesktopLayer {
         });
     if (this.options.flags().enabled && !this.options.store.readError)
       for (let card of next.values()) {
+        if (card.renderKind === "utools" && !this.editor) continue;
         if (this.editor && card.presentationOnly) continue;
         if (!card.visible && !this.editor) continue;
         if (card.renderKind === "notes" && !this.options.flags().notesEnabled) continue;
@@ -561,7 +650,73 @@ export class DesktopLayer {
             : group.cards;
       surface.window.apply(hitCards, group.bounds, () => this.publishSnapshot(surface));
     }
+    this.presentExternal();
     this.restack();
+  }
+  private presentExternal(): void {
+    const displays = this.options.displays();
+    const panels = this.overlayPanels();
+    for (const [id, entry] of this.external) {
+      const card = this.cards.get(id);
+      if (!card) continue;
+      const session = this.overlay;
+      const display =
+        displays.find((d) => d.id === (session?.displayId ?? card.displayId)) ?? displays[0];
+      if (!display) continue;
+      const selected = panels.find((p) => p.cardId === id)?.selected === true;
+      const projected = session
+        ? {
+            ...card,
+            displayId: display.id,
+            bounds: this.overlayLayout.place(
+              card,
+              display.id,
+              display.workArea,
+              panels.findIndex((p) => p.cardId === id),
+            ),
+          }
+        : card;
+      const hidden = ["user", "locked", "suspend"].some(
+        (reason) =>
+          !(session && reason === "user") &&
+          (this.hidden.has(reason) || this.hidden.has(reason + ":" + display.id)),
+      );
+      const value: ExternalLayerPresentation = {
+        mode: session ? "overlay" : "desktop",
+        card: projected,
+        area: display.workArea,
+        visible:
+          this.options.flags().enabled &&
+          !this.options.store.readError &&
+          !this.editor &&
+          !hidden &&
+          (session ? selected : card.visible),
+        locale: this.options.locale(),
+        ...(session ? { epoch: session.epoch } : {}),
+      };
+      if (isDeepStrictEqual(entry.value, value)) continue;
+      entry.value = structuredClone(value);
+      const pending = entry.participant.present(value).catch((error) => {
+        if (this.external.get(id) !== entry) return;
+        this.diagnostic("external-presentation", error);
+        if (this.overlay?.epoch === value.epoch && value.mode === "overlay")
+          void this.closeOverlay(false);
+      });
+      entry.pending = pending;
+      void pending.finally(() => {
+        if (entry.pending === pending) entry.pending = undefined;
+      });
+    }
+  }
+  private async waitExternalPresentations(): Promise<void> {
+    for (const entry of this.external.values()) {
+      let pending = entry.pending;
+      while (pending) {
+        await pending;
+        if (entry.pending === pending) break;
+        pending = entry.pending;
+      }
+    }
   }
   private restack(): void {
     // Moving a card inside an existing surface does not change HWND ordering.
@@ -856,65 +1011,7 @@ export class DesktopLayer {
       }
       case "overlay-panel": {
         this.assertOverlaySurface(surface, input.overlayEpoch, input.cardId);
-        const card = this.cards.get(input.cardId);
-        if (!card || !overlayPanelKind(card))
-          throw new AppError("permissionDenied", "插件栏面板已失效");
-        const action = z.enum(["show", "hide", "pin", "passthrough", "open"]).parse(input.action);
-        if (action === "open") {
-          if (!this.isCardVisible(card.id)) throw new AppError("permissionDenied", "请先显示面板");
-          const consumer = this.consumers.get(card.consumerId!);
-          const opening =
-            card.renderKind === "notes"
-              ? consumer?.onInvoke?.(card.id, "capsule_open", { id: card.renderRef })
-              : card.renderKind === "screenshot"
-                ? consumer?.onInvoke?.(card.id, "edit", {})
-                : this.options.onOverlayOpenPanel?.(card);
-          // Release the operation layer before handing focus to an editor or
-          // detail window; restoring the old app here would steal that focus.
-          await this.closeOverlay(false);
-          return opening;
-        }
-        if (action === "pin" || action === "passthrough") {
-          const value = z.boolean().parse(input.value);
-          const sourcePatch =
-            action === "pin"
-              ? { group: value ? ("top" as const) : ("normal" as const) }
-              : { inputMode: value ? ("passive" as const) : ("interactive" as const) };
-          if (await this.options.onOverlayPresentation?.(card, sourcePatch)) {
-            this.overlayLayout.update(overlayPanelKey(card), {
-              pinned: undefined,
-              passthrough: undefined,
-              sourceGroup: undefined,
-              sourceInputMode: undefined,
-            });
-            this.refresh();
-            return;
-          }
-        }
-        const patch =
-          action === "show" || action === "hide"
-            ? { selected: action === "show" }
-            : action === "pin"
-              ? {
-                  pinned: z.boolean().parse(input.value),
-                  sourceGroup:
-                    this.overlayLayout.get(overlayPanelKey(card))?.sourceGroup ?? card.group,
-                }
-              : {
-                  passthrough: z.boolean().parse(input.value),
-                  sourceInputMode:
-                    this.overlayLayout.get(overlayPanelKey(card))?.sourceInputMode ??
-                    card.inputMode,
-                };
-        this.overlayLayout.update(overlayPanelKey(card), patch);
-        if (action === "hide") {
-          this.overlay!.previews.delete(card.id);
-          this.overlay!.menus.delete(card.id);
-          this.overlay!.drafts.delete(card.id);
-          if (this.overlayGesture?.cardId === card.id) this.overlayGesture = undefined;
-        }
-        this.refresh();
-        return;
+        return this.panelAction(input.cardId, input.action, input.value);
       }
       case "pointer": {
         if (this.overlay?.members.has(surface.id)) return;
@@ -1331,6 +1428,11 @@ export class DesktopLayer {
     );
   }
   hasOverlayFocus(): boolean {
+    if (
+      this.overlay &&
+      [...this.external.values()].some((e) => e.pending || e.participant.focus?.())
+    )
+      return true;
     return [...(this.overlay?.members ?? [])].some((id) => {
       const s = this.surfaces.get(id);
       return (
@@ -1345,6 +1447,7 @@ export class DesktopLayer {
     // Reapply the operation order after every focus transfer between members.
     this.stackSignature = "";
     this.restack();
+    for (const entry of this.external.values()) entry.participant.restack?.();
   }
   private assertOverlaySurface(surface: Surface, epoch: number | undefined, cardId?: string): void {
     const session = this.overlay;
@@ -1360,6 +1463,84 @@ export class DesktopLayer {
         !surface.cards.some((c) => c.id === cardId))
     )
       throw new AppError("permissionDenied", "桌面插件栏会话已失效");
+  }
+  private async panelAction(
+    cardId: string,
+    action: "show" | "hide" | "pin" | "passthrough" | "open",
+    value?: boolean,
+  ): Promise<unknown> {
+    const card = this.cards.get(cardId);
+    if (!card || !overlayPanelKind(card))
+      throw new AppError("permissionDenied", "插件栏面板已失效");
+    action = z.enum(["show", "hide", "pin", "passthrough", "open"]).parse(action);
+    if (action === "open") {
+      if (!this.isCardVisible(card.id) && !this.external.get(card.id)?.value?.visible)
+        throw new AppError("permissionDenied", "请先显示面板");
+      const consumer = this.consumers.get(card.consumerId!);
+      const opening =
+        card.renderKind === "notes"
+          ? consumer?.onInvoke?.(card.id, "capsule_open", { id: card.renderRef })
+          : card.renderKind === "screenshot"
+            ? consumer?.onInvoke?.(card.id, "edit", {})
+            : card.renderKind === "utools"
+              ? consumer?.onInvoke?.(card.id, "open", {})
+              : this.options.onOverlayOpenPanel?.(card);
+      // Release the operation layer before handing focus to an editor or
+      // detail window; restoring the old app here would steal that focus.
+      await this.closeOverlay(false);
+      return opening;
+    }
+    if (action === "pin" || action === "passthrough") {
+      value = z.boolean().parse(value);
+      const sourcePatch =
+        action === "pin"
+          ? { group: value ? ("top" as const) : ("normal" as const) }
+          : { inputMode: value ? ("passive" as const) : ("interactive" as const) };
+      if (this.external.has(cardId)) {
+        await this.external.get(cardId)!.participant.update?.(sourcePatch);
+        this.refresh();
+        return;
+      }
+      if (await this.options.onOverlayPresentation?.(card, sourcePatch)) {
+        this.overlayLayout.update(overlayPanelKey(card), {
+          pinned: undefined,
+          passthrough: undefined,
+          sourceGroup: undefined,
+          sourceInputMode: undefined,
+        });
+        this.refresh();
+        return;
+      }
+    }
+    if (!this.overlay) {
+      await this.commit(
+        [{ cardId, patch: { visible: action === "show" } }],
+        this.options.store.load().revision,
+      );
+      return;
+    }
+    const patch =
+      action === "show" || action === "hide"
+        ? { selected: action === "show" }
+        : action === "pin"
+          ? {
+              pinned: z.boolean().parse(value),
+              sourceGroup: this.overlayLayout.get(overlayPanelKey(card))?.sourceGroup ?? card.group,
+            }
+          : {
+              passthrough: z.boolean().parse(value),
+              sourceInputMode:
+                this.overlayLayout.get(overlayPanelKey(card))?.sourceInputMode ?? card.inputMode,
+            };
+    this.overlayLayout.update(overlayPanelKey(card), patch);
+    if (action === "hide" && this.overlay) {
+      this.overlay!.previews.delete(card.id);
+      this.overlay!.menus.delete(card.id);
+      this.overlay!.drafts.delete(card.id);
+      if (this.overlayGesture?.cardId === card.id) this.overlayGesture = undefined;
+    }
+    this.refresh();
+    return;
   }
   private beginPresentation(surface: Surface): void {
     surface.commit?.finish(false);
@@ -1491,6 +1672,7 @@ export class DesktopLayer {
     this.overlay = session;
     this.reconcile();
     const committed = await this.waitPresentations(session.members);
+    await this.waitExternalPresentations();
     if (this.overlay !== session) return;
     if (!committed) {
       await this.closeOverlay(false);
@@ -1513,6 +1695,7 @@ export class DesktopLayer {
     this.reconcile();
     const closing = (async () => {
       await this.waitPresentations(session.members);
+      await this.waitExternalPresentations();
       if (this.overlayEpoch === session.epoch && !this.overlay)
         await this.options.onOverlayClosed?.(restoreFocus);
     })().catch((error) => this.diagnostic("overlay-focus", error));
@@ -1715,6 +1898,7 @@ export class DesktopLayer {
       await s.window.destroy();
     }
     this.surfaces.clear();
+    this.external.clear();
     this.consumers.clear();
   }
 }

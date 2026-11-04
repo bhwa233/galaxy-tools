@@ -5,6 +5,11 @@ import { pathToFileURL } from "node:url";
 import { UToolsStore } from "./utools-store.js";
 import { atomicWrite } from "../persistence.js";
 import type { UToolsManifest } from "./utools-manifest.js";
+import type {
+  UToolsDesktopPresentation,
+  UToolsDesktopRequest,
+} from "../../shared/utools-desktop.js";
+import type { Rect } from "../../src/features/capsules/types.js";
 const {
   app,
   BrowserWindow,
@@ -18,6 +23,7 @@ const {
   clipboard,
   ClipboardItem,
   nativeImage,
+  Menu,
 } = require("electron") as typeof import("electron");
 
 export async function startUToolsRunner(): Promise<void> {
@@ -28,6 +34,26 @@ export async function startUToolsRunner(): Promise<void> {
   let store: UToolsStore | undefined;
   let manifest: UToolsManifest;
   let state: any;
+  let desktop: UToolsDesktopPresentation | undefined;
+  let originalBounds: Rect | undefined;
+  let originalMaximized = false;
+  let entered = false;
+  let menuOpen = false;
+  let geometryTimer: ReturnType<typeof setTimeout> | undefined;
+  let nativeGesture: number | undefined;
+  let drag:
+    | { pointerId: number; cursor: { x: number; y: number }; bounds: Rect; revision: number }
+    | undefined;
+  let committed: { revision: number; finish(): void } | undefined;
+  let desktopOperations: Promise<void> = Promise.resolve();
+  const parentCalls = new Map<
+    string,
+    {
+      resolve(value: unknown): void;
+      reject(error: Error): void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   let stopping = false,
     exiting = false,
     shown = false,
@@ -44,15 +70,42 @@ export async function startUToolsRunner(): Promise<void> {
   const send = (value: object) => process.send?.({ ...value, token: configuration?.token });
   const reply = (id: string, value?: unknown, error?: unknown) =>
     send({ id, ...(error ? { error: String(error).slice(0, 4096) } : { value }) });
+  const hostRequest = (value: UToolsDesktopRequest): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      if (!configuration?.desktopAvailable) return reject(new Error("桌面插件层尚未就绪"));
+      if (parentCalls.size >= 64) return reject(new Error("窗口控制请求过多"));
+      const id = randomUUID();
+      const timer = setTimeout(() => {
+        parentCalls.delete(id);
+        reject(new Error("桌面窗口控制超时"));
+      }, 15000);
+      parentCalls.set(id, { resolve, reject, timer });
+      send({ event: "desktop-request", id, value });
+    });
+  const reportBounds = (revision: number) => {
+    if (!desktop || desktop.revision !== revision || !window) return;
+    const b = window.getBounds();
+    void hostRequest({
+      type: "bounds",
+      revision,
+      bounds: { x: b.x, y: b.y + 40, width: b.width, height: b.height - 40 },
+    }).catch((error) => update({ error: String(error) }));
+  };
   const publish = () => {
     if (window && !window.isDestroyed()) window.webContents.send("utools:shell-state", state);
   };
   const layout = () => {
     if (!window || !view) return;
     const [width, height] = window.getContentSize();
-    const top = 48 + (state.subInput ? 56 : 0) + (state.error ? 52 : 0);
+    const top = (desktop ? 40 : 48) + (state.subInput ? 56 : 0) + (state.error ? 52 : 0);
     view.setVisible(!state.list);
-    view.setBounds({ x: 0, y: top, width, height: Math.max(1, height - top) });
+    view.setBorderRadius(desktop ? 10 : 0);
+    view.setBounds({
+      x: desktop ? 1 : 0,
+      y: top,
+      width: width - (desktop ? 2 : 0),
+      height: Math.max(1, height - top - (desktop ? 1 : 0)),
+    });
   };
   const request = (operation: string, value?: unknown, timeout = 15000): Promise<any> =>
     new Promise((resolve, reject) => {
@@ -110,6 +163,7 @@ export async function startUToolsRunner(): Promise<void> {
         return true;
       }
       case "height": {
+        if (desktop) return true;
         const height = Number(args[0]);
         if (!Number.isFinite(height)) throw new Error("无效的高度");
         const [width] = window!.getSize();
@@ -122,6 +176,12 @@ export async function startUToolsRunner(): Promise<void> {
       }
       case "hide":
       case "out": {
+        if (desktop) {
+          void hostRequest({ type: "panel", revision: desktop.revision, action: "hide" }).catch(
+            (error) => update({ error: String(error) }),
+          );
+          return true;
+        }
         wantsVisible = false;
         window!.hide();
         if (visible) {
@@ -131,6 +191,12 @@ export async function startUToolsRunner(): Promise<void> {
         return true;
       }
       case "show":
+        if (desktop) {
+          void hostRequest({ type: "panel", revision: desktop.revision, action: "show" }).catch(
+            (error) => update({ error: String(error) }),
+          );
+          return true;
+        }
         wantsVisible = true;
         if (configuration.show !== false) {
           window!.show();
@@ -301,7 +367,112 @@ export async function startUToolsRunner(): Promise<void> {
     if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame)
       throw new Error("窗口来源失效");
     if (operation === "state") return state;
+    if (operation === "desktop-ready") {
+      if (committed && value === committed.revision) committed.finish();
+      return;
+    }
+    if (operation === "pin") {
+      if (!entered || !state.featureCode) throw new Error("请先打开一个插件功能");
+      const b = window.getBounds();
+      return hostRequest({
+        type: "pin",
+        featureCode: state.featureCode,
+        bounds: { x: b.x, y: b.y + 48, width: b.width, height: Math.max(160, b.height - 48) },
+      });
+    }
+    if (operation === "desktop-action") {
+      if (!desktop) throw new Error("插件尚未固定到桌面");
+      return hostRequest(
+        value === "unpin"
+          ? { type: "unpin" }
+          : { type: "panel", revision: desktop.revision, action: value.action, value: value.value },
+      );
+    }
+    if (operation === "desktop-close-overlay") {
+      if (desktop?.mode === "overlay")
+        return hostRequest({ type: "close-overlay", revision: desktop.revision });
+      return;
+    }
+    if (operation === "desktop-settings") {
+      if (!desktop) return;
+      const p = desktop;
+      // The original WebContentsView sits above DOM popups. Keep its page
+      // mounted and use Electron's existing menu for this shared toolbar button.
+      const act = (action: "pin" | "passthrough", enabled: boolean) =>
+        void hostRequest({ type: "panel", revision: p.revision, action, value: enabled }).catch(
+          (error) => update({ error: String(error) }),
+        );
+      menuOpen = true;
+      Menu.buildFromTemplate([
+        {
+          label: "置顶",
+          type: "checkbox",
+          checked: p.card.group === "top",
+          click: (item) => act("pin", item.checked),
+        },
+        {
+          label: "常驻时鼠标穿透",
+          type: "checkbox",
+          checked: p.card.inputMode === "passive",
+          click: (item) => act("passthrough", item.checked),
+        },
+        { type: "separator" },
+        {
+          label: "取消固定到桌面",
+          click: () =>
+            void hostRequest({ type: "unpin" }).catch((error) => update({ error: String(error) })),
+        },
+      ]).popup({
+        window,
+        callback: () => {
+          menuOpen = false;
+          if (desktop)
+            void hostRequest({ type: "focus", focused: window!.isFocused() }).catch(() => {});
+        },
+      });
+      return;
+    }
+    if (operation === "desktop-pointer") {
+      if (!desktop || !Number.isSafeInteger(value?.pointerId)) throw new Error("窗口拖动已失效");
+      if (value.phase === "start") {
+        drag = {
+          pointerId: value.pointerId,
+          cursor: screen.getCursorScreenPoint(),
+          bounds: window.getBounds(),
+          revision: desktop.revision,
+        };
+        return;
+      }
+      if (!drag || drag.pointerId !== value.pointerId || drag.revision !== desktop.revision) return;
+      const cursor = screen.getCursorScreenPoint();
+      const area =
+        desktop.mode === "overlay" ? desktop.area : screen.getDisplayNearestPoint(cursor).workArea;
+      const b = drag.bounds;
+      window.setBounds({
+        ...b,
+        x: Math.round(
+          Math.max(area.x, Math.min(area.x + area.width - b.width, b.x + cursor.x - drag.cursor.x)),
+        ),
+        y: Math.round(
+          Math.max(
+            area.y,
+            Math.min(area.y + area.height - b.height, b.y + cursor.y - drag.cursor.y),
+          ),
+        ),
+      });
+      if (value.phase === "cancel") {
+        window.setBounds(drag.bounds);
+        drag = undefined;
+      }
+      if (value.phase === "end") {
+        drag = undefined;
+        reportBounds(desktop.revision);
+      }
+      return;
+    }
     if (operation === "hide") {
+      if (desktop)
+        return hostRequest({ type: "panel", revision: desktop.revision, action: "hide" });
       wantsVisible = false;
       window.hide();
       if (visible) {
@@ -341,15 +512,18 @@ export async function startUToolsRunner(): Promise<void> {
       minWidth: 320,
       minHeight: 160,
       frame: false,
+      transparent: true,
+      type: "toolbar",
       show: false,
       title: configuration.title,
       icon: manifest.logo ? path.join(configuration.pluginRoot, manifest.logo) : undefined,
-      backgroundColor: configuration.theme.effective === "dark" ? "#18181b" : "#ffffff",
+      backgroundColor: "#00000000",
       webPreferences: {
         preload: path.join(__dirname, "utools-shell-preload.cjs"),
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: false,
       },
     });
     view = new WebContentsView({
@@ -386,11 +560,39 @@ export async function startUToolsRunner(): Promise<void> {
       if (url !== target) event.preventDefault();
     });
     window.on("resize", layout);
+    const markNativeGesture = () => {
+      nativeGesture = desktop?.revision;
+    };
+    window.on("will-move", markNativeGesture);
+    window.on("will-resize", markNativeGesture);
+    const finishNativeGesture = () => {
+      if (nativeGesture === undefined) return;
+      const revision = nativeGesture;
+      clearTimeout(geometryTimer);
+      geometryTimer = setTimeout(() => {
+        nativeGesture = undefined;
+        reportBounds(revision);
+      }, 150);
+    };
+    window.on("moved", finishNativeGesture);
+    window.on("resized", finishNativeGesture);
+    window.on("focus", () => {
+      if (desktop) void hostRequest({ type: "focus", focused: true }).catch(() => {});
+    });
+    window.on("blur", () => {
+      if (desktop && !menuOpen) void hostRequest({ type: "focus", focused: false }).catch(() => {});
+    });
     window.on("maximize", () => update({ maximized: true }));
     window.on("unmaximize", () => update({ maximized: false }));
     window.on("close", (event) => {
       if (!exiting) {
         event.preventDefault();
+        if (desktop) {
+          void hostRequest({ type: "panel", revision: desktop.revision, action: "hide" }).catch(
+            (error) => update({ error: String(error) }),
+          );
+          return;
+        }
         wantsVisible = false;
         window!.hide();
         if (visible) {
@@ -409,6 +611,13 @@ export async function startUToolsRunner(): Promise<void> {
   const shutdown = async () => {
     exiting = true;
     stopping = true;
+    clearTimeout(geometryTimer);
+    for (const call of parentCalls.values()) {
+      clearTimeout(call.timer);
+      call.reject(new Error("兼容运行器已停止"));
+    }
+    parentCalls.clear();
+    committed?.finish();
     for (const item of calls.values()) {
       clearTimeout(item.timer);
       item.reject(new Error("兼容运行器已停止"));
@@ -422,6 +631,14 @@ export async function startUToolsRunner(): Promise<void> {
   process.on("message", async (message: any) => {
     if (!message || typeof message !== "object") return;
     const { id, operation, value } = message;
+    let finishDesktop: (() => void) | undefined;
+    if (operation === "desktop") {
+      const previous = desktopOperations;
+      desktopOperations = new Promise<void>((resolve) => {
+        finishDesktop = resolve;
+      });
+      await previous;
+    }
     try {
       if (operation === "init") {
         if (configuration) throw new Error("不能重复初始化");
@@ -432,6 +649,7 @@ export async function startUToolsRunner(): Promise<void> {
         store = new UToolsStore(value.dataDir);
         state = {
           title: value.title,
+          desktopAvailable: value.desktopAvailable,
           theme: value.theme,
           maximized: false,
           subInput: null,
@@ -442,6 +660,16 @@ export async function startUToolsRunner(): Promise<void> {
       }
       if (!configuration || message.token !== configuration.token)
         throw new Error("运行器身份不匹配");
+      if (message.event === "desktop-result") {
+        const call = parentCalls.get(id);
+        if (call) {
+          parentCalls.delete(id);
+          clearTimeout(call.timer);
+          if (message.error) call.reject(new Error(message.error));
+          else call.resolve(value);
+        }
+        return;
+      }
       if (operation === "stop") {
         if (view)
           try {
@@ -479,10 +707,112 @@ export async function startUToolsRunner(): Promise<void> {
       }
       if (stopping) throw new Error("插件正在停止");
       await open();
+      if (operation === "desktop") {
+        clearTimeout(geometryTimer);
+        nativeGesture = undefined;
+        drag = undefined;
+        if (value === null) {
+          desktop = undefined;
+          window!.setAlwaysOnTop(false);
+          window!.setMinimumSize(320, 160);
+          window!.setFocusable(true);
+          window!.setIgnoreMouseEvents(false);
+          window!.setSkipTaskbar(false);
+          if (originalBounds) {
+            const area = screen.getDisplayMatching(originalBounds).workArea;
+            const width = Math.min(originalBounds.width, area.width);
+            const height = Math.min(originalBounds.height, area.height);
+            window!.setBounds({
+              x: Math.max(area.x, Math.min(originalBounds.x, area.x + area.width - width)),
+              y: Math.max(area.y, Math.min(originalBounds.y, area.y + area.height - height)),
+              width,
+              height,
+            });
+          }
+          if (originalMaximized) window!.maximize();
+          update({ desktop: null });
+          if (configuration.show !== false) window!.show();
+          return reply(id, { ok: true });
+        }
+        const next = value as UToolsDesktopPresentation;
+        if (!desktop) {
+          originalBounds = window!.getBounds();
+          originalMaximized = window!.isMaximized();
+        }
+        if (window!.isMaximized()) window!.unmaximize();
+        if (desktop && next.revision < desktop.revision) throw new Error("过期的桌面窗口投影");
+        const transition = !desktop || desktop.mode !== next.mode;
+        if (transition) window!.hide();
+        desktop = next;
+        if (!entered) {
+          const feature = [...features(), ...manifest.features].find(
+            (f) => f.code === next.featureCode,
+          );
+          if (!feature) throw new Error("固定的插件功能已不存在");
+          state.featureCode = feature.code;
+          await request("enter", {
+            code: feature.code,
+            type: "text",
+            payload: feature.cmds.find((c: unknown) => typeof c === "string") || feature.code,
+            from: "main",
+          });
+          entered = true;
+        }
+        window!.setSkipTaskbar(true);
+        window!.setFocusable(next.mode === "overlay" || next.card.inputMode === "interactive");
+        window!.setIgnoreMouseEvents(next.mode === "desktop" && next.card.inputMode === "passive", {
+          forward: true,
+        });
+        window!.setAlwaysOnTop(
+          next.mode === "overlay" || next.card.group === "top",
+          process.platform === "win32" ? "pop-up-menu" : "floating",
+        );
+        const b = next.card.bounds;
+        window!.setMinimumSize(320, 200);
+        window!.setBounds({
+          x: Math.round(b.x),
+          y: Math.round(b.y - 40),
+          width: Math.round(b.width),
+          height: Math.round(b.height + 40),
+        });
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            committed = undefined;
+            reject(new Error("桌面窗口布局确认超时"));
+          }, 4000);
+          committed = {
+            revision: next.revision,
+            finish: () => {
+              clearTimeout(timer);
+              committed = undefined;
+              resolve();
+            },
+          };
+          update({ desktop: next });
+        });
+        if (next.visible && configuration.show !== false) {
+          if (!window!.isVisible()) window!.showInactive();
+          if (next.mode === "overlay") window!.moveTop();
+          shown = true;
+          visible = true;
+        } else {
+          window!.hide();
+          visible = false;
+        }
+        return reply(id, { ok: true });
+      }
       if (operation === "activate") {
+        const { revealOnly, ...action } = value;
+        if (revealOnly === true && desktop && entered && state.featureCode === action.code) {
+          await hostRequest({ type: "panel", revision: desktop.revision, action: "show" });
+          window!.focus();
+          return reply(id, { ok: true });
+        }
         wantsVisible = true;
         update({ list: null, error: "", subInput: null });
-        await request("enter", value);
+        await request("enter", action);
+        entered = true;
+        state.featureCode = action.code;
         if (configuration.show !== false && wantsVisible) {
           window!.show();
           window!.focus();
@@ -495,6 +825,8 @@ export async function startUToolsRunner(): Promise<void> {
         wantsVisible = true;
         if ((await request("select", value)) === true) {
           await request("enter", value);
+          entered = true;
+          state.featureCode = value.code;
           if (configuration.show !== false && wantsVisible) {
             window!.show();
             window!.focus();
@@ -515,6 +847,8 @@ export async function startUToolsRunner(): Promise<void> {
       throw new Error("未支持的兼容请求");
     } catch (error) {
       reply(id, undefined, error);
+    } finally {
+      finishDesktop?.();
     }
   });
   process.on("disconnect", () => {

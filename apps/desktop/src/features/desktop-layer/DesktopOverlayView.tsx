@@ -14,8 +14,8 @@ import {
   LayoutGrid,
   MousePointer2,
   Network,
+  Puzzle,
   Pin,
-  PinOff,
   Settings,
   SlidersHorizontal,
   StickyNote,
@@ -44,9 +44,10 @@ import {
 import { getErrorMessage } from "../notes/api";
 import { DeclarativeCard } from "./DeclarativeCard";
 import "./desktop-overlay.css";
+import { DesktopPanelToolbar } from "./DesktopPanelToolbar";
 
 type Send = (request: LayerClientRequest) => Promise<unknown>;
-const kindIcons = { notes: StickyNote, traffic: Network, screenshot: Image };
+const kindIcons = { notes: StickyNote, traffic: Network, screenshot: Image, utools: Puzzle };
 
 /** Management chrome lives in one existing trusted surface; plugin content
  * remains mounted in each source's persistent LayerCardFrame below. */
@@ -110,6 +111,7 @@ export function DesktopOverlayView({
     { kind: "notes" as const, title: text("便签", "Notes") },
     { kind: "traffic" as const, title: text("流量", "Traffic") },
     { kind: "screenshot" as const, title: text("截图图钉", "Pinned images") },
+    { kind: "utools" as const, title: "uTools" },
   ];
   return (
     <main
@@ -437,8 +439,11 @@ export function LayerCardFrame({
       }}
     >
       {panel && (
-        <header
-          className="desktop-overlay-panel-header"
+        <DesktopPanelToolbar
+          locale={snapshot.locale}
+          pinned={panel.pinned}
+          onPin={() => void action("pin", !panel.pinned).catch(() => {})}
+          onHide={() => void action("hide").catch(() => {})}
           style={
             card.overlayControls
               ? {
@@ -545,36 +550,7 @@ export function LayerCardFrame({
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            title={
-              panel.pinned
-                ? text("取消置顶", "Unpin")
-                : text("退出后保持置顶", "Keep on top after closing")
-            }
-            aria-label={
-              panel.pinned
-                ? text("取消置顶", "Unpin")
-                : text("退出后保持置顶", "Keep on top after closing")
-            }
-            aria-pressed={panel.pinned}
-            onClick={() => void action("pin", !panel.pinned).catch(() => {})}
-          >
-            {panel.pinned ? <Pin /> : <PinOff />}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            title={text("收起面板", "Hide panel")}
-            aria-label={text("收起面板", "Hide panel")}
-            onClick={() => void action("hide").catch(() => {})}
-          >
-            <X />
-          </Button>
-        </header>
+        </DesktopPanelToolbar>
       )}
       <div
         key="content"

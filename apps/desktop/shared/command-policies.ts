@@ -1,5 +1,6 @@
 /** Every new host command must declare serialization, modal ownership and notes access. */
 export const commandPolicies = {
+  plugins_utools_catalog: { serialized: false, modal: false, notes: false },
   layer_listTemplates: { serialized: false, modal: false, notes: false },
   desktop_overlay_toggle: { serialized: false, modal: false, notes: false },
   layer_create: { serialized: true, modal: false, notes: false },
@@ -99,6 +100,7 @@ export const commandPolicies = {
   plugins_list: { serialized: false, modal: false, notes: false },
   plugins_prepare_bundled: { serialized: false, modal: false, notes: false },
   plugins_prepare_registry: { serialized: false, modal: false, notes: false },
+  plugins_prepare_utools: { serialized: false, modal: false, notes: false },
   plugins_prepare_update: { serialized: false, modal: false, notes: false },
   plugins_release_notes: { serialized: false, modal: false, notes: false },
   plugins_uninstall: { serialized: false, modal: false, notes: false },
