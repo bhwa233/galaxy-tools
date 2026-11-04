@@ -30,10 +30,25 @@ jobs:
             local-build/native-payloads/native-payloads.json
           if-no-files-found: error
       - run: pnpm test
-      # Tag builds publish the NSIS installer plus latest.yml/blockmap so
+      # Tag builds publish the NSIS installer plus channel metadata/blockmap so
       # electron-updater can find and verify the release; branch runs only
       # produce a local installer artifact.
-      - run: pnpm dist:win --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+      - name: Build and publish the matching release channel
+        shell: bash
+        run: |
+          release_version=$(node -p "require('./apps/desktop/package.json').version")
+          release_channel=latest
+          release_type=release
+          if [[ "$release_version" == *-beta || "$release_version" == *-beta.* ]]; then
+            release_channel=beta
+            release_type=prerelease
+          elif [[ "$release_version" == *-* ]]; then
+            echo "Unsupported release channel: $release_version" >&2
+            exit 1
+          fi
+          pnpm dist:win --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }} \
+            "--config.publish.channel=$release_channel" \
+            "--config.publish.releaseType=$release_type"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4

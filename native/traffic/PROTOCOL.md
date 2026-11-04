@@ -1,6 +1,8 @@
 # Windows traffic boundary v1
 
-`spark233.TrafficClient.exe --bridge` implements the host native protocol v1. `init` only checks readiness; it never installs, elevates or starts capture. A business `query`/`activate` uses `activation.parameters` with the fields below. All responses echo host identity unchanged. The executable owns no renderer/window.
+`spark233.TrafficClient.exe --bridge` implements the host native protocol v1. `init` only checks readiness; it never installs, elevates or starts capture. A business `query`/`activate` uses `activation.parameters` with the fields below. All responses echo host identity unchanged. The executable owns no application renderer; explicit file actions delegate to Windows Shell.
+
+`process.action` takes `scope`, an opaque `processInstanceId`, `action: reveal|properties|terminate`, and requires `confirmed: true` for termination. It reuses the existing service `connections` authorization before locally checking the PID/creation-time identity. The user-mode client operates on the same validated handle, applies its own OS permissions, and protects its host tree and critical processes. The service exposes no termination endpoint. Frontends never submit executable paths or arbitrary commands. Success returns `status: opened|terminated`; stale, protected or inaccessible targets return a bounded error.
 
 | command        | Parameters                                                                                                                | Result                                                                                                                       |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |

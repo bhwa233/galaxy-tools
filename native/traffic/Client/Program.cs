@@ -21,11 +21,13 @@ namespace Spark.TrafficClient {
     static string session,ownerFingerprint;
     static bool stopping;
     static Timer heartbeat;
+    static int desktopHost;
     static string pipeName="spark233-traffic-v1";
     static int Main(string[] args) {
       if(args.Length==3&&args[0]=="--bridge"&&args[1]=="--isolated-pipe"&&args[2].StartsWith("spark233-traffic-test-",StringComparison.Ordinal))pipeName=args[2];
       else if(args.Length!=1||args[0]!="--bridge"){Console.Error.WriteLine("usage: spark233.TrafficClient.exe --bridge");return 2;}
       Console.InputEncoding=new UTF8Encoding(false,true);Console.OutputEncoding=new UTF8Encoding(false);
+      desktopHost=ProcessActions.DesktopHost();
       heartbeat=new Timer(_=>Renew(),null,5000,5000);
       try {
         for(;;) {
@@ -70,6 +72,24 @@ namespace Spark.TrafficClient {
     static object Execute(string command,Dictionary<string,object> parameters) {
       if(command=="install"||command=="grantMachine")return Install(command);
       var scope=Json.Str(parameters,"scope","own");if(scope!="own"&&scope!="machine")throw new InvalidDataException("invalid-scope");
+      if(command=="process.action") {
+        var action=Json.Str(parameters,"action");
+        if(action!="reveal"&&action!="properties"&&action!="terminate")throw new InvalidDataException("unsupported-process-action");
+        if(action=="terminate"&&!Json.Bool(parameters,"confirmed"))throw new InvalidDataException("process-confirmation-required");
+        var selected=Json.Str(parameters,"processInstanceId");
+        // Reuse the existing service's per-instance connection authorization.
+        // The service never gains a termination endpoint or a new protocol.
+        lock(rpcSync) {
+          var authorized=Rpc(Json.Obj("op","connections","scope",scope,"processInstanceId",selected,"kind","tcp","limit",1));
+          if(Json.Str(authorized,"processInstanceId")!=selected)throw new InvalidOperationException("process-not-visible");
+        }
+        var parts=selected.Split(':');
+        if(parts.Length!=3||!Guid.TryParseExact(parts[0],"N",out _)||!int.TryParse(parts[1],out var pid)||!long.TryParse(parts[2],out var created))throw new InvalidDataException("process-identity-unavailable");
+        var target=ProcessCatalog.Inspect(pid);
+        if(target==null||target.Created!=created)throw new InvalidOperationException("process-exited");
+        using(var caller=WindowsIdentity.GetCurrent())if(scope=="own"&&target.Sid!=caller.User?.Value)throw new InvalidOperationException("process-not-visible");
+        return ProcessActions.Run(target,action,desktopHost);
+      }
       lock(rpcSync) {
         if(command=="status") {
           Dictionary<string,object> status;

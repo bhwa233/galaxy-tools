@@ -1,9 +1,9 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
-  type ComponentProps,
   type PointerEvent,
   type WheelEvent,
 } from "react";
@@ -15,15 +15,11 @@ import type {
   LayerSnapshot,
 } from "../../../shared/layer-contract";
 import type { Rect } from "../capsules/types";
-import { DeclarativeCard } from "./DeclarativeCard";
+import { LayerCardContent } from "./LayerCardContent";
 import { LayerErrorBoundary } from "./LayerErrorBoundary";
 import { LayerEditor } from "./LayerEditor";
 import { WidgetFrame } from "./WidgetFrame";
-import { ScreenshotCard } from "./ScreenshotCard";
-import { DesktopOverlayView } from "./DesktopOverlayView";
-import { CapsuleHost } from "../capsules/CapsuleHost";
-import type { CapsuleSnapshot } from "../capsules/types";
-import type { invoke } from "../../platform/desktop";
+import { DesktopOverlayView, LayerCardFrame } from "./DesktopOverlayView";
 import "./desktop-layer.css";
 
 type WebBootstrap = Extract<LayerEvent, { type: "widget-init" }>;
@@ -36,42 +32,43 @@ function isSnapshot(value: unknown): value is LayerSnapshot {
   );
 }
 
-// Keep the existing memoized card's action stable when only its outer position
-// changes; binding the owner here avoids rebuilding the declarative subtree.
-function LayerDeclarativeCard({
-  client,
-  cardId,
-  intrinsicHeight,
-  ...props
-}: Omit<ComponentProps<typeof DeclarativeCard>, "onAction" | "onContentHeight"> & {
-  client: LayerClient;
-  cardId: string;
-  intrinsicHeight?: boolean;
-}) {
-  const onAction = useCallback(
-    async (actionId: string) => {
-      await client.request({ type: "widget-invoke", cardId, actionId });
-    },
-    [client, cardId],
-  );
-  const onContentHeight = useCallback(
-    (height: number) => {
-      void client.request({ type: "content-height", cardId, height }).catch(() => {});
-    },
-    [client, cardId],
-  );
-  return (
-    <DeclarativeCard
-      {...props}
-      onAction={onAction}
-      onContentHeight={intrinsicHeight ? onContentHeight : undefined}
-    />
-  );
-}
-
 export function DesktopLayerView({ client }: { client: LayerClient }) {
   const [snapshot, setSnapshot] = useState<LayerSnapshot>();
   const latest = useRef<LayerSnapshot | undefined>(undefined);
+  const epoch = snapshot?.overlay?.epoch;
+  const request = useCallback<LayerClient["request"]>(
+    (input) =>
+      client.request(
+        input.type.startsWith("overlay-") && epoch !== undefined
+          ? Object.assign({}, input, { overlayEpoch: epoch })
+          : input,
+      ),
+    [client, epoch],
+  );
+  const participant = snapshot?.overlay?.host === false;
+  useEffect(() => {
+    if (!participant) return;
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        document.querySelector('[role="menu"], [data-overlay-moving]')
+      )
+        return;
+      event.preventDefault();
+      void request({ type: "overlay-close" }).catch(() => {});
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [participant, request]);
+  useLayoutEffect(() => {
+    if (snapshot?.presentationRevision !== undefined)
+      void client
+        .request({ type: "presentation-committed", revision: snapshot.presentationRevision })
+        .catch(() => {});
+  }, [client, snapshot?.presentationRevision]);
+
   const [web, setWeb] = useState<WebBootstrap>();
   const [edit, setEdit] = useState<{ editing: boolean; editSession?: string }>();
   const [drafts, setDrafts] = useState<Record<string, Rect>>({});
@@ -109,6 +106,7 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
         !move ||
         !current ||
         current.editing ||
+        current.overlay ||
         current.surfaceGeneration !== move.surfaceGeneration ||
         current.revision !== move.event.revision ||
         !current.cards.some((card) => card.id === move.event.cardId && card.visible)
@@ -153,7 +151,8 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
       if (
         previous &&
         next.surfaceGeneration === previous.surfaceGeneration &&
-        next.revision < previous.revision
+        (next.revision < previous.revision ||
+          (next.presentationRevision ?? 0) < (previous.presentationRevision ?? 0))
       )
         return;
       if (
@@ -161,7 +160,8 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
         next.surfaceId !== previous.surfaceId ||
         next.surfaceGeneration !== previous.surfaceGeneration ||
         next.revision !== previous.revision ||
-        next.editing !== previous.editing
+        next.editing !== previous.editing ||
+        next.overlay?.epoch !== previous.overlay?.epoch
       )
         clearQueuedMove();
       if (
@@ -277,7 +277,7 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
     type: LayerPointerEvent["type"],
     event: PointerEvent<HTMLElement> | WheelEvent<HTMLElement>,
   ) => {
-    if (!snapshot || snapshot.editing || edit?.editing) return;
+    if (!snapshot || snapshot.overlay || snapshot.editing || edit?.editing) return;
     if (card.desktopInteractive && "pointerId" in event) {
       if (type === "down" && event.button === 0)
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -339,7 +339,6 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
         {failure}
       </div>
     ) : null;
-  if (snapshot.overlay) return <DesktopOverlayView snapshot={snapshot} client={client} />;
   const editing = edit?.editing ?? snapshot.editing;
   const origin = snapshot.bounds ?? {
     x: window.screenX,
@@ -353,117 +352,87 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
     (snapshot.locale.startsWith("zh") ? "卡片暂不可用" : "Card unavailable");
   return (
     <main className="desktop-layer-root" data-layer-surface={snapshot.surfaceId}>
-      {snapshot.cards
-        .filter((card) => card.visible)
-        .map((card) => {
-          const bounds = drafts[card.id] ?? card.bounds;
-          const unavailable = card.status && card.status !== "active";
-          return (
-            <section
-              key={`${card.id}:${card.widget?.loadGeneration ?? 0}`}
-              className={
-                card.desktopInteractive && !card.presentationOnly
-                  ? "layer-render-card layer-desktop-interactive"
-                  : "layer-render-card"
-              }
-              style={{
-                left: bounds.x - origin.x,
-                top: bounds.y - origin.y,
-                width: bounds.width,
-                height: bounds.height,
-                zIndex: card.order,
-                opacity: card.presentationHidden ? 0 : undefined,
-                ...(card.clip
-                  ? {
-                      clipPath: `inset(${card.clip.y}px ${Math.max(0, bounds.width - card.clip.x - card.clip.width)}px ${Math.max(0, bounds.height - card.clip.y - card.clip.height)}px ${card.clip.x}px)`,
-                    }
-                  : {}),
-              }}
-              aria-label={label(card)}
-              onPointerEnter={(event) => pointer(card, "enter", event)}
-              onPointerLeave={(event) => pointer(card, "leave", event)}
-              onPointerDown={(event) => pointer(card, "down", event)}
-              onPointerMove={(event) => pointer(card, "move", event)}
-              onPointerUp={(event) => pointer(card, "up", event)}
-              onPointerCancel={(event) => pointer(card, "cancel", event)}
-              onLostPointerCapture={(event) => pointer(card, "cancel", event)}
-              onDoubleClick={(event) =>
-                pointer(card, "doubleclick", event as unknown as PointerEvent<HTMLElement>)
-              }
-              onContextMenu={(event) => {
-                event.preventDefault();
-                pointer(card, "contextmenu", event as unknown as PointerEvent<HTMLElement>);
-              }}
-              onWheel={(event) => pointer(card, "wheel", event)}
-            >
-              <LayerErrorBoundary label={label(card)} onError={(error) => fault(card.id, error)}>
-                {unavailable ? (
-                  <div className="layer-card-fault" role="status">
-                    {card.reason ?? label(card)}
-                  </div>
-                ) : card.renderKind === "declarative" && card.template ? (
-                  <LayerDeclarativeCard
-                    client={client}
-                    cardId={card.id}
-                    intrinsicHeight={card.intrinsicHeight}
-                    template={card.template}
-                    data={card.data}
-                    images={card.images}
-                    disabled={editing || card.inputMode !== "interactive"}
-                    locale={snapshot.locale}
-                  />
-                ) : card.renderKind === "notes" && card.payload ? (
-                  <CapsuleHost
-                    snapshot={card.payload as unknown as CapsuleSnapshot}
-                    request={
-                      ((command: string, args: Record<string, unknown> = {}) =>
-                        client.request({
-                          type: "notes-invoke",
-                          cardId: card.id,
-                          command,
-                          args,
-                        })) as typeof invoke
-                    }
-                  />
-                ) : card.renderKind === "screenshot" && card.screenshot ? (
-                  <ScreenshotCard
-                    image={card.screenshot}
-                    title={
-                      card.title ?? (snapshot.locale.startsWith("zh") ? "截图贴图" : "Pinned image")
-                    }
-                    width={bounds.width}
-                    scaleFactor={snapshot.scaleFactor}
-                    pinned={card.group === "top"}
-                    disabled={editing || card.inputMode !== "interactive"}
-                    locale={snapshot.locale}
-                    onAction={(action, value) =>
-                      client.request({
-                        type: "screenshot-invoke",
-                        cardId: card.id,
-                        action,
-                        ...(value === undefined ? {} : { value }),
-                      })
-                    }
-                  />
-                ) : card.renderKind === "web" && web ? (
-                  <WidgetFrame
-                    key={`${web.binding.widgetInstanceId}:${web.binding.loadGeneration}:${web.nonce}`}
-                    binding={web.binding}
-                    url={web.url}
-                    nonce={web.nonce}
-                    initialWire={web.initialWire}
-                    client={client}
-                    blocked={editing || card.inputMode !== "interactive"}
-                  />
-                ) : (
-                  <div className="layer-note-label">
-                    <span>{label(card)}</span>
-                  </div>
-                )}
-              </LayerErrorBoundary>
-            </section>
-          );
-        })}
+      {snapshot.overlay && snapshot.overlay.host !== false && (
+        <DesktopOverlayView snapshot={snapshot} client={client} />
+      )}
+      {snapshot.cards.map((card, index) => {
+        const bounds = drafts[card.id] ?? card.bounds;
+        const unavailable = card.status && card.status !== "active";
+        return (
+          <LayerCardFrame
+            card={{ ...card, bounds }}
+            panel={snapshot.overlay?.panels.find((p) => p.cardId === card.id)}
+            snapshot={snapshot}
+            origin={origin}
+            stackOrder={index}
+            send={request}
+            key={`${card.id}:${card.widget?.loadGeneration ?? 0}`}
+            className={
+              card.desktopInteractive && !card.presentationOnly
+                ? "layer-render-card layer-desktop-interactive"
+                : "layer-render-card"
+            }
+            style={{
+              left: bounds.x - origin.x,
+              top: bounds.y - origin.y,
+              width: bounds.width,
+              height: bounds.height,
+              zIndex: snapshot.overlay ? undefined : card.order,
+              opacity: card.presentationHidden ? 0 : undefined,
+              ...(card.clip
+                ? {
+                    clipPath: `inset(${card.clip.y}px ${Math.max(0, bounds.width - card.clip.x - card.clip.width)}px ${Math.max(0, bounds.height - card.clip.y - card.clip.height)}px ${card.clip.x}px)`,
+                  }
+                : {}),
+            }}
+            aria-label={label(card)}
+            onPointerEnter={(event) => pointer(card, "enter", event)}
+            onPointerLeave={(event) => pointer(card, "leave", event)}
+            onPointerDown={(event) => pointer(card, "down", event)}
+            onPointerMove={(event) => pointer(card, "move", event)}
+            onPointerUp={(event) => pointer(card, "up", event)}
+            onPointerCancel={(event) => pointer(card, "cancel", event)}
+            onLostPointerCapture={(event) => pointer(card, "cancel", event)}
+            onDoubleClick={(event) =>
+              pointer(card, "doubleclick", event as unknown as PointerEvent<HTMLElement>)
+            }
+            onContextMenu={(event) => {
+              event.preventDefault();
+              pointer(card, "contextmenu", event as unknown as PointerEvent<HTMLElement>);
+            }}
+            onWheel={(event) => pointer(card, "wheel", event)}
+          >
+            <LayerErrorBoundary label={label(card)} onError={(error) => fault(card.id, error)}>
+              {unavailable ? (
+                <div className="layer-card-fault" role="status">
+                  {card.reason ?? label(card)}
+                </div>
+              ) : card.renderKind === "web" && web ? (
+                <WidgetFrame
+                  key={`${web.binding.widgetInstanceId}:${web.binding.loadGeneration}:${web.nonce}`}
+                  binding={web.binding}
+                  url={web.url}
+                  nonce={web.nonce}
+                  initialWire={web.initialWire}
+                  client={client}
+                  blocked={editing || card.inputMode !== "interactive"}
+                />
+              ) : (
+                <LayerCardContent
+                  card={card}
+                  request={request}
+                  width={bounds.width}
+                  locale={snapshot.locale}
+                  scaleFactor={snapshot.scaleFactor}
+                  disabled={editing || (!snapshot.overlay && card.inputMode !== "interactive")}
+                  overlay={!!snapshot.overlay}
+                  pinned={snapshot.overlay?.panels.find((p) => p.cardId === card.id)?.pinned}
+                />
+              )}
+            </LayerErrorBoundary>
+          </LayerCardFrame>
+        );
+      })}
       {editing && (
         <LayerEditor
           snapshot={snapshot}

@@ -33,6 +33,7 @@ export function normalizeUpdateSettings(value: unknown): UpdateSettings {
     typeof value.checkIntervalHours === "number" && Number.isFinite(value.checkIntervalHours)
       ? Math.min(24 * 30, Math.max(1, Math.round(value.checkIntervalHours)))
       : defaults.checkIntervalHours;
+  const channel = value.channel === "beta" ? "beta" : "stable";
   return {
     autoCheck: typeof value.autoCheck === "boolean" ? value.autoCheck : defaults.autoCheck,
     autoDownload:
@@ -40,9 +41,8 @@ export function normalizeUpdateSettings(value: unknown): UpdateSettings {
     checkIntervalHours: interval,
     checkSourcePreference: "githubFirst",
     downloadSourcePreference: "githubFirst",
-    channel: value.channel === "beta" ? "beta" : "stable",
-    allowPrerelease:
-      typeof value.allowPrerelease === "boolean" ? value.allowPrerelease : defaults.allowPrerelease,
+    channel,
+    allowPrerelease: channel === "beta",
     lastAutoCheckAt:
       typeof value.lastAutoCheckAt === "string" && value.lastAutoCheckAt
         ? value.lastAutoCheckAt

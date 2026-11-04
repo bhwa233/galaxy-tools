@@ -8,6 +8,7 @@ using System.Security.Principal;
 using System.Security.AccessControl;
 using System.Text;
 using System.Reflection;
+using System.Diagnostics;
 using Spark.Traffic;
 
 namespace Spark.TrafficVerification {
@@ -66,10 +67,30 @@ namespace Spark.TrafficVerification {
         Check(Json.Str(totals.Describe("machine",process,at,at),"runRxBytes")=="123"&&Json.Str(totals.Describe("own:"+user,process,at,at),"runRxBytes")=="123","same-etw-event-counts-once-per-ledger-despite-multiple-machine-leases");
       }
     }
+    static void VerifyProcessActions() {
+      var fixture=Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),"action-fixture-"+Guid.NewGuid().ToString("N")+".exe");
+      File.Copy(Assembly.GetExecutingAssembly().Location,fixture);
+      try { using(var child=Process.Start(new ProcessStartInfo(fixture,"--process-fixture") {UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true})) {
+        try {
+          var identity=ProcessCatalog.Inspect(child.Id);
+          Check(identity!=null&&identity.Created>0&&identity.Sid!=null,"controlled-process-identity");
+          var created=identity.Created;identity.Created--;
+          var rejected=false;try{ProcessActions.Run(identity,"terminate");}catch(InvalidOperationException ex){rejected=ex.Message=="process-identity-changed";}
+          Check(rejected&&!child.HasExited,"stale-creation-time-never-terminates-a-reused-pid");identity.Created=created;
+          rejected=false;try{ProcessActions.Run(identity,"terminate",Process.GetCurrentProcess().Id);}catch(InvalidOperationException ex){rejected=ex.Message=="process-protected";}
+          Check(rejected&&!child.HasExited,"desktop-host-descendants-are-protected");
+          var result=(Dictionary<string,object>)ProcessActions.Run(identity,"terminate");
+          Check(Json.Str(result,"status")=="terminated"&&child.WaitForExit(5000),"explicit-action-terminates-only-the-controlled-process");
+        }finally{if(!child.HasExited){child.StandardInput.Close();Check(child.WaitForExit(5000),"controlled-fixture-graceful-cleanup");}}
+      }
+      }finally{File.Delete(fixture);}
+    }
     static int Main(string[] args) {
       try {
+        if(args.Length==1&&args[0]=="--process-fixture"){Console.ReadLine();return 0;}
         if(args.Length!=1||!Path.IsPathRooted(args[0])||Directory.Exists(args[0]))throw new ArgumentException("fresh-absolute-isolated-root-required");
         Directory.CreateDirectory(args[0]);
+        VerifyProcessActions();
         const string trusted="O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
         CheckAcl(trusted+"(A;OICI;0x1200a9;;;BU)",true,true);
         CheckAcl(trusted+"(A;OICI;0x1200a9;;;AU)",true,true);

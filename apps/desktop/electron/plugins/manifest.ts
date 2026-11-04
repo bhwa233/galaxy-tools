@@ -48,6 +48,7 @@ export function validatePluginMetadata(
   value: unknown,
   environment: HostEnvironment,
   expected: PluginExpectation = {},
+  options: { allowIncompatibleHost?: boolean } = {},
 ): PluginPackageMetadata {
   try {
     if (Buffer.byteLength(JSON.stringify(value)) > 256 * 1024)
@@ -90,7 +91,7 @@ export function validatePluginMetadata(
   }
   if (
     !semver.satisfies(environment.apiVersion, manifest.api) ||
-    !semver.satisfies(environment.version, manifest.host)
+    (!options.allowIncompatibleHost && !semver.satisfies(environment.version, manifest.host))
   ) {
     console.error("plugin-incompatible-debug", {
       environment,
@@ -272,6 +273,7 @@ export function validatePluginDirectory(
   directory: string,
   environment: HostEnvironment,
   expected?: PluginExpectation,
+  options: { allowIncompatibleHost?: boolean } = {},
 ): PluginPackageMetadata {
   const manifestFile = confined(directory, "package.json");
   if (!fs.statSync(manifestFile).isFile() || fs.statSync(manifestFile).size > 256 * 1024) {
@@ -281,6 +283,7 @@ export function validatePluginDirectory(
     JSON.parse(fs.readFileSync(manifestFile, "utf8")),
     environment,
     expected,
+    options,
   );
   resolvePluginEntries(directory, metadata);
   return metadata;

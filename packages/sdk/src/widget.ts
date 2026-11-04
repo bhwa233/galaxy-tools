@@ -67,7 +67,7 @@ export type DeclarativeNode =
   | { type: "button"; label: string; actionId: string; tone: WidgetTone };
 export interface DeclarativeTemplate {
   version: 1;
-  padding: 0 | 4 | 8 | 12 | 16;
+  padding: 0 | 2 | 4 | 8 | 12 | 16;
   background: "card" | "transparent";
   root: DeclarativeNode;
 }

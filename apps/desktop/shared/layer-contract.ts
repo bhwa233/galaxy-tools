@@ -41,8 +41,12 @@ export interface LayerCard {
   transientGeometry?: boolean;
   /** Preview cards are excluded from layout editing and durable instance management. */
   presentationOnly?: boolean;
-  /** Trusted hover content reports its natural height to the host. */
+  /** Trusted declarative content reports its natural height to the host. */
   intrinsicHeight?: boolean;
+  /** Host-owned interaction regions for a reused operation window. */
+  overlayControls?: Rect;
+  overlayPreview?: Rect;
+  hover?: { template: DeclarativeTemplate; size: { width: number; height: number } };
   fullscreenAutoHide?: boolean;
   desktopInteractive?: boolean;
   /** Keeps the source HWND/capture alive while a passive drag projection moves. */
@@ -83,6 +87,8 @@ export interface LayerSnapshot {
   editSession?: string;
   cards: readonly LayerRenderCard[];
   overlay?: DesktopOverlayState;
+  /** A native viewport transition is revealed after this layout is committed. */
+  presentationRevision?: number;
 }
 export interface DesktopOverlayPanel {
   cardId: string;
@@ -95,6 +101,9 @@ export interface DesktopOverlayPanel {
 export interface DesktopOverlayState {
   displayId: string;
   panels: DesktopOverlayPanel[];
+  epoch?: number;
+  host?: boolean;
+  workArea?: Rect;
 }
 export interface LayerPointerEvent {
   cardId: string;
@@ -139,6 +148,7 @@ export interface LayerConsumer {
     cardId: string,
     command: string,
     args: Record<string, unknown>,
+    presentation?: { bounds: Rect },
   ): Promise<unknown> | unknown;
   onDispose?(): Promise<void> | void;
 }
@@ -147,7 +157,7 @@ export interface LayerMutation {
   patch: Partial<Pick<LayerCard, "displayId" | "group" | "bounds" | "order" | "visible">>;
 }
 export type LayoutMutation = readonly LayerMutation[];
-export type LayerClientRequest =
+type OverlayClientRequest = (
   | { type: "overlay-close" }
   | { type: "overlay-settings" }
   | {
@@ -157,6 +167,18 @@ export type LayerClientRequest =
       value?: boolean;
     }
   | { type: "overlay-layout"; cardId: string; bounds: Rect }
+  | { type: "overlay-preview"; cardId: string; visible: boolean; region?: "menu" | "preview" }
+  | {
+      type: "overlay-pointer";
+      cardId: string;
+      pointerId: number;
+      phase: "start" | "move" | "end" | "cancel";
+      clientPoint?: { x: number; y: number };
+    }
+) & { overlayEpoch?: number };
+export type LayerClientRequest =
+  | OverlayClientRequest
+  | { type: "presentation-committed"; revision: number }
   | { type: "ready" }
   | { type: "heartbeat"; lastRevision: number }
   | { type: "content-height"; cardId: string; height: number }

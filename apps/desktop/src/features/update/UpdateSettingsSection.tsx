@@ -245,38 +245,19 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
     void runAction("check", async () => {
       const result = await checkForUpdates(true);
       if (!aliveRef.current) return;
+      const next = await getUpdateStatus();
+      if (!aliveRef.current) return;
+      setStatus(next);
 
       if (result.status === "failed") {
-        const next = await getUpdateStatus().catch(() => null);
-        if (!aliveRef.current) return;
-        if (next) setStatus(next);
         setActionError(
-          next?.lastError ?? {
+          next.lastError ?? {
             message: t("settings.update.error.checkTaskJoinFailed", {
               defaultValue: "检查更新任务执行失败",
             }),
           },
         );
-        return;
       }
-
-      setStatus((current) => {
-        const base: UpdateState = current ?? {
-          status: "idle",
-          currentVersion: result.currentVersion,
-          channel: settingsRef.current?.channel ?? "stable",
-        };
-        return {
-          ...base,
-          status: result.status === "available" ? "available" : "idle",
-          currentVersion: result.currentVersion,
-          latestVersion: result.status === "available" ? (result.latestVersion ?? null) : null,
-          checkedAt: new Date().toISOString(),
-          downloadedAt: null,
-          assetPath: null,
-          lastError: null,
-        };
-      });
     });
   };
 
@@ -391,6 +372,10 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
       : status?.status === "failed"
         ? getUpdateErrorMessage(status.lastError ?? null, t)
         : null;
+  const operationBusy =
+    status !== null &&
+    ["checking", "downloading", "installing", "installScheduled"].includes(status.status);
+  const actionsDisabled = pendingAction !== null || savingSettings || operationBusy;
   const downloadPercent = (() => {
     if (status?.status !== "downloading" || !progress) return null;
     if (typeof progress.percent === "number" && Number.isFinite(progress.percent)) {
@@ -472,14 +457,16 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
               <span className="text-[12px] text-ink-soft">
                 {translateOptional(t, "settings.update.channelLabel", "更新通道")}
               </span>
-              <SlidingButtonGroup
-                options={channelOptions}
-                value={settings.channel}
-                onChange={(value) => {
-                  void applySettings({ channel: value });
-                }}
-                className="min-w-[128px]"
-              />
+              <fieldset disabled={actionsDisabled} className="contents">
+                <SlidingButtonGroup
+                  options={channelOptions}
+                  value={settings.channel}
+                  onChange={(value) => {
+                    void applySettings({ channel: value });
+                  }}
+                  className="min-w-[128px]"
+                />
+              </fieldset>
             </div>
           </div>
         ) : (
@@ -490,7 +477,7 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" disabled={pendingAction !== null} onClick={handleCheck}>
+        <Button variant="outline" size="sm" disabled={actionsDisabled} onClick={handleCheck}>
           {pendingAction === "check"
             ? t("settings.update.checking", { defaultValue: "正在检查..." })
             : t("settings.update.check", { defaultValue: "检查更新" })}
@@ -532,7 +519,7 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
               defaultValue: "发现新版本 {{version}}",
             })}
           </p>
-          <Button size="sm" disabled={pendingAction !== null} onClick={handleDownload}>
+          <Button size="sm" disabled={actionsDisabled} onClick={handleDownload}>
             {pendingAction === "download"
               ? t("settings.update.busy", { defaultValue: "处理中" })
               : t("settings.update.download", { defaultValue: "下载更新" })}
@@ -548,7 +535,7 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
               defaultValue: "版本 {{version}} 已下载完成",
             })}
           </p>
-          <Button size="sm" disabled={pendingAction !== null} onClick={handleInstall}>
+          <Button size="sm" disabled={actionsDisabled} onClick={handleInstall}>
             {pendingAction === "install"
               ? t("settings.update.installPreparing", {
                   defaultValue: "正在准备退出应用并安装更新...",

@@ -14,6 +14,8 @@ import type {
   TrafficProcessInstance,
   TrafficProcessRow,
   TrafficProcessStatus,
+  TrafficProcessAction,
+  TrafficProcessActionResult,
   TrafficScope,
 } from "./traffic-contract.js";
 import { trafficCoverage as coverage, trafficHistoryCoverage } from "./traffic-quality.js";
@@ -487,12 +489,15 @@ export class TrafficProcesses {
     appId: string,
     scope: TrafficScope,
     signal?: AbortSignal,
+    instanceIds?: string[],
   ): Promise<TrafficConnectionsResult> {
     if (scope !== this.current) throw new Error("Process scope changed; select the program again");
     const group = this.groups.find((candidate) => candidate.appId === appId);
     if (!group) throw new Error("The process instance is no longer available");
     const rows: TrafficConnectionsResult["rows"] = [];
-    for (const instance of group.instances)
+    for (const instance of group.instances.filter(
+      (candidate) => !instanceIds || instanceIds.includes(candidate.id),
+    ))
       for (const kind of ["tcp", "udp-local", "udp-observed"] as const) {
         const raw = await this.pages(
           "connections",
@@ -518,6 +523,63 @@ export class TrafficProcesses {
       coverage: "complete",
       message: "UDP 本地端点和 ETW 观测流分别展示；观测流不等同于持久连接",
     };
+  }
+  async action(
+    appId: string,
+    scope: TrafficScope,
+    instanceIds: string[],
+    action: TrafficProcessAction,
+    signal?: AbortSignal,
+  ): Promise<TrafficProcessActionResult> {
+    if (scope !== this.current) throw new Error("范围已变化，请重新选择进程。");
+    const group = this.groups.find((row) => row.appId === appId);
+    if (!group) throw new Error("程序已退出，请刷新列表。");
+    const result: TrafficProcessActionResult = { results: [] };
+    const errors: Record<string, string> = {
+      "process-exited": "进程已退出",
+      "process-identity-changed": "进程身份已变化，操作已取消",
+      "process-identity-unavailable": "无法确认进程身份",
+      "process-access-denied": "权限不足，无法操作此进程",
+      "process-protected": "不能结束本应用、采集服务或受保护的系统进程",
+      "process-file-unavailable": "程序文件不存在或路径不可用",
+      "process-shell-failed": "Windows 无法打开此文件操作",
+      "process-shell-timeout": "Windows 窗口打开结果未确认，请检查桌面",
+      "process-not-visible": "此进程不在当前授权范围内",
+    };
+    // The caller supplies the IDs selected when the menu/confirmation opened.
+    // Never widen this set to a later refresh's newly created process instances.
+    for (const id of instanceIds) {
+      signal?.throwIfAborted();
+      if (!group.instances.some((instance) => instance.id === id)) {
+        result.results.push({ instanceId: id, status: "exited" });
+        continue;
+      }
+      try {
+        const reply = await this.call(
+          "process.action",
+          {
+            scope,
+            processInstanceId: id,
+            action,
+            confirmed: action === "terminate",
+          },
+          signal,
+        );
+        if (reply.status !== "opened" && reply.status !== "terminated")
+          throw new Error("操作结果未确认，请刷新列表。");
+        result.results.push({ instanceId: id, status: reply.status });
+      } catch (error) {
+        signal?.throwIfAborted();
+        const raw = error instanceof Error ? error.message : String(error);
+        const code = Object.keys(errors).find((key) => raw.includes(key));
+        result.results.push({
+          instanceId: id,
+          status: code === "process-exited" ? "exited" : "failed",
+          message: code ? errors[code] : raw,
+        });
+      }
+    }
+    return result;
   }
   private async invalidate() {
     this.generation++;

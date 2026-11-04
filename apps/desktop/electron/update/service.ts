@@ -7,7 +7,6 @@ import type { AppUpdater, CancellationToken, UpdateInfo } from "electron-updater
 const electronUpdater = createRequire(import.meta.url)(
   "electron-updater",
 ) as typeof import("electron-updater");
-const autoUpdater = electronUpdater.autoUpdater;
 import type {
   InstallKind,
   UpdateCheckResult,
@@ -28,6 +27,7 @@ export interface UpdateServiceOptions {
   emit: (name: string, payload?: unknown) => void;
   /** Runs the save barrier and calls `apply` only after every window confirmed saving. */
   requestInstall: (apply: () => void) => Promise<void>;
+  updater?: AppUpdater;
 }
 
 const CHECKING_EVENT = "update://checking";
@@ -53,6 +53,14 @@ function releaseNotesText(info: UpdateInfo): string | null {
   return notes
     .map((note) => (note.version ? `${note.version}\n${note.note ?? ""}` : (note.note ?? "")))
     .join("\n\n");
+}
+
+function updateKey(info: UpdateInfo): string | undefined {
+  if (!info.files.length || info.files.some((file) => !file.sha512)) return;
+  return JSON.stringify([
+    info.version,
+    info.files.map(({ url, sha512, size }) => [url, sha512, size]),
+  ]);
 }
 
 function messageOf(error: unknown): string {
@@ -93,11 +101,12 @@ export class UpdateService {
   private downloadToken?: CancellationToken;
   private downloadCancelled = false;
   private timer?: ReturnType<typeof setTimeout>;
+  private candidateKey?: string;
 
   constructor(private readonly options: UpdateServiceOptions) {
     this.store = new UpdateSettingsStore(options.configDir);
     this.settings = this.store.value;
-    this.updater = autoUpdater;
+    this.updater = options.updater ?? electronUpdater.autoUpdater;
     this.state = {
       status: "idle",
       currentVersion: options.hostVersion,
@@ -116,8 +125,6 @@ export class UpdateService {
       debug: (message: string) => console.debug("[update]", message),
     };
     this.updater.on("error", this.onUpdaterError);
-    this.updater.on("update-available", this.onAvailable);
-    this.updater.on("update-not-available", this.onNotAvailable);
   }
 
   start(): void {
@@ -130,8 +137,6 @@ export class UpdateService {
     this.downloadToken?.cancel();
     this.downloadToken = undefined;
     this.updater.off("error", this.onUpdaterError);
-    this.updater.off("update-available", this.onAvailable);
-    this.updater.off("update-not-available", this.onNotAvailable);
   }
 
   status(): UpdateState {
@@ -144,23 +149,44 @@ export class UpdateService {
 
   settingsSave(input: UpdateSettings): UpdateSettings {
     const next = normalizeUpdateSettings(input);
-    this.settings = next;
+    const channelChanged = next.channel !== this.settings.channel;
+    if (channelChanged && this.busy())
+      throw new AppError("updateAlreadyRunning", "更新操作进行中，请完成后再切换通道");
     this.store.save(next);
+    this.settings = next;
     this.applyChannel();
+    if (channelChanged) {
+      this.candidateKey = undefined;
+      this.state = {
+        status: "idle",
+        currentVersion: this.options.hostVersion,
+        channel: next.channel,
+        installKind: this.state.installKind,
+        installMode: null,
+        lastError: null,
+      };
+      this.emit(CHECKED_EVENT);
+    }
     this.schedule();
     return { ...next };
   }
 
   async check(manual: boolean): Promise<UpdateCheckResult> {
     if (this.checkTask) return this.checkTask;
+    if (this.busy()) throw new AppError("updateAlreadyRunning", "更新操作进行中，请稍后再检查");
     this.checkTask = this.runCheck(manual).finally(() => {
       this.checkTask = undefined;
+      if (this.state.status === "available" && this.settings.autoDownload)
+        void this.download("github").catch((error) =>
+          console.error("[update] auto-download", error),
+        );
     });
     return this.checkTask;
   }
 
   async download(source?: "mirrorChyan" | "github"): Promise<UpdateDownloadResult> {
     if (this.downloadTask) return this.downloadTask;
+    if (this.busy()) throw new AppError("updateAlreadyRunning", "更新操作进行中，请稍后再下载");
     if (this.state.status !== "available" && this.state.status !== "downloaded")
       throw new AppError("updateDownloadNotReady", "请先检查更新");
     if (source === "mirrorChyan")
@@ -172,6 +198,7 @@ export class UpdateService {
   }
 
   async install(): Promise<UpdateInstallResult> {
+    if (this.busy()) throw new AppError("updateAlreadyRunning", "更新操作进行中，请稍后再安装");
     if (this.state.status !== "downloaded")
       throw new AppError("updateDownloadNotReady", "请先下载更新");
     const previous = this.state;
@@ -231,24 +258,29 @@ export class UpdateService {
       this.emit(manual ? ERROR_EVENT : AUTO_CHECK_ERROR_EVENT);
       return this.failedCheck();
     }
-    this.state = { ...this.state, status: "checking", lastError: null };
+    const previous = this.state;
+    this.state = { ...previous, status: "checking", lastError: null };
     this.emit(CHECKING_EVENT);
     try {
       const result = await this.updater.checkForUpdates();
       const info = result?.updateInfo;
-      const available = info ? info.version !== this.options.hostVersion : false;
+      const available = result?.isUpdateAvailable === true;
+      const key = available && info ? updateKey(info) : undefined;
+      const downloaded =
+        previous.status === "downloaded" && key !== undefined && key === this.candidateKey;
       const checkedAt = new Date().toISOString();
+      this.candidateKey = key;
       this.state = {
         ...this.state,
-        status: available ? "available" : "idle",
+        status: downloaded ? "downloaded" : available ? "available" : "idle",
         latestVersion: info?.version ?? null,
         checkedAt,
         assetName: info ? path.basename(info.files[0]?.url ?? "") || null : null,
-        assetPath: null,
+        assetPath: downloaded ? previous.assetPath : null,
         assetSha256: null,
         assetSize: info?.files[0]?.size ?? null,
         assetUrl: info?.files[0]?.url ?? null,
-        downloadedAt: null,
+        downloadedAt: downloaded ? previous.downloadedAt : null,
         lastError: null,
       };
       if (!manual) {
@@ -260,10 +292,6 @@ export class UpdateService {
         }
       }
       this.emit(CHECKED_EVENT);
-      if (available && this.settings.autoDownload)
-        void this.download("github").catch((error) =>
-          console.error("[update] auto-download", error),
-        );
       return {
         status: available ? "available" : "notAvailable",
         currentVersion: this.options.hostVersion,
@@ -271,16 +299,15 @@ export class UpdateService {
         releaseNotes: info ? releaseNotesText(info) : null,
         mandatory: false,
         canDownloadFromMirrorChyan: false,
-        canDownloadFromGithub: true,
-        recommendedSource: "github",
+        canDownloadFromGithub: available,
+        recommendedSource: available ? "github" : null,
         assetUrl: info?.files[0]?.url ?? null,
       };
     } catch (error) {
       const payload = this.errorPayload(error, "updateCheckInterrupted");
       this.state = {
-        ...this.state,
-        status: "failed",
-        latestVersion: null,
+        ...previous,
+        status: previous.status === "downloaded" ? "downloaded" : "failed",
         checkedAt: new Date().toISOString(),
         lastError: payload,
       };
@@ -354,7 +381,7 @@ export class UpdateService {
   }
 
   private async autoCheck(): Promise<void> {
-    if (this.checkTask || this.state.status === "downloading") return;
+    if (this.busy() || this.state.status === "downloaded") return;
     try {
       await this.check(false);
     } catch (error) {
@@ -363,11 +390,19 @@ export class UpdateService {
   }
 
   private applyChannel(): void {
-    // Release assets are published as latest.yml; beta is opted into through
-    // allowPrerelease rather than a separate update channel file.
-    this.updater.channel = "latest";
-    this.updater.allowPrerelease =
-      this.settings.channel === "beta" || this.settings.allowPrerelease;
+    this.updater.channel = this.settings.channel === "beta" ? "beta" : "latest";
+    this.updater.allowPrerelease = this.settings.channel === "beta";
+    // Setting channel enables downgrades in electron-updater. Product policy
+    // forbids them even when returning from beta to the stable channel.
+    this.updater.allowDowngrade = false;
+  }
+
+  private busy(): boolean {
+    return (
+      !!this.checkTask ||
+      !!this.downloadTask ||
+      ["checking", "downloading", "installing", "installScheduled"].includes(this.state.status)
+    );
   }
 
   private unsupportedReason(): { code: string; message: string } | null {
@@ -419,14 +454,6 @@ export class UpdateService {
       status: this.state.status === "downloading" ? "failed" : this.state.status,
       lastError: this.errorPayload(error, "updateDownloadNetwork"),
     };
-  };
-
-  private onAvailable = (info: UpdateInfo): void => {
-    if (!this.state.latestVersion) this.state = { ...this.state, latestVersion: info.version };
-  };
-
-  private onNotAvailable = (): void => {
-    if (this.state.status === "checking") this.state = { ...this.state, status: "idle" };
   };
 }
 

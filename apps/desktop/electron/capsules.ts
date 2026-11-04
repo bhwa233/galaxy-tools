@@ -267,7 +267,9 @@ export class Capsules {
       this.releaseDesktopLayer = layer.register({
         id: "trusted-notes",
         snapshot: () => this.layerCards(),
-        onInvoke: (cardId, command, args) => this.handleLayer(cardId, command, args),
+        onInvoke: (cardId, command, args, presentation) =>
+          this.handleLayer(cardId, command, args, presentation),
+        onPointersCancelled: () => this.hidePreview(),
       });
     await this.refresh();
     {
@@ -349,6 +351,7 @@ export class Capsules {
     cardId: string,
     command: string,
     args: Record<string, unknown>,
+    presentation?: { bounds: Rect },
   ): Promise<unknown> {
     const surface = [...this.surfaces.values()].find(
       (entry) =>
@@ -374,6 +377,24 @@ export class Capsules {
     )
       throw new AppError("permissionDenied", "不属于此桌面便签的操作");
     if (command === "capsule_drag_end" && this.drag?.ownerCard !== cardId) return;
+    if (command === "capsule_hover" && presentation) {
+      // The trusted desktop host supplies the bar's anchor; never accept a
+      // renderer-provided screen position or alter the note's real placement.
+      return this.handleSurface(
+        {
+          ...surface,
+          bounds: presentation.bounds,
+          snapshot: {
+            ...surface.snapshot,
+            items: [{ ...item, clip: undefined, rect: { ...presentation.bounds, x: 0, y: 0 } }],
+          },
+        },
+        surface.win,
+        command,
+        args,
+        cardId,
+      );
+    }
     return this.handleSurface(surface, surface.win, command, args, cardId);
   }
   private queue(key: string) {

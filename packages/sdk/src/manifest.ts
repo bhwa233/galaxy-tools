@@ -198,7 +198,7 @@ const nativeSchema = z.strictObject({
 });
 
 const widgetSizeSchema = z.strictObject({
-  width: z.number().int().min(80).max(1200),
+  width: z.number().int().min(32).max(1200),
   height: z.number().int().min(32).max(900),
 });
 const widgetValueSchema = z.union([
@@ -283,6 +283,11 @@ export const pluginWidgetSchema = z
     z.strictObject({
       ...widgetCommon,
       kind: z.literal("declarative"),
+      // Accept earlier installed manifests so they can be replaced safely.
+      // The host ignores the legacy width hint and uses the declared width.
+      contentWidth: z.boolean().optional(),
+      // Trusted host content may choose its height within minSize/maxSize.
+      contentHeight: z.boolean().optional(),
       template: packagePath
         .refine((v) => v.startsWith("widgets/"), "Widget template must live under widgets/")
         .refine((v) => /\.json$/i.test(v), "Widget template must be a .json file"),
@@ -310,6 +315,11 @@ export const pluginWidgetSchema = z
       ctx.addIssue({ code: "custom", path, message });
     const min = w.minSize ?? { width: 80, height: 32 };
     const max = w.maxSize ?? { width: 1200, height: 900 };
+    if (
+      (w.kind !== "declarative" || !w.contentWidth) &&
+      [w.size, w.minSize, w.maxSize].some((size) => size && size.width < 80)
+    )
+      issue(["minSize"], "Only legacy content-width widgets can be narrower than 80");
     if (min.width > max.width || min.height > max.height)
       issue(["minSize"], "Widget minimum size cannot exceed its maximum size");
     if (

@@ -124,6 +124,7 @@ export class LayerWindow {
   private hasShape = false;
   private wanted = false;
   private disposed = false;
+  private presentationPending = false;
   private suppressed = new Set<"fullscreen" | "locked" | "suspend" | "user">();
   private fullscreen: readonly Rect[] = [];
   private loadTimer?: ReturnType<typeof setTimeout>;
@@ -335,6 +336,24 @@ export class LayerWindow {
     this.appliedShape = undefined;
     this.appliedTopmost = undefined;
   }
+  /** Preserve the HWND/WebContents while replacing an operation viewport. */
+  beginPresentation(): void {
+    if (this.disposed) return;
+    this.presentationPending = true;
+    this.hideNative();
+    if (process.platform === "win32" || process.platform === "linux") this.win.setShape([]);
+    this.invalidateGeometry();
+  }
+  completePresentation(): void {
+    this.presentationPending = false;
+    if (this.wanted) this.show();
+  }
+  setPresentation(group: LayerGroup, inputMode: LayerInputMode): void {
+    if (this.options.group === group && this.options.inputMode === inputMode) return;
+    this.options.group = group;
+    this.options.inputMode = inputMode;
+    this.applyZOrder(true);
+  }
   show(): void {
     this.wanted = true;
     if (
@@ -399,6 +418,7 @@ export class LayerWindow {
   }
   private isHidden(): boolean {
     return (
+      this.presentationPending ||
       [...this.suppressed].some((reason) => reason !== "fullscreen") ||
       (this.options.fullscreenBehavior !== "lower" &&
         this.options.fullscreenBehavior !== "keep" &&

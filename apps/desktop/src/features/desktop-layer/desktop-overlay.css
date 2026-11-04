@@ -1,12 +1,4 @@
 .desktop-overlay {
-  --foreground: #f1f3f5;
-  --muted-foreground: #b4bac1;
-  --card: #25292e;
-  --card-foreground: #f1f3f5;
-  --border: #464a51;
-  --muted: #343940;
-  --accent: #424a54;
-  --accent-foreground: #ffffff;
   position: fixed;
   inset: 0;
   overflow: hidden;
@@ -74,26 +66,45 @@
 }
 .desktop-overlay-panel {
   position: absolute;
-  min-width: 200px;
-  border: 1px solid #4c5158;
-  border-radius: 11px;
-  background: #25292e;
-  color: #f1f3f5;
-  box-shadow: 0 10px 32px #0006;
+}
+.desktop-overlay-panel::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  width: 100%;
+  height: 6px;
 }
 .desktop-overlay-panel-moving {
   cursor: grabbing;
-  box-shadow: 0 15px 45px #0009;
   will-change: transform;
 }
 .desktop-overlay-panel-header {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
   display: flex;
+  width: max-content;
+  max-width: calc(100vw - 24px);
   align-items: center;
   gap: 3px;
-  height: 36px;
-  padding: 0 6px 0 12px;
+  height: 32px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 16px #0003;
+  opacity: 0;
+  pointer-events: none;
   cursor: grab;
   touch-action: none;
+}
+.desktop-overlay-panel:hover .desktop-overlay-panel-header,
+.desktop-overlay-panel:focus-within .desktop-overlay-panel-header,
+.desktop-overlay-panel[data-controls-visible] .desktop-overlay-panel-header {
+  opacity: 1;
+  pointer-events: auto;
 }
 .desktop-overlay-panel-header > svg {
   width: 15px;
@@ -103,6 +114,7 @@
 }
 .desktop-overlay-panel-title {
   min-width: 0;
+  max-width: 100px;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -117,14 +129,14 @@
 .desktop-overlay-panel-header button {
   width: 26px;
   height: 26px;
-  color: #e1e5ea;
+  color: var(--popover-foreground);
 }
 .desktop-overlay-panel-header button:hover {
-  background: #484e57;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 .desktop-overlay-panel-header button[aria-pressed="true"] {
-  color: #b1dfbd;
+  color: var(--primary);
 }
 .desktop-overlay-panel-header button svg {
   width: 14px;
@@ -132,61 +144,9 @@
 }
 .desktop-overlay-panel-content {
   position: relative;
-  overflow: hidden;
-  border-radius: 0 0 10px 10px;
-}
-.desktop-overlay-panel-traffic {
-  padding: 8px 12px;
-}
-.desktop-overlay-panel-traffic .declarative-card {
-  border: 0;
-  background: transparent;
-}
-.desktop-overlay-panel-traffic .declarative-card > .layer-stack {
-  justify-content: center;
-}
-.desktop-overlay-panel-traffic .layer-text {
-  font-size: 18px !important;
-  font-variant-numeric: tabular-nums;
-}
-.desktop-overlay-panel-traffic .layer-stack {
-  gap: 8px !important;
-}
-.desktop-overlay-details {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  color: #c5cbd2;
-}
-.desktop-overlay-note {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  width: 100%;
   height: 100%;
-  gap: 10px;
-  padding: 18px;
-}
-.desktop-overlay-note > svg {
-  width: 22px;
-  height: 22px;
-  color: #d8c69b;
-}
-.desktop-overlay-note h2 {
-  font-size: 15px;
-  font-weight: 600;
-}
-.desktop-overlay-note p {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #c6ccd2;
-}
-.desktop-overlay-note button {
-  flex-shrink: 0;
+  overflow: hidden;
 }
 .desktop-overlay-empty {
   position: absolute;
@@ -260,54 +220,32 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.desktop-overlay-ranking {
+.desktop-overlay-preview {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
   z-index: 80;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  min-width: 360px;
-  max-width: calc(100vw - 40px);
-  padding: 14px;
-  border: 1px solid #555d66;
-  border-radius: 10px;
-  background: #252a30;
-  box-shadow: 0 8px 28px #0006;
-  pointer-events: none;
+  box-shadow: 0 8px 28px #0003;
 }
-.desktop-overlay-ranking-above {
+.desktop-overlay-preview > .declarative-card {
+  max-height: inherit;
+}
+.desktop-overlay-preview::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 0;
+  width: 100%;
+  height: 8px;
+}
+.desktop-overlay-preview-above {
   top: auto;
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 44px);
 }
-.desktop-overlay-ranking h3 {
-  margin-bottom: 8px;
-  font-size: 11px;
-  color: #bac3ce;
-}
-.desktop-overlay-ranking p {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-  padding: 4px 0;
-  font-size: 11px;
-}
-.desktop-overlay-ranking p > span {
-  max-width: 100px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.desktop-overlay-ranking strong {
-  white-space: nowrap;
-  font-weight: 550;
-  color: #c6e1d0;
-}
-.desktop-overlay-ranking-empty {
-  color: #8d99a7;
+.desktop-overlay-preview-above::before {
+  top: auto;
+  bottom: -44px;
+  height: 44px;
 }
 @media (max-width: 700px) {
   .desktop-overlay-brand span {

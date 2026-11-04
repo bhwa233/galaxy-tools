@@ -30,6 +30,14 @@ export interface TrafficSnapshot {
 
 export type TrafficScope = "own" | "machine";
 export type TrafficCategory = "application" | "system" | "unknown";
+export type TrafficProcessAction = "reveal" | "properties" | "terminate";
+export interface TrafficProcessActionResult {
+  results: {
+    instanceId: string;
+    status: "opened" | "terminated" | "exited" | "failed";
+    message?: string;
+  }[];
+}
 export interface TrafficProcessInstance {
   id: string;
   pid: number;

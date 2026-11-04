@@ -25,6 +25,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "electron": "45.1.0",
+    "lucide-react": "1.64.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "typescript": "7.0.2",
@@ -85,6 +86,13 @@
       {
         "id": "snapshot",
         "title": "读取网卡流量",
+        "launcher": {
+          "role": "hidden"
+        }
+      },
+      {
+        "id": "process.action",
+        "title": "操作选中的进程",
         "launcher": {
           "role": "hidden"
         }
@@ -172,6 +180,7 @@
         "hud": {
           "kind": "declarative",
           "template": "widgets/hud.json",
+          "contentHeight": true,
           "title": "桌面流量窗",
           "translations": {
             "en-US": {
@@ -179,15 +188,15 @@
             }
           },
           "size": {
-            "width": 120,
+            "width": 110,
             "height": 52
           },
           "minSize": {
-            "width": 120,
-            "height": 52
+            "width": 110,
+            "height": 32
           },
           "maxSize": {
-            "width": 120,
+            "width": 110,
             "height": 52
           },
           "resizable": false,

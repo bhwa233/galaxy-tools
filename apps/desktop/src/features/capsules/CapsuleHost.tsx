@@ -39,7 +39,8 @@ function CapsuleMark({ expanded }: { expanded: boolean }) {
 export function CapsuleHost({
   snapshot,
   request = invoke,
-}: { snapshot?: CapsuleSnapshot; request?: typeof invoke } = {}) {
+  layoutInteractive = true,
+}: { snapshot?: CapsuleSnapshot; request?: typeof invoke; layoutInteractive?: boolean } = {}) {
   const { t } = useTranslation();
   const [liveState, setState] = useState<CapsuleSnapshot>();
   const state = snapshot ?? liveState;
@@ -75,6 +76,7 @@ export function CapsuleHost({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const move = (event: PointerEvent<HTMLButtonElement>, item: CapsuleItem) => {
+    if (!layoutInteractive) return;
     const current = gesture.current;
     if (!current || current.pointerId !== event.pointerId || current.dragging) return;
     if (Math.hypot(event.clientX - current.x, event.clientY - current.y) < 6) return;
@@ -126,6 +128,7 @@ export function CapsuleHost({
     <div
       className={`capsule-host capsule-${state.kind} capsule-${state.edge ?? "free"}`}
       onWheel={(e) =>
+        layoutInteractive &&
         run("capsule_scroll", {
           delta:
             state.edge === "top" && Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY,

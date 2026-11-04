@@ -85,7 +85,14 @@ const nodeSchema = z.discriminatedUnion("type", [
 ]);
 const templateSchema = z.strictObject({
   version: z.literal(1),
-  padding: z.union([z.literal(0), z.literal(4), z.literal(8), z.literal(12), z.literal(16)]),
+  padding: z.union([
+    z.literal(0),
+    z.literal(2),
+    z.literal(4),
+    z.literal(8),
+    z.literal(12),
+    z.literal(16),
+  ]),
   background: z.enum(["card", "transparent"]),
   root: z.unknown(),
 });

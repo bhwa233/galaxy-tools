@@ -64,4 +64,22 @@ test("live application totals count each run once and retain exited-member bytes
   current = processes.snapshot().processes;
   expect(current[0]!.runRxBytes).toBe("9007199254741010");
   expect(current[0]!.runTxBytes).toBe("12");
+  const selected = current[0]!;
+  query.mockClear();
+  query.mockImplementation(async (activation) => {
+    if (activation.parameters.command === "process.action") return { status: "terminated" };
+    return {};
+  });
+  // A child disappeared while confirmation was open. The current group must
+  // not widen the captured selection to its other/newly refreshed children.
+  const result = await processes.action(selected.appId, "own", ["2", "1"], "terminate");
+  expect(result.results.map((outcome) => outcome.status)).toEqual(["exited", "terminated"]);
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(query.mock.calls[0]![0].parameters).toMatchObject({
+    processInstanceId: "1",
+    confirmed: true,
+  });
+  await expect(processes.action(selected.appId, "machine", ["1"], "terminate")).rejects.toThrow(
+    /范围/,
+  );
 });

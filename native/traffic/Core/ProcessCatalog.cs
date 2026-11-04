@@ -88,7 +88,10 @@ namespace Spark.Traffic {
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
     internal static ProcessIdentity ReadProcess(int pid, string boot) {
       var process = OpenProcess(0x1000, false, pid); if (process == IntPtr.Zero) return null;
-      try {
+      try { return ReadProcessHandle(process,pid,boot); }
+      finally { CloseHandle(process); }
+    }
+    internal static ProcessIdentity ReadProcessHandle(IntPtr process,int pid,string boot) {
         if (!GetProcessTimes(process, out var created, out _, out _, out _)) return null;
         var path = new StringBuilder(32768); var length = path.Capacity;
         var image = QueryFullProcessImageName(process, 0, path, ref length) ? path.ToString() : null;
@@ -97,7 +100,6 @@ namespace Spark.Traffic {
           try { using (var identity = new WindowsIdentity(token)) sid = identity.User?.Value; } finally { CloseHandle(token); }
         }
         return new ProcessIdentity { Id = boot + ":" + pid + ":" + created, Boot = boot, Pid = pid, Created = created, Start = DateTime.FromFileTimeUtc(created), Sid = sid, Path = image, Name = image == null ? "Process " + pid : System.IO.Path.GetFileName(image) };
-      } finally { CloseHandle(process); }
     }
   }
 }

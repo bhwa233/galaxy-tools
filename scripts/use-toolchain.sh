@@ -20,4 +20,13 @@ if test "$(node --version)" != "v$_spark_node" || test "$(pnpm --version)" != "$
   unset _spark_repo _spark_node _spark_pnpm _spark_local _spark_previous_path
   return 1
 fi
-unset _spark_repo _spark_node _spark_pnpm _spark_local _spark_previous_path
+# Native traffic uses a .NET SDK; a runtime-only system installation cannot
+# restore/build it. Reuse an existing portable SDK without changing the system.
+if test -z "$(dotnet --list-sdks 2>/dev/null)"; then
+  _spark_dotnet="$(printf '%s\n' "$_spark_local"/dotnet-sdk-* | sort -V | tail -n 1)"
+  if test -x "$_spark_dotnet/dotnet.exe"; then
+    export PATH="$_spark_dotnet:$PATH"
+    export DOTNET_ROOT="$(cygpath -w "$_spark_dotnet")"
+  fi
+fi
+unset _spark_repo _spark_node _spark_pnpm _spark_local _spark_previous_path _spark_dotnet

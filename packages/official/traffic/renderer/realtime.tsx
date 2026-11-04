@@ -25,6 +25,8 @@ import {
   TrafficSearch,
   categoryLabels,
 } from "./traffic-ui";
+import { ProcessRow, type ProcessSelection } from "./process-actions";
+import type { TrafficProcessAction, TrafficScope } from "../traffic-contract";
 
 type Sort = "name" | "category" | "rx" | "tx" | "runRx" | "runTx" | "connections";
 const sortValues = {
@@ -41,10 +43,12 @@ export function RealtimeView({
   state,
   active,
   onConnections,
+  onAction,
 }: {
   state?: TrafficState;
   active: boolean;
-  onConnections: (row: TrafficProcessRow) => void;
+  onConnections: (selection: ProcessSelection) => void;
+  onAction: (selection: ProcessSelection, action: TrafficProcessAction) => void;
 }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<TrafficCategory | "all">("all");
@@ -53,11 +57,18 @@ export function RealtimeView({
   const [ascending, setAscending] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<string[]>([]);
   const previousSort = useRef("");
   const freezeOrder =
-    hovered || focused || Boolean(state?.processes.some((row) => expanded.has(row.id)));
+    hovered || focused || menuOpen || Boolean(state?.processes.some((row) => expanded.has(row.id)));
+  const actions = {
+    scope: state?.process.scope ?? ("own" as TrafficScope),
+    onConnections,
+    onAction,
+    onMenuOpenChange: setMenuOpen,
+  };
   const rows = useMemo(() => {
     const search = query.trim().toLocaleLowerCase();
     return (state?.processes ?? [])
@@ -209,7 +220,7 @@ export function RealtimeView({
           <TableBody>
             {orderedRows.map((row) => (
               <Fragment key={row.id}>
-                <TableRow>
+                <ProcessRow row={row} {...actions}>
                   <TableCell>
                     <ProgramName
                       name={row.name}
@@ -266,15 +277,10 @@ export function RealtimeView({
                   >
                     {row.tcpConnections ?? "—"}
                   </TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="xs" onClick={() => onConnections(row)}>
-                      连接
-                    </Button>
-                  </TableCell>
-                </TableRow>
+                </ProcessRow>
                 {expanded.has(row.id) &&
                   row.instances.map((instance) => (
-                    <TableRow key={instance.id} className="traffic-instance">
+                    <ProcessRow key={instance.id} row={row} instance={instance} {...actions}>
                       <TableCell title={instance.executable}>
                         <span className="traffic-instance-label">
                           <span>{instance.name || row.name}</span>
@@ -297,8 +303,7 @@ export function RealtimeView({
                       <TableCell className="traffic-numeric">
                         {instance.tcpConnections ?? "—"}
                       </TableCell>
-                      <TableCell />
-                    </TableRow>
+                    </ProcessRow>
                   ))}
               </Fragment>
             ))}

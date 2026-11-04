@@ -322,7 +322,8 @@ compiler.on("exit", async (code) => {
         windowsHide: true,
       });
       buildPlugins();
-      if (!electron.connected) throw new Error("The application's development IPC channel is closed");
+      if (!electron.connected)
+        throw new Error("The application's development IPC channel is closed");
       restarting = true;
       electron.send("spark233-dev-reload", (error) => {
         if (!error) return;

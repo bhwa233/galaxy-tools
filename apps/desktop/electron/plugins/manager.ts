@@ -547,13 +547,21 @@ export class PluginManager {
     if (canonical(expected) !== canonical(record.directory))
       throw new AppError("invalidPluginState", "插件代码目录与版本身份不一致");
   }
-  private metadata(record: PluginInstallation): PluginPackageMetadata {
+  private metadata(
+    record: PluginInstallation,
+    allowIncompatibleHost = false,
+  ): PluginPackageMetadata {
     this.assertDirectory(record);
-    const metadata = validatePluginDirectory(record.directory, this.options.environment, {
-      name: record.packageName,
-      version: record.version,
-      pluginId: record.pluginId,
-    });
+    const metadata = validatePluginDirectory(
+      record.directory,
+      this.options.environment,
+      {
+        name: record.packageName,
+        version: record.version,
+        pluginId: record.pluginId,
+      },
+      { allowIncompatibleHost },
+    );
     if (this.digest(record.directory) !== record.manifestDigest)
       throw new AppError("pluginChanged", "已安装插件清单发生变化，请重新安装并确认能力");
     this.assertGrant(metadata, record.grant);
@@ -652,8 +660,9 @@ export class PluginManager {
     return value ? structuredClone(value) : undefined;
   }
   private baselineDataVersion(record: PluginInstallation): PluginCommittedDataVersion {
-    // metadata() validates both the package identity and persisted manifest hash.
-    const metadata = this.metadata(record);
+    // Reading the old data baseline must not execute old code or require its
+    // host range to include the new host. Identity, digest and grants still apply.
+    const metadata = this.metadata(record, true);
     const known = this.committedDataVersion(record.pluginId);
     if (
       known &&
@@ -784,7 +793,8 @@ export class PluginManager {
   private dependents(pluginId: string, nextVersion?: string): void {
     for (const record of Object.values(this.state.plugins)) {
       if (!record.enabled || record.pluginId === pluginId) continue;
-      const manifest = this.metadata(record).spark233;
+      // Dependency declarations are read without starting these installed versions.
+      const manifest = this.metadata(record, true).spark233;
       const required = Object.hasOwn(manifest.dependencies, pluginId)
         ? manifest.dependencies[pluginId]
         : undefined;

@@ -1,23 +1,32 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, Badge, Button, WindowTitleBar } from "@spark233/ui/components";
 import type { JsonValue } from "../../../sdk/src/index.js";
-import type { TrafficProcessRow, TrafficScope, TrafficState } from "../traffic-contract";
+import type {
+  TrafficProcessAction,
+  TrafficProcessActionResult,
+  TrafficScope,
+  TrafficState,
+} from "../traffic-contract";
 import { ConnectionsDialog } from "./connections";
 import { HistoryView } from "./history";
 import { RealtimeView } from "./realtime";
+import { TerminateDialog, type ProcessSelection } from "./process-actions";
 import { client, coverageLabels, errorMessage, request } from "./traffic-ui";
 import "../../../../apps/desktop/src/App.css";
 import "./traffic.css";
 
-function TrafficPage() {
+export function TrafficPage() {
   const [tab, setTab] = useState<"realtime" | "history">("realtime");
   const [state, setState] = useState<TrafficState>();
   const [error, setError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState<TrafficProcessRow>();
+  const [selected, setSelected] = useState<ProcessSelection>();
+  const selectedIds = useMemo(() => selected?.instances.map((instance) => instance.id), [selected]);
+  const [termination, setTermination] = useState<ProcessSelection>();
+  const [notice, setNotice] = useState<string>();
   const [maximized, setMaximized] = useState(false);
   const mounted = useRef(false);
   const generation = useRef(0);
@@ -104,6 +113,54 @@ function TrafficPage() {
     }
   };
   const scope = state?.process.scope ?? "own";
+  const runProcessAction = async (selection: ProcessSelection, action: TrafficProcessAction) => {
+    if (mutation.current) return;
+    mutation.current = true;
+    ++generation.current;
+    setBusy(true);
+    setActionError(undefined);
+    setNotice(undefined);
+    try {
+      const ids = selection.instances.map((instance) => instance.id);
+      const value = await request<TrafficProcessActionResult>("process.action", {
+        scope: selection.scope,
+        appId: selection.row.appId,
+        action,
+        processInstanceIds: action === "terminate" ? ids : ids.slice(0, 1),
+        ...(action === "terminate" ? { confirmed: true } : {}),
+      });
+      if (!mounted.current) return;
+      const failed = value.results.filter((result) => result.status === "failed");
+      if (failed.length)
+        setActionError(
+          failed
+            .map(
+              (result) =>
+                `PID ${selection.instances.find((instance) => instance.id === result.instanceId)?.pid ?? "—"}：${result.message}`,
+            )
+            .join("；"),
+        );
+      if (action === "terminate") {
+        const ended = value.results.filter((result) => result.status === "terminated").length;
+        const exited = value.results.filter((result) => result.status === "exited").length;
+        setNotice(
+          `已结束 ${ended} 个进程${exited ? `，${exited} 个进程已退出` : ""}${failed.length ? `，${failed.length} 个操作失败` : ""}。`,
+        );
+        setTermination(undefined);
+      } else if (!failed.length)
+        setNotice(action === "reveal" ? "已在资源管理器中定位程序文件。" : "已打开文件属性窗口。");
+    } catch (value) {
+      if (mounted.current) setActionError(errorMessage(value));
+    } finally {
+      mutation.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+  const processAction = (selection: ProcessSelection, action: TrafficProcessAction) => {
+    if (busy) return;
+    if (action === "terminate") setTermination(selection);
+    else void runProcessAction(selection, action);
+  };
   const needsEnable = Boolean(
     state?.process.canEnable &&
     ["not-installed", "unavailable", "error"].includes(state.process.status),
@@ -232,18 +289,38 @@ function TrafficPage() {
           </Alert>
         </div>
       )}
-      <RealtimeView active={tab === "realtime"} state={state} onConnections={setSelected} />
+      {notice && (
+        <div className="traffic-notice" role="status">
+          {notice}
+        </div>
+      )}
+      <RealtimeView
+        active={tab === "realtime"}
+        state={state}
+        onConnections={setSelected}
+        onAction={processAction}
+      />
       <HistoryView active={tab === "history"} scope={scope} icons={state?.icons ?? {}} />
       {selected && (
         <ConnectionsDialog
-          key={`${scope}:${selected.appId}`}
-          row={selected}
-          scope={scope}
+          key={`${selected.scope}:${selected.row.appId}:${selected.instances.map((instance) => instance.id).join(",")}`}
+          row={selected.row}
+          scope={selected.scope}
+          instanceIds={selectedIds}
           onClose={() => setSelected(undefined)}
+        />
+      )}
+      {termination && (
+        <TerminateDialog
+          selection={termination}
+          busy={busy}
+          onCancel={() => setTermination(undefined)}
+          onConfirm={() => void runProcessAction(termination, "terminate")}
         />
       )}
     </main>
   );
 }
 
-createRoot(document.getElementById("root")!).render(<TrafficPage />);
+const root = document.getElementById("root");
+if (root) createRoot(root).render(<TrafficPage />);

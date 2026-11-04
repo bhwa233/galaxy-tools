@@ -216,7 +216,24 @@
   width: 10%;
 }
 .traffic-realtime-table th:last-child {
-  width: 64px;
+  width: 98px;
+}
+.traffic-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.traffic-termination-targets {
+  max-height: 200px;
+  overflow: auto;
+  font-size: 12px;
+}
+.traffic-termination-targets li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
 }
 .traffic-sort {
   display: inline-flex;

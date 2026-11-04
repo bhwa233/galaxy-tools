@@ -106,6 +106,7 @@ interface RuntimeCard {
   receiveCount: number;
   nativeEntry?: string;
   images?: Record<string, string>;
+  contentHeight?: number;
   interaction?: {
     pointerTarget?: string;
     hoverAt?: number;
@@ -188,6 +189,24 @@ export class WidgetHost {
       onPointer: (event) => this.pointer(event),
       onPointersCancelled: () => this.cancelInteractions(),
       onContentHeight: (cardId, height) => {
+        const main = [...this.records.values()].find((record) => cardId === record.id);
+        if (
+          main?.definition.kind === "declarative" &&
+          main.definition.contentHeight &&
+          main.status === "active" &&
+          !this.drag &&
+          this.host().manager.isOwnerCurrent(main.binding.owner, undefined, true)
+        ) {
+          const next = Math.max(
+            main.definition.minSize?.height ?? 32,
+            Math.min(main.definition.maxSize?.height ?? 900, Math.ceil(height)),
+          );
+          if (main.contentHeight === next) return;
+          main.contentHeight = next;
+          this.cancelEdgeMotion(main);
+          this.options.layer.refresh();
+          return;
+        }
         const r = [...this.records.values()].find((record) => cardId === record.id + ":hover");
         const maximum = r && this.interactionDefinition(r)?.hover?.size.height;
         if (
@@ -799,7 +818,8 @@ export class WidgetHost {
       .flatMap((r): LayerCard[] => {
         const interactions =
           r.definition.kind === "declarative" ? r.definition.desktopInteractions : undefined;
-        const bounds = r.interaction?.bounds ? r.stored.bounds : this.presentedBounds(r);
+        const intrinsicHeight = r.definition.kind === "declarative" && !!r.definition.contentHeight;
+        const bounds = r.interaction?.bounds ? this.contentBounds(r) : this.presentedBounds(r);
         const main = {
           id: r.id,
           consumerId: "widgets",
@@ -808,11 +828,16 @@ export class WidgetHost {
           renderRef: r.stored.widgetDefinitionId,
           ...r.stored,
           bounds,
-          transientGeometry: !!interactions,
+          transientGeometry: !!interactions || intrinsicHeight,
           desktopInteractive: !!interactions,
+          intrinsicHeight,
           presentationHidden: !!r.interaction?.bounds,
           fullscreenAutoHide: r.stored.fullscreenAutoHide ?? interactions?.fullscreenAutoHide,
           template: r.entry.kind === "declarative" ? r.entry.template : undefined,
+          hover:
+            r.entry.kind === "declarative" && r.entry.hoverTemplate && interactions?.hover
+              ? { template: r.entry.hoverTemplate, size: interactions.hover.size }
+              : undefined,
           data: r.data,
           title: r.definition.title,
           status: r.status,
@@ -867,13 +892,28 @@ export class WidgetHost {
   private interactionDefinition(r: RuntimeCard) {
     return r.definition.kind === "declarative" ? r.definition.desktopInteractions : undefined;
   }
+  private contentBounds(r: RuntimeCard): Rect {
+    const bounds = r.stored.bounds;
+    if (r.contentHeight === undefined) return bounds;
+    const area =
+      this.options.layer.options.displays().find((d) => d.id === r.stored.displayId)?.workArea ??
+      r.stored.workAreaAtSave;
+    const height = Math.min(r.contentHeight, area.height);
+    // Preserve a bottom attachment while measuring; the saved fallback size is
+    // unchanged, so polling and font loading never write desktop layout files.
+    const y =
+      Math.abs(bounds.y + bounds.height - area.y - area.height) <= 8
+        ? bounds.y + bounds.height - height
+        : bounds.y;
+    return { ...bounds, y: Math.max(area.y, Math.min(y, area.y + area.height - height)), height };
+  }
   private edge(r: RuntimeCard): "left" | "right" | "top" | "bottom" | undefined {
     if (!(r.stored.edgeAutoHide ?? this.interactionDefinition(r)?.edgeAutoHide)) return;
     const area = this.options.layer.options
       .displays()
       .find((d) => d.id === r.stored.displayId)?.workArea;
     if (!area) return;
-    const bounds = r.stored.bounds;
+    const bounds = this.contentBounds(r);
     const edges = [
       ["left", Math.abs(bounds.x - area.x)],
       ["right", Math.abs(bounds.x + bounds.width - area.x - area.width)],
@@ -886,7 +926,7 @@ export class WidgetHost {
     return r.interaction?.bounds ?? r.interaction?.edgeBounds ?? this.edgeTargetBounds(r);
   }
   private edgeTargetBounds(r: RuntimeCard): Rect {
-    const bounds = r.interaction?.bounds ?? r.stored.bounds;
+    const bounds = r.interaction?.bounds ?? this.contentBounds(r);
     if (!r.interaction?.edgeHidden) return bounds;
     const edge = this.edge(r);
     const area = this.options.layer.options
@@ -977,7 +1017,7 @@ export class WidgetHost {
     const area =
       this.options.layer.options.displays().find((d) => d.id === r.stored.displayId)?.workArea ??
       r.stored.workAreaAtSave;
-    const bar = r.stored.bounds;
+    const bar = this.contentBounds(r);
     const width = Math.min(size.width, area.width),
       height = Math.min(r.interaction?.previewHeight ?? size.height, size.height, area.height);
     const preferredY = bar.y - height - 6 >= area.y ? bar.y - height - 6 : bar.y + bar.height + 6;

@@ -36,6 +36,8 @@ export default defineConfig(async (env) => {
     "src/features/notes/*.browser.test.tsx",
     "src/features/clipboard/*.browser.test.tsx",
     "src/features/translation/*.browser.test.tsx",
+    "src/features/update/*.browser.test.tsx",
+    "src/features/traffic/*.browser.test.tsx",
     "src/features/search/*.browser.test.tsx",
     "src/features/windows/*.browser.test.tsx",
     "src/features/desktop-layer/*.browser.test.tsx",

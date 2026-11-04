@@ -1,4 +1,5 @@
 import type { CommandName } from "../../../shared/command-policies.js";
+import type { PluginBrowserBridge } from "../../../../../packages/sdk/src/browser";
 import type {
   CommandInput,
   CommandResult,
@@ -8,6 +9,17 @@ import type {
 } from "../../../shared/desktop-contract.js";
 type DesktopBridge = NonNullable<Window["spark233Desktop"]>;
 type Handler = (args: unknown) => unknown | Promise<unknown>;
+// Official standalone windows use the same bounded plugin transport as Electron.
+// Extend this existing transport fixture rather than mocking feature modules.
+export function installPluginBridge(request: PluginBrowserBridge["request"]) {
+  const target = globalThis as typeof globalThis & { spark233?: PluginBrowserBridge };
+  const previous = target.spark233;
+  target.spark233 = { request, subscribe: () => () => {} };
+  return () => {
+    if (previous) target.spark233 = previous;
+    else delete target.spark233;
+  };
+}
 export interface DesktopCall {
   command: string;
   args: unknown;

@@ -23,6 +23,7 @@ async function fixture(
     pluginId?: string;
     commands?: Array<Record<string, unknown>>;
     modes?: Array<Record<string, unknown>>;
+    host?: string;
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-source-commands-"));
@@ -39,7 +40,7 @@ async function fixture(
       id: pluginId,
       displayName: "Owned source actions",
       api: "^1.0.0",
-      host: ">=0.0.1 <1",
+      host: options.host ?? ">=0.0.1 <1",
       platforms: [process.platform],
       architectures: [process.arch],
       entry: "index.html",
@@ -188,6 +189,7 @@ async function fixture(
     updates,
     packageFile,
     directory,
+    dataRoot: path.join(root, "data"),
     factoryStarted: factoryStarted.promise,
     activationStarted: activationStarted.promise,
     releaseFactory: factoryGate.resolve,
@@ -207,6 +209,52 @@ async function fixture(
 
 const caller = "owned-caller",
   pluginId = "fixture.source";
+
+it("replaces a host-incompatible installed plugin without executing it or losing its data", async () => {
+  // The 1.x -> 0.x host version reset stranded every old dev plugin: reading
+  // its data baseline rejected the old host range before replacement could run.
+  const f = await fixture({ host: ">=1.3.0 <2" });
+  expect(f.manager.list()[0].lastError).toMatch(/不兼容/);
+  await expect(f.manager.activate(pluginId, { commandId: "common" })).rejects.toThrow();
+  expect(f.factories).toBe(0);
+  const data = path.join(f.dataRoot, pluginId);
+  fs.mkdirSync(data, { recursive: true });
+  fs.writeFileSync(path.join(data, "keep.txt"), "existing user data");
+  const directory = path.join(path.dirname(f.directory), "1.0.1");
+  fs.cpSync(f.directory, directory, { recursive: true });
+  const metadata = JSON.parse(fs.readFileSync(f.packageFile, "utf8"));
+  metadata.version = "1.0.1";
+  metadata.spark233.host = ">=0.0.1 <1";
+  fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(metadata));
+  const staged = {
+    directory,
+    metadata,
+    integrity: "owned-fixture",
+    source: { kind: "directory" as const, location: directory },
+  };
+  const peerDirectory = path.join(path.dirname(path.dirname(f.directory)), "fixture.peer", "1.0.1");
+  fs.cpSync(directory, peerDirectory, { recursive: true });
+  const peer = structuredClone(metadata);
+  peer.name = "@fixture/peer";
+  peer.spark233.id = "fixture.peer";
+  fs.writeFileSync(path.join(peerDirectory, "package.json"), JSON.stringify(peer));
+  await f.manager.install(
+    { ...staged, directory: peerDirectory, metadata: peer },
+    { capabilities: [], native: false },
+  );
+  const previous = fs.readFileSync(f.packageFile);
+  fs.appendFileSync(f.packageFile, "\n");
+  await expect(f.manager.install(staged, { capabilities: [], native: false })).rejects.toThrow(
+    /清单发生变化/,
+  );
+  fs.writeFileSync(f.packageFile, previous);
+  await f.manager.install(staged, { capabilities: [], native: false });
+  expect(fs.readFileSync(path.join(data, "keep.txt"), "utf8")).toBe("existing user data");
+  await expect(f.manager.activate(pluginId, { commandId: "common" })).resolves.toEqual({
+    ok: true,
+  });
+});
+
 describe("source application command authority", () => {
   it("offers dictionary lookup with the typed text without querying the provider", async () => {
     const manifest = JSON.parse(

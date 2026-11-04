@@ -39,18 +39,33 @@ test("operation placement clamps to a negative-coordinate display without changi
   layout.position(card.id, "right", { x: 100, y: 200, width: 320, height: 112 });
   const restored = new DesktopOverlayLayout(file);
   expect(restored.place(card, "left", { x: -1600, y: -200, width: 1280, height: 720 }, 0)).toEqual({
-    x: -1232,
+    x: -472,
     y: -90,
-    width: 900,
-    height: 500,
+    width: 140,
+    height: 52,
   });
   expect(restored.place(card, "right", { x: 0, y: 0, width: 1920, height: 1080 }, 0)).toEqual({
     x: 100,
     y: 200,
-    width: 320,
-    height: 112,
+    width: 140,
+    height: 52,
   });
   expect(card).toEqual(original);
+  // Older bar layouts retained their own size and ignored later HUD changes.
+  // Content size must follow its owner while the saved bar position stays put.
+  expect(
+    restored.place(
+      { ...card, bounds: { x: 800, y: 500, width: 110, height: 46 } },
+      "right",
+      { x: 0, y: 0, width: 1920, height: 1080 },
+      0,
+    ),
+  ).toEqual({
+    x: 100,
+    y: 200,
+    width: 110,
+    height: 46,
+  });
   const note: LayerCard = {
     ...card,
     id: "notes-view:queue:left/note-1",
@@ -66,7 +81,7 @@ test("operation placement clamps to a negative-coordinate display without changi
       { x: 0, y: 0, width: 1920, height: 1080 },
       0,
     ),
-  ).toEqual({ x: 200, y: 250, width: 320, height: 160 });
+  ).toEqual({ x: 200, y: 250, width: 140, height: 52 });
 });
 
 test("a failed durable update retains the prior presentation and malformed input is never replaced", () => {

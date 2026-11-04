@@ -9,6 +9,9 @@ const { pathToFileURL } = require("node:url");
 const assert = require("node:assert/strict");
 const tar = require("tar");
 const root = path.resolve(__dirname, "..");
+const hostVersion = JSON.parse(
+  fs.readFileSync(path.join(root, "apps/desktop/package.json")),
+).version;
 const run = path.join(root, "local-build/evidence/plugin-business", randomUUID());
 fs.mkdirSync(run, { recursive: true });
 app.setPath("userData", path.join(run, "profile"));
@@ -59,7 +62,7 @@ app
     }
     async function backend(name) {
       const pluginRoot = await packagedRoot(name);
-      const manifest = validatePluginDirectory(pluginRoot, defaultHostEnvironment("1.2.0"));
+      const manifest = validatePluginDirectory(pluginRoot, defaultHostEnvironment(hostVersion));
       const scope = new PluginResourceScope({
         pluginId: manifest.spark233.id,
         version: manifest.version,
@@ -192,7 +195,7 @@ app
     const image = path.join(run, "ocr-fixture.png");
     fs.writeFileSync(image, Buffer.from(png, "base64"));
     const pluginRoot = await packagedRoot("ocr");
-    const manifest = validatePluginDirectory(pluginRoot, defaultHostEnvironment("1.2.0"));
+    const manifest = validatePluginDirectory(pluginRoot, defaultHostEnvironment(hostVersion));
     const scope = new PluginResourceScope({
       pluginId: manifest.spark233.id,
       version: manifest.version,

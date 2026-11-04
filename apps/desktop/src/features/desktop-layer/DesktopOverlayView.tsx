@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+  type HTMLAttributes,
+} from "react";
 import {
   ExternalLink,
   GripHorizontal,
@@ -21,7 +29,6 @@ import type {
   LayerSnapshot,
 } from "../../../shared/layer-contract";
 import type { Rect } from "../capsules/types";
-import type { CapsuleSnapshot } from "../capsules/types";
 import { Button } from "../../components/ui/button";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
@@ -36,17 +43,13 @@ import {
 } from "../../components/ui/dropdown-menu";
 import { getErrorMessage } from "../notes/api";
 import { DeclarativeCard } from "./DeclarativeCard";
-import { ScreenshotCard } from "./ScreenshotCard";
-import { LayerErrorBoundary } from "./LayerErrorBoundary";
-import { isWidgetRankRows } from "@spark233/sdk";
 import "./desktop-overlay.css";
 
 type Send = (request: LayerClientRequest) => Promise<unknown>;
 const kindIcons = { notes: StickyNote, traffic: Network, screenshot: Image };
 
-/** The overlay reuses the existing card renderers and Base UI menus. This page
- * only owns the toolbar and a bounded free-position drag, adapted from LayerEditor;
- * plugin data and all durable state remain with their current host owners. */
+/** Management chrome lives in one existing trusted surface; plugin content
+ * remains mounted in each source's persistent LayerCardFrame below. */
 export function DesktopOverlayView({
   snapshot,
   client,
@@ -57,24 +60,24 @@ export function DesktopOverlayView({
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
-  const dragging = useRef(false);
-  const dragChanged = useCallback((value: boolean) => {
-    dragging.current = value;
-  }, []);
   const panels = snapshot.overlay?.panels ?? [];
   const zh = snapshot.locale.startsWith("zh");
   const text = (cn: string, en: string) => (zh ? cn : en);
+  const epoch = snapshot.overlay?.epoch;
   const send: Send = useCallback(
     async (request) => {
       setError(undefined);
       try {
-        return await client.request(request);
+        return await client.request({
+          ...request,
+          ...(epoch === undefined ? {} : { overlayEpoch: epoch }),
+        });
       } catch (value) {
         setError(getErrorMessage(value));
         throw value;
       }
     },
-    [client],
+    [client, epoch],
   );
   const act = (request: LayerClientRequest) => void send(request).catch(() => {});
   useEffect(() => {
@@ -88,7 +91,7 @@ export function DesktopOverlayView({
         event.defaultPrevented ||
         event.isComposing ||
         menuOpen ||
-        dragging.current
+        document.querySelector('[data-overlay-moving], [role="menu"]')
       )
         return;
       event.preventDefault();
@@ -102,12 +105,6 @@ export function DesktopOverlayView({
     const show = !matching.some((panel) => panel.selected);
     for (const panel of matching)
       await send({ type: "overlay-panel", cardId: panel.cardId, action: show ? "show" : "hide" });
-  };
-  const origin = snapshot.bounds ?? {
-    x: window.screenX,
-    y: window.screenY,
-    width: window.innerWidth,
-    height: window.innerHeight,
   };
   const categories = [
     { kind: "notes" as const, title: text("便签", "Notes") },
@@ -234,7 +231,7 @@ export function DesktopOverlayView({
           <X />
         </Button>
       </nav>
-      {!snapshot.cards.some((card) => card.visible) && (
+      {!panels.some((panel) => panel.selected) && (
         <div className="desktop-overlay-empty">
           <LayoutGrid aria-hidden />
           <h1>
@@ -255,24 +252,6 @@ export function DesktopOverlayView({
           </Button>
         </div>
       )}
-      {snapshot.cards
-        .filter((card) => card.visible)
-        .map((card, index) => {
-          const panel = panels.find((entry) => entry.cardId === card.id);
-          return panel ? (
-            <OverlayPanel
-              key={card.id}
-              panel={panel}
-              card={card}
-              origin={origin}
-              snapshot={snapshot}
-              stackOrder={index}
-              send={send}
-              onMenuChange={setMenuOpen}
-              onDragChange={dragChanged}
-            />
-          ) : null;
-        })}
       {error && (
         <Alert variant="destructive" className="desktop-overlay-error">
           <AlertDescription>{error}</AlertDescription>
@@ -290,35 +269,39 @@ export function DesktopOverlayView({
   );
 }
 
-function OverlayPanel({
+export function LayerCardFrame({
   panel,
   card,
   origin,
   snapshot,
   stackOrder,
   send,
-  onMenuChange,
-  onDragChange,
+  children,
+  ...props
 }: {
-  panel: DesktopOverlayPanel;
+  panel?: DesktopOverlayPanel;
   card: LayerRenderCard;
   origin: Rect;
   snapshot: LayerSnapshot;
   stackOrder: number;
   send: Send;
-  onMenuChange: (open: boolean) => void;
-  onDragChange: (dragging: boolean) => void;
-}) {
-  const frame = useRef<HTMLElement>(null);
+  children: ReactNode;
+} & HTMLAttributes<HTMLElement>) {
   const moveFrame = useRef<number | undefined>(undefined);
-  const gesture = useRef<
-    { pointerId: number; startX: number; startY: number; initial: Rect; latest: Rect } | undefined
-  >(undefined);
+  const gesture = useRef<number | undefined>(undefined);
   const [moving, setMoving] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [previewHeight, setPreviewHeight] = useState(card.hover?.size.height ?? 0);
+  const onPreviewHeight = useCallback(
+    (height: number) => {
+      setPreviewHeight(Math.min(card.hover?.size.height ?? 0, height));
+    },
+    [card.hover?.size.height],
+  );
   const zh = snapshot.locale.startsWith("zh");
   const text = (cn: string, en: string) => (zh ? cn : en);
-  const Icon = kindIcons[panel.kind];
+  const Icon = panel ? kindIcons[panel.kind] : StickyNote;
   const action = (operation: "show" | "hide" | "pin" | "passthrough" | "open", value?: boolean) =>
     send({
       type: "overlay-panel",
@@ -326,352 +309,318 @@ function OverlayPanel({
       action: operation,
       ...(value === undefined ? {} : { value }),
     });
+  const area = snapshot.overlay?.workArea ?? origin;
   const clamp = (bounds: Rect): Rect => ({
     ...bounds,
-    x: Math.max(origin.x + 12, Math.min(bounds.x, origin.x + origin.width - bounds.width - 12)),
-    y: Math.max(origin.y + 100, Math.min(bounds.y, origin.y + origin.height - bounds.height - 16)),
+    x: Math.max(area.x + 12, Math.min(bounds.x, area.x + area.width - bounds.width - 12)),
+    y: Math.max(area.y + 110, Math.min(bounds.y, area.y + area.height - bounds.height - 16)),
   });
   const cancel = useCallback(() => {
+    const id = gesture.current;
     gesture.current = undefined;
     if (moveFrame.current !== undefined) cancelAnimationFrame(moveFrame.current);
     moveFrame.current = undefined;
-    if (frame.current) frame.current.style.transform = "";
     setMoving(false);
-    onDragChange(false);
-  }, [onDragChange]);
+    if (id !== undefined)
+      void send({ type: "overlay-pointer", cardId: card.id, pointerId: id, phase: "cancel" }).catch(
+        () => {},
+      );
+  }, [send, card.id]);
   useEffect(() => {
     if (!moving) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.isComposing || !gesture.current) return;
+      if (event.key !== "Escape" || event.isComposing || gesture.current === undefined) return;
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       cancel();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", escape, true);
+    return () => document.removeEventListener("keydown", escape, true);
   }, [moving, cancel]);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    gesture.current = undefined;
+    setMoving(false);
+    setHovered(false);
+    setSettingsOpen(false);
+    return () => {
       if (moveFrame.current !== undefined) cancelAnimationFrame(moveFrame.current);
-      onDragChange(false);
-    },
-    [onDragChange],
-  );
+      moveFrame.current = undefined;
+    };
+  }, [snapshot.overlay?.epoch, card.visible]);
+  const previewVisible =
+    !!panel && card.visible && !!card.hover && hovered && !moving && !settingsOpen;
+  const managed = !!panel && !!snapshot.overlay;
+  const overlayEpoch = snapshot.overlay?.epoch;
+  useEffect(() => {
+    if (!managed) return;
+    void send({ type: "overlay-preview", cardId: card.id, visible: previewVisible }).catch(
+      () => {},
+    );
+  }, [previewVisible, managed, overlayEpoch, send, card.id]);
   const start = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
     event.preventDefault();
+    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    gesture.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      initial: { ...card.bounds },
-      latest: { ...card.bounds },
-    };
+    gesture.current = event.pointerId;
     setMoving(true);
-    onDragChange(true);
+    void send({
+      type: "overlay-pointer",
+      cardId: card.id,
+      pointerId: event.pointerId,
+      phase: "start",
+      clientPoint: { x: event.clientX, y: event.clientY },
+    }).catch(cancel);
   };
   const move = (event: PointerEvent<HTMLElement>) => {
-    const current = gesture.current;
-    if (!current || current.pointerId !== event.pointerId) return;
-    current.latest = clamp({
-      ...current.initial,
-      x: current.initial.x + event.clientX - current.startX,
-      y: current.initial.y + event.clientY - current.startY,
-    });
-    if (moveFrame.current !== undefined) return;
+    if (gesture.current !== event.pointerId || moveFrame.current !== undefined) return;
     moveFrame.current = requestAnimationFrame(() => {
       moveFrame.current = undefined;
-      const active = gesture.current;
-      if (active && frame.current)
-        frame.current.style.transform = `translate(${active.latest.x - active.initial.x}px, ${active.latest.y - active.initial.y}px)`;
+      if (gesture.current !== undefined)
+        void send({
+          type: "overlay-pointer",
+          cardId: card.id,
+          pointerId: gesture.current,
+          phase: "move",
+        }).catch(cancel);
     });
   };
   const finish = (event: PointerEvent<HTMLElement>) => {
-    const current = gesture.current;
-    if (!current || current.pointerId !== event.pointerId) return;
-    move(event);
-    const next = current.latest;
-    gesture.current = undefined;
+    if (gesture.current !== event.pointerId) return;
     if (moveFrame.current !== undefined) cancelAnimationFrame(moveFrame.current);
     moveFrame.current = undefined;
-    if (frame.current)
-      frame.current.style.transform = `translate(${next.x - current.initial.x}px, ${next.y - current.initial.y}px)`;
+    gesture.current = undefined;
     setMoving(false);
-    onDragChange(false);
+    void send({
+      type: "overlay-pointer",
+      cardId: card.id,
+      pointerId: event.pointerId,
+      phase: "end",
+    }).catch(() => {});
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
-    void send({ type: "overlay-layout", cardId: card.id, bounds: next })
-      .catch(() => {})
-      .finally(() => {
-        if (frame.current) frame.current.style.transform = "";
-      });
   };
-  const note = card.payload as unknown as Partial<CapsuleSnapshot> | undefined;
-  const unavailable = card.status && card.status !== "active";
   return (
     <section
-      ref={frame}
-      className={`desktop-overlay-panel ${moving ? "desktop-overlay-panel-moving" : ""}`}
-      data-overlay-panel={card.id}
-      aria-label={panel.title}
+      {...props}
+      className={
+        panel
+          ? `desktop-overlay-panel ${moving ? "desktop-overlay-panel-moving" : ""}`
+          : props.className
+      }
+      data-overlay-panel={panel ? card.id : undefined}
+      data-overlay-moving={moving || undefined}
+      aria-label={panel?.title ?? props["aria-label"]}
+      data-controls-visible={moving || settingsOpen || undefined}
+      onPointerEnter={(event) => {
+        setHovered(true);
+        props.onPointerEnter?.(event);
+      }}
+      onPointerLeave={(event) => {
+        setHovered(false);
+        props.onPointerLeave?.(event);
+      }}
       style={{
         left: card.bounds.x - origin.x,
-        top: card.bounds.y - origin.y - 36,
+        top: card.bounds.y - origin.y,
         width: card.bounds.width,
-        zIndex: moving ? 900 : 10 + stackOrder,
+        height: card.bounds.height,
+        display: card.visible ? undefined : "none",
+        ...props.style,
+        zIndex: panel
+          ? moving
+            ? 900
+            : hovered || settingsOpen
+              ? 800
+              : 10 + stackOrder
+          : card.order,
       }}
     >
-      <header
-        className="desktop-overlay-panel-header"
-        onPointerDown={start}
-        onPointerMove={move}
-        onPointerUp={finish}
-        onPointerCancel={cancel}
-        onLostPointerCapture={() => {
-          if (gesture.current) cancel();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && gesture.current) {
-            event.stopPropagation();
-            event.preventDefault();
-            cancel();
-          }
-        }}
-      >
-        <Icon aria-hidden />
-        <span
-          className="desktop-overlay-panel-title"
-          role="button"
-          tabIndex={0}
-          title={text("拖动或用方向键移动面板", "Drag or use arrow keys to move this panel")}
-          onKeyDown={(event) => {
-            const delta: Record<string, [number, number]> = {
-              ArrowLeft: [-10, 0],
-              ArrowRight: [10, 0],
-              ArrowUp: [0, -10],
-              ArrowDown: [0, 10],
-            };
-            if (!delta[event.key]) return;
-            event.preventDefault();
-            event.stopPropagation();
-            const [x, y] = delta[event.key];
-            void send({
-              type: "overlay-layout",
-              cardId: card.id,
-              bounds: clamp({ ...card.bounds, x: card.bounds.x + x, y: card.bounds.y + y }),
-            }).catch(() => {});
-          }}
-        >
-          {panel.title}
-        </span>
-        <GripHorizontal className="desktop-overlay-panel-grip" aria-hidden />
-        <DropdownMenu onOpenChange={onMenuChange}>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                title={text("面板设置", "Panel settings")}
-                aria-label={text("面板设置", "Panel settings")}
-              />
-            }
-          >
-            <SlidersHorizontal />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="desktop-overlay-menu">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>{panel.title}</DropdownMenuLabel>
-              <DropdownMenuCheckboxItem
-                checked={panel.pinned}
-                onCheckedChange={(value) => void action("pin", value).catch(() => {})}
-              >
-                <Pin />
-                {text("退出后保持置顶", "Keep on top after closing")}
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={panel.inputMode === "passive"}
-                onCheckedChange={(value) => void action("passthrough", value).catch(() => {})}
-              >
-                <MousePointer2 />
-                {text("常驻时鼠标穿透", "Click through outside the bar")}
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => void action("open").catch(() => {})}>
-                <ExternalLink />
-                {panel.kind === "screenshot"
-                  ? text("继续编辑截图", "Edit screenshot")
-                  : text("打开详情", "Open details")}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title={
-            panel.pinned
-              ? text("取消置顶", "Unpin")
-              : text("退出后保持置顶", "Keep on top after closing")
-          }
-          aria-label={
-            panel.pinned
-              ? text("取消置顶", "Unpin")
-              : text("退出后保持置顶", "Keep on top after closing")
-          }
-          aria-pressed={panel.pinned}
-          onClick={() => void action("pin", !panel.pinned).catch(() => {})}
-        >
-          {panel.pinned ? <Pin /> : <PinOff />}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title={text("收起面板", "Hide panel")}
-          aria-label={text("收起面板", "Hide panel")}
-          onClick={() => void action("hide").catch(() => {})}
-        >
-          <X />
-        </Button>
-      </header>
-      <div
-        className={`desktop-overlay-panel-content desktop-overlay-panel-${panel.kind}`}
-        style={{ height: card.bounds.height }}
-        onPointerEnter={() => setHovered(true)}
-        onPointerLeave={() => setHovered(false)}
-      >
-        <LayerErrorBoundary
-          label={panel.title}
-          onError={(value) => {
-            void send({
-              type: "fault",
-              cardId: card.id,
-              code: "overlay-card",
-              message: getErrorMessage(value),
-            }).catch(() => {});
-          }}
-        >
-          {unavailable ? (
-            <div className="layer-card-fault">
-              {card.reason ?? text("面板暂不可用", "Panel unavailable")}
-            </div>
-          ) : card.renderKind === "declarative" && card.template ? (
-            <>
-              <DeclarativeCard
-                template={card.template}
-                data={card.data}
-                images={card.images}
-                disabled={false}
-                locale={snapshot.locale}
-                onAction={(actionId) =>
-                  send({ type: "widget-invoke", cardId: card.id, actionId }).then(() => {})
+      {panel && (
+        <header
+          className="desktop-overlay-panel-header"
+          style={
+            card.overlayControls
+              ? {
+                  left: card.overlayControls.x - card.bounds.x,
+                  top: card.overlayControls.y - card.bounds.y,
+                  bottom: "auto",
+                  width: card.overlayControls.width,
                 }
-              />
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="desktop-overlay-details"
-                aria-label={text("打开流量详情", "Open traffic details")}
-                title={text("打开流量详情", "Open traffic details")}
-                onClick={() => void action("open").catch(() => {})}
-              >
-                <ExternalLink />
-              </Button>
-            </>
-          ) : card.renderKind === "screenshot" && card.screenshot ? (
-            <ScreenshotCard
-              image={card.screenshot}
-              title={panel.title}
-              width={card.bounds.width}
-              scaleFactor={snapshot.scaleFactor}
-              pinned={panel.pinned}
-              disabled={false}
-              locale={snapshot.locale}
-              onAction={(operation, value) =>
-                operation === "edit"
-                  ? action("open")
-                  : operation === "pin"
-                    ? action("pin", !panel.pinned)
-                    : operation === "close" || operation === "hide"
-                      ? action("hide")
-                      : send({
-                          type: "screenshot-invoke",
-                          cardId: card.id,
-                          action: operation,
-                          ...(value === undefined ? {} : { value }),
-                        })
+              : card.bounds.x + 280 > area.x + area.width
+                ? { left: "auto", right: 0 }
+                : undefined
+          }
+          onPointerDown={start}
+          onPointerMove={move}
+          onPointerUp={finish}
+          onPointerCancel={cancel}
+          onLostPointerCapture={() => {
+            if (gesture.current !== undefined) cancel();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && gesture.current !== undefined) {
+              event.stopPropagation();
+              event.preventDefault();
+              cancel();
+            }
+          }}
+        >
+          <Icon aria-hidden />
+          <span
+            className="desktop-overlay-panel-title"
+            role="button"
+            tabIndex={0}
+            title={text("拖动或用方向键移动面板", "Drag or use arrow keys to move this panel")}
+            onKeyDown={(event) => {
+              const delta: Record<string, [number, number]> = {
+                ArrowLeft: [-10, 0],
+                ArrowRight: [10, 0],
+                ArrowUp: [0, -10],
+                ArrowDown: [0, 10],
+              };
+              if (!delta[event.key]) return;
+              event.preventDefault();
+              event.stopPropagation();
+              const [x, y] = delta[event.key];
+              void send({
+                type: "overlay-layout",
+                cardId: card.id,
+                bounds: clamp({ ...card.bounds, x: card.bounds.x + x, y: card.bounds.y + y }),
+              }).catch(() => {});
+            }}
+          >
+            {panel?.title}
+          </span>
+          <GripHorizontal className="desktop-overlay-panel-grip" aria-hidden />
+          <DropdownMenu
+            open={settingsOpen}
+            onOpenChange={(open) => {
+              setSettingsOpen(open);
+              void send({
+                type: "overlay-preview",
+                cardId: card.id,
+                visible: open,
+                region: "menu",
+              }).catch(() => {});
+            }}
+          >
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title={text("面板设置", "Panel settings")}
+                  aria-label={text("面板设置", "Panel settings")}
+                />
               }
-            />
-          ) : (
-            <div className="desktop-overlay-note">
-              <StickyNote aria-hidden />
-              <h2>{note?.note?.title || note?.items?.[0]?.title || panel.title}</h2>
-              <p>{note?.note?.content?.slice(0, 1600)}</p>
-              <Button variant="secondary" onClick={() => void action("open").catch(() => {})}>
-                <ExternalLink />
-                {text("打开便签", "Open note")}
-              </Button>
-            </div>
-          )}
-        </LayerErrorBoundary>
+            >
+              <SlidersHorizontal />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="desktop-overlay-menu">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{panel.title}</DropdownMenuLabel>
+                <DropdownMenuCheckboxItem
+                  checked={panel.pinned}
+                  onCheckedChange={(value) => void action("pin", value).catch(() => {})}
+                >
+                  <Pin />
+                  {text("退出后保持置顶", "Keep on top after closing")}
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={panel.inputMode === "passive"}
+                  onCheckedChange={(value) => void action("passthrough", value).catch(() => {})}
+                >
+                  <MousePointer2 />
+                  {text("常驻时鼠标穿透", "Click through outside the bar")}
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => void action("open").catch(() => {})}>
+                  <ExternalLink />
+                  {panel.kind === "screenshot"
+                    ? text("继续编辑截图", "Edit screenshot")
+                    : text("打开详情", "Open details")}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            title={
+              panel.pinned
+                ? text("取消置顶", "Unpin")
+                : text("退出后保持置顶", "Keep on top after closing")
+            }
+            aria-label={
+              panel.pinned
+                ? text("取消置顶", "Unpin")
+                : text("退出后保持置顶", "Keep on top after closing")
+            }
+            aria-pressed={panel.pinned}
+            onClick={() => void action("pin", !panel.pinned).catch(() => {})}
+          >
+            {panel.pinned ? <Pin /> : <PinOff />}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            title={text("收起面板", "Hide panel")}
+            aria-label={text("收起面板", "Hide panel")}
+            onClick={() => void action("hide").catch(() => {})}
+          >
+            <X />
+          </Button>
+        </header>
+      )}
+      <div
+        key="content"
+        className={panel ? "desktop-overlay-panel-content" : "layer-card-content"}
+        onClick={panel?.kind === "traffic" ? () => void action("open").catch(() => {}) : undefined}
+      >
+        {children}
       </div>
-      {panel.kind === "traffic" && hovered && !moving && (
-        <TrafficRanking
-          card={card}
-          above={card.bounds.y + card.bounds.height + 230 > origin.y + origin.height}
-          alignRight={card.bounds.x + 360 > origin.x + origin.width}
-          zh={zh}
-        />
+      {card.hover && previewVisible && (
+        <div
+          className={
+            card.bounds.y + card.bounds.height + previewHeight + 8 > area.y + area.height
+              ? "desktop-overlay-preview desktop-overlay-preview-above"
+              : "desktop-overlay-preview"
+          }
+          style={{
+            width: Math.min(card.hover.size.width, area.width - 24),
+            maxHeight: card.hover.size.height,
+            ...(card.overlayPreview
+              ? {
+                  left: card.overlayPreview.x - card.bounds.x,
+                  top: card.overlayPreview.y - card.bounds.y,
+                  bottom: "auto",
+                  width: card.overlayPreview.width,
+                  maxHeight: card.overlayPreview.height,
+                }
+              : {}),
+            ...(!card.overlayPreview &&
+            card.bounds.x + card.hover.size.width > area.x + area.width - 12
+              ? { left: "auto", right: 0 }
+              : {}),
+          }}
+        >
+          <DeclarativeCard
+            template={card.hover.template}
+            data={card.data}
+            images={card.images}
+            disabled={false}
+            locale={snapshot.locale}
+            onContentHeight={onPreviewHeight}
+            onAction={async (actionId) => {
+              await send({ type: "widget-invoke", cardId: card.id, actionId });
+            }}
+          />
+        </div>
       )}
     </section>
-  );
-}
-
-function TrafficRanking({
-  card,
-  above,
-  alignRight,
-  zh,
-}: {
-  card: LayerRenderCard;
-  above: boolean;
-  alignRight: boolean;
-  zh: boolean;
-}) {
-  const lists = [
-    { key: "download-top", title: zh ? "下载排行" : "Top downloads" },
-    { key: "upload-top", title: zh ? "上传排行" : "Top uploads" },
-  ];
-  return (
-    <div
-      className={`desktop-overlay-ranking ${above ? "desktop-overlay-ranking-above" : ""}`}
-      style={alignRight ? { left: "auto", right: 0 } : undefined}
-      role="status"
-    >
-      {lists.map(({ key, title }) => {
-        const value = card.data?.values[key];
-        const rows = isWidgetRankRows(value) ? value : [];
-        return (
-          <div key={key}>
-            <h3>{title}</h3>
-            {rows.length ? (
-              rows.map((row) => (
-                <p key={row.id}>
-                  <span>{row.label}</span>
-                  <strong>{row.valueText}</strong>
-                </p>
-              ))
-            ) : (
-              <p className="desktop-overlay-ranking-empty">
-                {zh ? "暂无程序数据" : "No process data"}
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }

@@ -63,6 +63,7 @@ export default defineConfig(async () => ({
   // rendering so lazy feature imports cannot reload a live React tree.
   optimizeDeps: {
     include: [
+      "react-dom/client",
       "@base-ui/react/button",
       "@base-ui/react/input",
       "@base-ui/react/use-render",

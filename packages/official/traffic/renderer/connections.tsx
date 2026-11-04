@@ -26,10 +26,12 @@ export function ConnectionsDialog({
   row,
   scope,
   onClose,
+  instanceIds,
 }: {
   row: TrafficProcessRow;
   scope: TrafficScope;
   onClose: () => void;
+  instanceIds?: string[];
 }) {
   const [data, setData] = useState<TrafficConnectionsResult>();
   const [error, setError] = useState<string>();
@@ -49,6 +51,7 @@ export function ConnectionsDialog({
         const value = await request<TrafficConnectionsResult>("connections", {
           appId: row.appId,
           scope,
+          ...(instanceIds ? { processInstanceIds: instanceIds } : {}),
         });
         if (!disposed) {
           setData(value);
@@ -69,7 +72,7 @@ export function ConnectionsDialog({
       clearTimeout(timer);
       stop();
     };
-  }, [row.appId, scope, revision]);
+  }, [row.appId, scope, revision, instanceIds]);
   return (
     <Dialog
       open

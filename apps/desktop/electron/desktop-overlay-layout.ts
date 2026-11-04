@@ -4,6 +4,72 @@ import type { Rect } from "../src/features/capsules/types.js";
 import type { DesktopOverlayPanel, LayerCard } from "../shared/layer-contract.js";
 import { atomicWrite } from "./persistence.js";
 
+/** Reserve a stable viewport for controls and the bounded hover template. Only
+ * visible interaction regions become a native shape, so empty space stays clear. */
+export function overlayInteractionBounds(card: LayerCard, area: Rect) {
+  const b = card.bounds;
+  const controlsWidth = Math.min(280, area.width);
+  const controls = {
+    x: Math.max(
+      area.x,
+      b.x + controlsWidth > area.x + area.width ? b.x + b.width - controlsWidth : b.x,
+    ),
+    y: Math.max(area.y, b.y - 36),
+    width: controlsWidth,
+    height: 32,
+  };
+  const size = card.hover?.size;
+  const preview = size
+    ? {
+        x: Math.max(
+          area.x + 12,
+          Math.min(b.x, area.x + area.width - Math.min(size.width, area.width - 24) - 12),
+        ),
+        y: 0,
+        width: Math.max(1, Math.min(size.width, area.width - 24)),
+        height: Math.max(1, Math.min(size.height, area.height - 24)),
+      }
+    : undefined;
+  if (preview) {
+    const below = b.y + b.height + 8;
+    preview.y = Math.max(
+      area.y + 12,
+      Math.min(
+        below + preview.height <= area.y + area.height - 12 ? below : b.y - preview.height - 44,
+        area.y + area.height - preview.height - 12,
+      ),
+    );
+  }
+  return { controls, preview };
+}
+
+export function overlayViewport(cards: readonly LayerCard[], area: Rect): Rect {
+  const regions = cards
+    .filter((card) => card.visible)
+    .flatMap((card) =>
+      [
+        card.bounds,
+        card.overlayControls,
+        card.overlayPreview,
+        {
+          x: Math.max(area.x, Math.min(card.bounds.x, area.x + area.width - 300)),
+          y: Math.max(area.y, Math.min(card.bounds.y - 36, area.y + area.height - 280)),
+          width: Math.min(300, area.width),
+          height: Math.min(280, area.height),
+        },
+      ].filter((r): r is Rect => !!r),
+    );
+  if (!regions.length) return { x: area.x, y: area.y, width: 1, height: 1 };
+  const x = Math.min(...regions.map((r) => r.x)),
+    y = Math.min(...regions.map((r) => r.y));
+  return {
+    x,
+    y,
+    width: Math.max(...regions.map((r) => r.x + r.width)) - x,
+    height: Math.max(...regions.map((r) => r.y + r.height)) - y,
+  };
+}
+
 const boundsSchema = z.strictObject({
   x: z.number().finite().min(-1000000).max(1000000),
   y: z.number().finite().min(-1000000).max(1000000),
@@ -75,15 +141,15 @@ export class DesktopOverlayLayout {
   }
   place(card: LayerCard, displayId: string, area: Rect, index: number): Rect {
     const saved = this.get(overlayPanelKey(card))?.positions[displayId];
-    const width = Math.min(Math.max(240, saved?.width ?? 320), Math.max(1, area.width - 32));
-    const height = Math.min(
-      Math.max(
-        64,
-        saved?.height ??
-          (card.renderKind === "screenshot" ? 240 : card.renderKind === "notes" ? 160 : 112),
-      ),
-      Math.max(1, area.height - 136),
+    // Retain the bar's independent position, including older saved layouts,
+    // but always take the current content size from its desktop owner.
+    const scale = Math.min(
+      1,
+      Math.max(1, area.width - 24) / card.bounds.width,
+      Math.max(1, area.height - 122) / card.bounds.height,
     );
+    const width = card.bounds.width * scale;
+    const height = card.bounds.height * scale;
     const columns = Math.max(1, Math.floor((area.width - 32) / (Math.min(340, width) + 20)));
     const x =
       saved?.x ??

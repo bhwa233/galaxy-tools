@@ -259,8 +259,37 @@ export default function trafficBackend(lifetime: BackendContext): BackendPlugin 
           throw new Error("Valid process selection required");
         return pages.pack(
           command,
-          await processes.connections(input.appId, readScope(), context.signal),
+          await processes.connections(
+            input.appId,
+            readScope(),
+            context.signal,
+            input.processInstanceIds === undefined
+              ? undefined
+              : readInstanceIds(input.processInstanceIds),
+          ),
         );
+      }
+      if (activation.commandId === "process.action") {
+        if (typeof input.appId !== "string" || !/^[a-f0-9]{32}$/.test(input.appId))
+          throw new Error("请选择有效的程序。");
+        if (
+          input.action !== "reveal" &&
+          input.action !== "properties" &&
+          input.action !== "terminate"
+        )
+          throw new Error("不支持此进程操作。");
+        if (input.action === "terminate" && input.confirmed !== true)
+          throw new Error("结束进程需要明确确认。");
+        const ids = readInstanceIds(input.processInstanceIds);
+        if (input.action !== "terminate" && ids.length !== 1)
+          throw new Error("请选择单个进程文件。");
+        return (await processes.action(
+          input.appId,
+          readScope(),
+          ids,
+          input.action,
+          context.signal,
+        )) as unknown as JsonValue;
       }
       if (!activation.commandId || ["open", "snapshot"].includes(activation.commandId))
         return result();
@@ -287,4 +316,16 @@ export default function trafficBackend(lifetime: BackendContext): BackendPlugin 
       await processes.stop();
     },
   };
+}
+
+function readInstanceIds(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > 256 ||
+    value.some((id) => typeof id !== "string" || !id.length || id.length > 128) ||
+    new Set(value).size !== value.length
+  )
+    throw new Error("请选择有效的进程实例（单次最多 256 个）。");
+  return value;
 }

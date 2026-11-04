@@ -1082,13 +1082,13 @@ function toggleDesktopOverlay(): Promise<void> {
           ),
         );
       if (desktopLayer.overlayActive) {
-        desktopLayer.closeOverlay(true);
+        await desktopLayer.closeOverlay(true);
         return;
       }
       const target = await captureExternalFocus();
       if (maintenance || hostShutdown.isQuitting) return;
       overlayFocusTarget = target;
-      desktopLayer.openOverlay();
+      await desktopLayer.openOverlay();
     });
   overlayToggle = task;
   return task;
@@ -1605,17 +1605,18 @@ export function startDesktopHost(): void {
             onClosed: spec.closed,
           });
           widgetHost!.bindSession(ownSession, layer.win.webContents);
-          if (spec.overlay) {
+          if (!spec.card) {
             bindDevToolsShortcut(layer.win, { isolatedSession: true });
+            layer.win.on("focus", () => desktopLayer?.restackOverlay());
             layer.win.on("blur", () => {
               setTimeout(() => {
                 if (
                   !layer.win.isDestroyed() &&
-                  !layer.win.isFocused() &&
+                  !desktopLayer?.hasOverlayFocus() &&
                   !layer.win.webContents.isDevToolsOpened() &&
                   desktopLayer?.isOverlayWindow(layer.win)
                 )
-                  desktopLayer.closeOverlay(false);
+                  void desktopLayer.closeOverlay(false);
               }, 80);
             });
           }
