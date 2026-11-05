@@ -1,6 +1,6 @@
 {
   "name": "@spark233/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Modular Windows desktop launcher and tools",
   "license": "MIT",
