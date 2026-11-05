@@ -45,7 +45,10 @@ export function defaultConfig(dataDir: string): AppConfig {
     locale: "zh-CN",
     dataDir,
     globalShortcut: "Alt+Space",
-    commandShortcuts: {},
+    commandShortcuts: {
+      "spark233.screenshot:capture": "Meta+A",
+      "spark233.clipboard:quick": "Meta+V",
+    },
     trayMenu: { hidden: [], order: [] },
     desktopLayer: { ...DEFAULT_DESKTOP_LAYER_PREFERENCES },
     closeToTray: true,
@@ -97,10 +100,12 @@ export class HostConfigStore {
       ? persistedConfigSchema.parse(readJson(this.file))
       : {};
     const dataDir = path.resolve(process.env.SPARK233_DATA_DIR || saved.dataDir || defaultDataDir);
+    const defaults = defaultConfig(dataDir);
     this.value = {
-      ...defaultConfig(dataDir),
+      ...defaults,
       ...saved,
       dataDir,
+      commandShortcuts: { ...defaults.commandShortcuts, ...saved.commandShortcuts },
       desktopLayer: {
         ...DEFAULT_DESKTOP_LAYER_PREFERENCES,
         ...saved.desktopLayer,

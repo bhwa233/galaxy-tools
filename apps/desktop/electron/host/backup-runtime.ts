@@ -172,7 +172,7 @@ export function createBackupRuntime(
     ctx.capsules.queues.clear();
     ctx.clearLauncherContext();
     try {
-      ctx.registerShortcuts(ctx.hostConfig.value);
+      ctx.registerShortcuts(ctx.hostConfig.value, true);
     } catch (error) {
       console.error("restored-shortcut-warning", error);
     }

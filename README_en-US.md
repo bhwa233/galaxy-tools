@@ -4,6 +4,8 @@ A Windows 11 x64 desktop launcher and plugin toolkit with notes, screenshots, OC
 
 Built with Electron 45, React 19, TypeScript, Vite and a pnpm workspace. Start with the [documentation index](Docs/README.md) for architecture, protocols and acceptance requirements. [简体中文](README.md)
 
+Default shortcuts: `Alt+Space` opens the launcher, `Win+A` takes a screenshot, `Win+V` opens the quick clipboard window, and `Ctrl+Alt+D` toggles the desktop plugin bar. Change or clear them in Settings → Shortcuts; existing custom bindings are preserved. Occupied shortcuts show a conflict warning while other available bindings remain registered.
+
 ## Development
 
 Use **Node.js 26.13.0 and pnpm 12.16.1**, pinned in `.node-version` and `package.json`. Electron's embedded Node runtime is managed separately.

@@ -778,6 +778,8 @@ export function ShortcutRecorder({ label, value, onChange, validate }: ShortcutR
   const shortcutCheckRequestId = useRef(0);
   const isMounted = useRef(true);
   const platform = shortcutPlatform();
+  const displayValue =
+    platform === "windows" ? value.replace(/\b(?:Meta|Super|Win)\b/g, "Win") : value;
 
   const resolveMsg = (msg: ShortcutMsg): string =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -927,7 +929,7 @@ export function ShortcutRecorder({ label, value, onChange, validate }: ShortcutR
                   value ? "text-ink-soft" : "text-ink-ghost"
                 }`}
               >
-                {value || t("settings.shortcut.notSet", { defaultValue: "未设置" })}
+                {displayValue || t("settings.shortcut.notSet", { defaultValue: "未设置" })}
               </span>
               <span className="text-[10px] text-ink-ghost shrink-0">
                 {t("settings.shortcut.clickToRecord", { defaultValue: "点击录制" })}

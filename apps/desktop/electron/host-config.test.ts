@@ -4,6 +4,44 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import { defaultConfig, HostConfigStore } from "./host-config.js";
 
+it("fills missing command defaults while preserving custom and explicitly disabled bindings", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-shortcut-config-"));
+  try {
+    const dataDir = path.join(root, "notes");
+    const defaults = defaultConfig(dataDir);
+    fs.writeFileSync(
+      path.join(root, "config.json"),
+      JSON.stringify({
+        ...defaults,
+        commandShortcuts: {
+          "spark233.clipboard:quick": "",
+          "fixture.plugin:open": "Ctrl+K",
+        },
+      }),
+    );
+    const store = new HostConfigStore(root, dataDir);
+    expect(store.value.commandShortcuts).toEqual({
+      ...defaults.commandShortcuts,
+      "spark233.clipboard:quick": "",
+      "fixture.plugin:open": "Ctrl+K",
+    });
+    store.save({
+      ...store.value,
+      commandShortcuts: {
+        ...store.value.commandShortcuts,
+        "spark233.screenshot:capture": "Ctrl+J",
+      },
+    });
+    expect(new HostConfigStore(root, dataDir).value.commandShortcuts).toEqual({
+      "spark233.screenshot:capture": "Ctrl+J",
+      "spark233.clipboard:quick": "",
+      "fixture.plugin:open": "Ctrl+K",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("loads old panel settings without restoring the observer and removes them on the next save", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-selection-config-"));
   try {

@@ -4,6 +4,8 @@ Windows 11 x64 桌面启动器与插件工具集，提供便签、截图、OCR�
 
 项目使用 Electron 45、React 19、TypeScript、Vite 和 pnpm workspace。架构、协议、待办与历史验证记录从 [文档索引](Docs/README.md) 进入。[English](README_en-US.md)
 
+默认快捷键：`Alt+Space` 打开启动器，`Win+A` 截图，`Win+V` 唤醒快捷剪贴板，`Ctrl+Alt+D` 切换桌面插件栏。可在「设置 → 快捷键」修改或清空；已有自定义键位继续保留。系统或其他程序占用的组合键会显示冲突提示，其他可用快捷键仍会注册。
+
 ## 开发
 
 工具链固定为 **Node.js 26.13.0 / pnpm 12.16.1**，以 `.node-version` 和 `package.json` 为准。Electron 内嵌的 Node 与开发工具链分别管理。

@@ -5891,7 +5891,10 @@ function defaultConfig(dataDir) {
 		locale: "zh-CN",
 		dataDir,
 		globalShortcut: "Alt+Space",
-		commandShortcuts: {},
+		commandShortcuts: {
+			"spark233.screenshot:capture": "Meta+A",
+			"spark233.clipboard:quick": "Meta+V"
+		},
 		trayMenu: {
 			hidden: [],
 			order: []
@@ -5943,10 +5946,15 @@ var HostConfigStore = class {
 		this.file = path.join(configDir, "config.json");
 		const saved = fs.existsSync(this.file) ? persistedConfigSchema.parse(readJson(this.file)) : {};
 		const dataDir = path.resolve(process.env.SPARK233_DATA_DIR || saved.dataDir || defaultDataDir);
+		const defaults = defaultConfig(dataDir);
 		this.value = {
-			...defaultConfig(dataDir),
+			...defaults,
 			...saved,
 			dataDir,
+			commandShortcuts: {
+				...defaults.commandShortcuts,
+				...saved.commandShortcuts
+			},
 			desktopLayer: {
 				...DEFAULT_DESKTOP_LAYER_PREFERENCES,
 				...saved.desktopLayer

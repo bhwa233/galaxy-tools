@@ -346,12 +346,14 @@ export function createDesktopWindows(
       applyWindowPresentation(existing, layout);
       ctx.windowPresentations.set(existing, presentation);
       layout.visible = true;
-      // Show-first: a reused window already carries a renderer, so waiting for
-      // desktop_ready would make the hotkey pay for the renderer's own latency
-      // (and hide the panel entirely after a reload). The themed background
-      // colour covers the first frames until the content paints.
-      if (!existing.isVisible()) existing.show();
-      if (!existing.isFocused()) existing.focus();
+      // A preloaded launcher has a real native window before React has mounted.
+      // Keep that first cold window hidden until desktop_ready, otherwise the
+      // user sees the themed background as a blank flash. Once a renderer has
+      // acknowledged readiness, reuse remains immediate for later hotkeys.
+      if (!existing.isVisible() && (layout.label !== "launcher" || ctx.ready.has(existing.id))) {
+        existing.show();
+        if (!existing.isFocused()) existing.focus();
+      }
       return existing;
     }
     layout.bounds = safeBounds(layout.bounds, layout.view === "main");

@@ -1955,7 +1955,7 @@ export function startDesktopHost(): void {
             refreshTray();
             if (pluginHost && !maintenance && !hostShortcuts.isRecording)
               try {
-                registerShortcuts(hostConfig.value);
+                registerShortcuts(hostConfig.value, true);
               } catch (error) {
                 console.error("plugin-shortcut-registration", error);
               }
@@ -2030,7 +2030,7 @@ export function startDesktopHost(): void {
       preloadLauncher();
       if (launcher.state().firstRun) await showLauncher();
       try {
-        registerShortcuts(hostConfig.value);
+        registerShortcuts(hostConfig.value, true);
       } catch (error) {
         console.error("shortcut-registration", error);
       }

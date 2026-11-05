@@ -22,6 +22,54 @@ beforeEach(() => {
   native.blocked.clear();
 });
 
+// A Windows-reserved default used to roll back every other registration at startup.
+it("restores available shortcuts despite an occupied binding and retries after it is released", () => {
+  const invoked: string[] = [];
+  const manager = new ShortcutManager({
+    commands: () => [
+      { pluginId: "fixture.plugin", command: { id: "blocked" } },
+      { pluginId: "fixture.plugin", command: { id: "available" } },
+    ],
+    activate: (_id, command) => {
+      invoked.push(command);
+    },
+    showLauncher: () => {
+      invoked.push("launcher");
+    },
+    toggleVisibility: () => {},
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const config = {
+    globalShortcut: "Alt+Space",
+    toggleVisibilityShortcut: "",
+    commandShortcuts: {
+      "fixture.plugin:blocked": "Ctrl+J",
+      "fixture.plugin:available": "Ctrl+K",
+    },
+  };
+  try {
+    native.blocked.add("Ctrl+J");
+    expect(manager.configure(config, { allowUnavailable: true }).join()).toContain("Ctrl+J");
+    native.callbacks.get("Alt+Space")!();
+    native.callbacks.get("Ctrl+K")!();
+    expect(invoked).toEqual(["launcher", "available"]);
+    expect(native.callbacks.has("Ctrl+J")).toBe(false);
+    manager.beginRecording();
+    expect(manager.endRecording(config).join()).toContain("Ctrl+J");
+    native.callbacks.get("Ctrl+K")!();
+    expect(invoked.at(-1)).toBe("available");
+    native.blocked.delete("Ctrl+J");
+    expect(manager.configure(config, { allowUnavailable: true })).toEqual([]);
+    native.callbacks.get("Ctrl+J")!();
+    expect(invoked.at(-1)).toBe("blocked");
+  } finally {
+    manager.dispose();
+  }
+  expect(native.callbacks.size).toBe(0);
+});
+
 it("keeps working bindings on conflicts and releases disabled commands without losing other shortcuts", async () => {
   const invoked: string[] = [];
   let commands: HostShortcutCommand[] = [

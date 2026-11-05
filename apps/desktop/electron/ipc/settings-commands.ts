@@ -26,6 +26,7 @@ export function createSettingsCommands(
     | "refreshWindowPresentations"
     | "migrateNotesDirectory"
     | "hostShortcuts"
+    | "shortcutWarning"
   >,
 ) {
   async function run({ win, command, args, layout, grants }: CommandInvocation): Promise<unknown> {
@@ -209,9 +210,12 @@ export function createSettingsCommands(
       case "start_shortcut_recording":
         ctx.hostShortcuts.beginRecording();
         return;
-      case "stop_shortcut_recording":
-        ctx.hostShortcuts.endRecording(ctx.hostConfig.value);
+      case "stop_shortcut_recording": {
+        const warnings = ctx.hostShortcuts.endRecording(ctx.hostConfig.value);
+        ctx.shortcutWarning = warnings.join(" · ") || undefined;
+        ctx.emit("launcher-status-changed");
         return;
+      }
     }
     throw new AppError("invalidCommand", "Unsupported host command: " + command);
   }

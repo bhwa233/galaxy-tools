@@ -29,6 +29,13 @@ it("preloads without searching and cancels hidden queries before reopening", asy
     expect(desktop.calls.some((call) => call.command === "launcher_query")).toBe(false);
     desktop.emit("launcher-visibility-changed", { visible: true });
     await expect.poll(() => querySession).not.toBe("");
+    // The first visible frame is waiting for the initial query; it must not
+    // briefly claim that the launcher has no entries.
+    await expect
+      .element(
+        page.getByText("没有匹配的入口，试试其他关键词或检查插件是否启用。", { exact: true }),
+      )
+      .not.toBeInTheDocument();
     const previousSession = querySession;
     desktop.emit("launcher-visibility-changed", { visible: false });
     await expect
@@ -210,6 +217,38 @@ it("shows one loading status until all query groups finish", async () => {
     await expect
       .element(page.getByText("输入英文单词、词形或短语；本地查词不联网。", { exact: true }))
       .toBeVisible();
+  } finally {
+    await view.unmount();
+    desktop.restore();
+  }
+});
+
+it("does not query an empty launcher while plugins are still starting", async () => {
+  let pluginsReady = false;
+  const desktop = installDesktopBridge({
+    launcher_state: () => ({ firstRun: false, pluginsReady, commands: [] }),
+    launcher_take_workspace: () => undefined,
+    launcher_cancel_query: () => undefined,
+    launcher_query: (value) => ({
+      sessionId: (value as { sessionId: string }).sessionId,
+      requestId: "ready",
+      revision: 0,
+      pending: false,
+      items: [],
+      groups: [],
+    }),
+  });
+  const view = await render(<Launcher />);
+  try {
+    await expect
+      .poll(() => desktop.calls.some((call) => call.command === "launcher_state"))
+      .toBe(true);
+    expect(desktop.calls.some((call) => call.command === "launcher_query")).toBe(false);
+    pluginsReady = true;
+    desktop.emit("launcher-status-changed", undefined);
+    await expect
+      .poll(() => desktop.calls.some((call) => call.command === "launcher_query"))
+      .toBe(true);
   } finally {
     await view.unmount();
     desktop.restore();

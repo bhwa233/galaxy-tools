@@ -10,7 +10,7 @@ interface ParsedShortcut {
 
 const KEY_DISPLAY_NAMES: Record<string, string> = {
   Control: "Ctrl",
-  Meta: "Meta",
+  Meta: "Win",
   Backspace: "←",
   ArrowUp: "↑",
   ArrowDown: "↓",

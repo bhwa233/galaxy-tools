@@ -393,7 +393,7 @@ export function Launcher() {
   );
   useEffect(() => {
     const generation = ++queryGeneration.current;
-    if (!panelVisible || !state || composing) {
+    if (!panelVisible || !state || !state.pluginsReady || composing) {
       setLoading(false);
       return;
     }
@@ -1146,7 +1146,7 @@ export function Launcher() {
                 {t("launcher.searching", { defaultValue: "正在查询…" })}
               </div>
             )}
-            {!loading && !composing && !result?.pending && (
+            {result && !loading && !composing && !result.pending && (
               <CommandEmpty>
                 {t("launcher.empty", {
                   defaultValue: "没有匹配的入口，试试其他关键词或检查插件是否启用。",

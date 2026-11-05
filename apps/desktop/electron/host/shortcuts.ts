@@ -75,7 +75,7 @@ export class ShortcutManager {
       }
     };
   }
-  configure(config: Configuration): void {
+  configure(config: Configuration, { allowUnavailable = false } = {}): string[] {
     this.assertActive();
     const english = this.english(config);
     const identity = (shortcut: string) =>
@@ -149,6 +149,7 @@ export class ShortcutManager {
         ]);
     }
     const next = new Map<string, { shortcut: string; action: () => void | Promise<unknown> }>();
+    const warnings: string[] = [];
     try {
       if (!this.recording)
         for (const [shortcut, action] of bindings) {
@@ -156,20 +157,26 @@ export class ShortcutManager {
           const key = identity(shortcut);
           const existing = this.owned.get(key);
           const entry = existing ?? { shortcut, action };
-          if (
-            !existing &&
-            !globalShortcut.register(
-              shortcut,
-              this.invoke(() => entry.action()),
+          try {
+            if (
+              !existing &&
+              !globalShortcut.register(
+                shortcut,
+                this.invoke(() => entry.action()),
+              )
             )
-          )
-            throw new AppError(
-              "shortcutConflict",
-              english
-                ? "Shortcut " + shortcut + " could not be registered. Change it in Settings."
-                : "快捷键 " + shortcut + " 已被系统或其他程序占用，请在设置中更改",
-              { shortcut },
-            );
+              throw new AppError(
+                "shortcutConflict",
+                english
+                  ? "Shortcut " + shortcut + " could not be registered. Change it in Settings."
+                  : "快捷键 " + shortcut + " 已被系统或其他程序占用，请在设置中更改",
+                { shortcut },
+              );
+          } catch (error) {
+            if (!allowUnavailable) throw error;
+            warnings.push(error instanceof Error ? error.message : String(error));
+            continue;
+          }
           next.set(key, entry);
         }
     } catch (error) {
@@ -185,6 +192,7 @@ export class ShortcutManager {
     }
     this.owned = next;
     this.configuration = { ...config, commandShortcuts: { ...config.commandShortcuts } };
+    return warnings;
   }
 
   check(shortcut: string): ShortcutCheck {
@@ -219,10 +227,10 @@ export class ShortcutManager {
     this.recording = true;
     this.release();
   }
-  endRecording(config: Configuration): void {
+  endRecording(config: Configuration): string[] {
     this.assertActive();
     this.recording = false;
-    this.configure(config);
+    return this.configure(config, { allowUnavailable: true });
   }
   dispose(): void {
     if (this.disposed) return;

@@ -26,7 +26,7 @@ describe("shortcutRecorder", () => {
   });
 
   test("formats held meta keys for the recorder UI", () => {
-    expect(formatHeldKeys(["Meta", "P"])).toBe("Meta + P");
+    expect(formatHeldKeys(["Meta", "P"])).toBe("Win + P");
   });
 
   test("formats held mac keys with Command before Option", () => {
