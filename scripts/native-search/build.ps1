@@ -300,7 +300,7 @@ if (-not $NinjaExecutable) {
     $NinjaExecutable = if (Test-Path -LiteralPath $portableNinja) { $portableNinja } else { (Get-Command ninja -ErrorAction Stop).Source }
 }
 $binaryRoot = Join-Path $BuildRoot 'build'
-& $CMakeExecutable -S (Join-Path $repoRoot 'packages/official/search/native-src') -B $binaryRoot -G Ninja "-DCMAKE_MAKE_PROGRAM=$NinjaExecutable" "-DSPARK233_PULSE_SOURCE=$sourceRoot" -DCMAKE_BUILD_TYPE=Release
+& $CMakeExecutable -S (Join-Path $repoRoot 'packages/official/search/native-src') -B $binaryRoot -G Ninja "-DCMAKE_MAKE_PROGRAM=$NinjaExecutable" "-DSPARK233_PULSE_SOURCE=$($sourceRoot.Replace('\', '/'))" -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'Search configure failed' }
 & $CMakeExecutable --build $binaryRoot --target spark233_search spark233_search_probe pulse_index_caller_filter_test --parallel 4
 if ($LASTEXITCODE -ne 0) { throw 'Search build failed' }

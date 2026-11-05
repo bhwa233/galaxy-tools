@@ -74,25 +74,40 @@ export async function extractUToolsArchive(
       const metadata: unknown = JSON.parse(decryptMetadata("header", header).toString("utf8"));
       if (
         !object(metadata) ||
-        metadata.serverDecrypt ||
-        typeof metadata.pluginId !== "string" ||
-        !/^[a-zA-Z0-9_-]{1,160}$/.test(metadata.pluginId) ||
+        (metadata.serverDecrypt !== undefined && metadata.serverDecrypt !== false) ||
         typeof metadata.key !== "string" ||
         !/^[a-f0-9]{64}$/i.test(metadata.key) ||
         typeof metadata.iv !== "string" ||
         !/^[a-f0-9]{32}$/i.test(metadata.iv) ||
         !Number.isSafeInteger(metadata.timestamp) ||
-        metadata.timestamp <= 0 ||
-        typeof metadata.encrypt2 !== "string" ||
-        !/^(?:[a-f0-9]{2}){16,512}$/i.test(metadata.encrypt2)
+        metadata.timestamp <= 0
       )
         throw new Error("不支持此 UPXS 元数据或所需平台服务");
-      if (
-        decryptMetadata("check", Buffer.from(metadata.encrypt2, "hex")).toString("utf8") !==
-        metadata.pluginId + String(metadata.timestamp)
+      if (Object.hasOwn(metadata, "pluginId") || Object.hasOwn(metadata, "encrypt2")) {
+        // A partial identity extension must never fall back to the legacy layout.
+        if (
+          typeof metadata.pluginId !== "string" ||
+          !/^[a-zA-Z0-9_-]{1,160}$/.test(metadata.pluginId) ||
+          typeof metadata.encrypt2 !== "string" ||
+          !/^(?:[a-f0-9]{2}){16,512}$/i.test(metadata.encrypt2)
+        )
+          throw new Error("UPXS 插件身份元数据不完整或无效");
+        if (
+          decryptMetadata("check", Buffer.from(metadata.encrypt2, "hex")).toString("utf8") !==
+          metadata.pluginId + String(metadata.timestamp)
+        )
+          throw new Error("UPXS 插件身份校验失败");
+        packageId = metadata.pluginId;
+      } else if (
+        Object.keys(metadata).some(
+          (key) =>
+            !["key", "iv", "timestamp", "serverDecrypt", "os", "app", "developer"].includes(key),
+        ) ||
+        ["os", "app", "developer"].some(
+          (key) => Object.hasOwn(metadata, key) && !object(metadata[key]),
+        )
       )
-        throw new Error("UPXS 插件身份校验失败");
-      packageId = metadata.pluginId;
+        throw new Error("不支持此 UPXS 元数据格式");
       source = path.join(path.dirname(archive), "utools-payload.bin");
       await pipeline(
         createReadStream(archive, { start: 4 + length }),

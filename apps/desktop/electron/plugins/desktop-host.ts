@@ -51,6 +51,7 @@ import { resolveRegistryPluginPackage } from "./package-source.js";
 import { createWebPluginRuntime, type WebPluginController } from "./web-host.js";
 import { createNativePluginRuntime } from "./native-runtime.js";
 import { createUToolsRuntime } from "./utools-runtime.js";
+import { loadUToolsNativeId } from "./utools-store.js";
 import { UToolsCatalog } from "./utools-catalog.js";
 import { compatibilityManifest, utoolsPluginId, utoolsUpstreamVersion } from "./utools-manifest.js";
 import {
@@ -309,6 +310,7 @@ export class DesktopPluginHost {
             dataDir: this.manager.dataDirectory(installation.pluginId),
             cacheDir: confined(this.paths.cacheRoot, "utools", scope.owner.instanceId),
             hostVersion: options.hostVersion,
+            getNativeId: () => loadUToolsNativeId(confined(this.root, "utools-native-id")),
             trusted: installation.grant.native,
             startupCheckOnly,
             desktop: options.utoolsDesktop,

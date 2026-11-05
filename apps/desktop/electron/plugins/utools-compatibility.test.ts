@@ -2,8 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { UToolsStore } from "./utools-store.js";
-import { stageDevelopmentPluginPackage, stageLocalPluginPackage } from "./package-installer.js";
+import { loadUToolsNativeId, UToolsStore } from "./utools-store.js";
+import {
+  stageDevelopmentPluginPackage,
+  stageLocalPluginPackage,
+  stageUToolsPluginPackage,
+} from "./package-installer.js";
 import { createPackage, getRawHeader, uncache } from "@electron/asar";
 import { gzipSync } from "node:zlib";
 import { createCipheriv } from "node:crypto";
@@ -11,6 +15,11 @@ import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { upxsProfile } from "./utools-upxs-profile.js";
 import { defaultHostEnvironment } from "./manifest.js";
 import { PluginManager } from "./manager.js";
+import {
+  createUToolsCallbackQueue,
+  loadUToolsPreload,
+  projectUToolsList,
+} from "./utools-preload-runtime.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -21,6 +30,93 @@ const temporary = () => {
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 };
+
+it("keeps a device document namespace stable and never replaces a damaged identity", () => {
+  const root = temporary();
+  const file = path.join(root, "host-a", "native-id");
+  const first = loadUToolsNativeId(file);
+  expect(loadUToolsNativeId(file)).toBe(first);
+  expect(loadUToolsNativeId(path.join(root, "host-b", "native-id"))).not.toBe(first);
+  fs.writeFileSync(file, "damaged");
+  expect(() => loadUToolsNativeId(file)).toThrow("不能自动更换已有数据身份");
+  expect(fs.readFileSync(file, "utf8")).toBe("damaged");
+});
+
+it("bounds large legacy lists while preserving the original selection records", () => {
+  const rows = Array.from({ length: 1200 }, (_, index) => ({
+    title: "结果" + index,
+    originalId: index,
+  }));
+  const large = projectUToolsList(rows);
+  expect(large.truncated).toBe(true);
+  expect(large.list.length).toBeGreaterThan(0);
+  expect(large.list.length).toBeLessThan(rows.length);
+  expect(large.rows[0]).toBe(rows[0]);
+  const filtered = projectUToolsList([rows[1199]]);
+  expect(filtered.truncated).toBe(false);
+  expect(filtered.rows[Number(filtered.list[0]!.id)]).toBe(rows[1199]);
+  expect(() => projectUToolsList({})).toThrow("格式");
+});
+
+it("provides module-relative CommonJS bindings privately to trusted preload code", () => {
+  const root = temporary();
+  const filename = path.join(root, "preload.js");
+  fs.writeFileSync(path.join(root, "dependency.cjs"), "module.exports = '相对依赖';");
+  fs.writeFileSync(
+    filename,
+    "module.exports = { encoded: Buffer.from('银河').toString('base64'), " +
+      "dependency: require('./dependency.cjs'), filename: module.filename, " +
+      "sameThis: this === exports, marker: process.compatibilityMarker, " +
+      "privateGlobal: global.compatibilityMarker };",
+  );
+  const processBinding = Object.assign(Object.create(process), { compatibilityMarker: "process" });
+  const globalBinding = Object.assign(Object.create(globalThis), { compatibilityMarker: "global" });
+  expect(
+    loadUToolsPreload(filename, { process: processBinding, Buffer, global: globalBinding }),
+  ).toEqual({
+    encoded: "6ZO25rKz",
+    dependency: "相对依赖",
+    filename,
+    sameThis: true,
+    marker: "process",
+    privateGlobal: "global",
+  });
+  expect(Object.hasOwn(process, "compatibilityMarker")).toBe(false);
+  expect(Object.hasOwn(globalThis, "compatibilityMarker")).toBe(false);
+});
+
+it("waits for asynchronous out state before enter and keeps callback errors observable", async () => {
+  const queue = createUToolsCallbackQueue();
+  let completeSave!: () => void;
+  const saving = new Promise<void>((resolve) => {
+    completeSave = resolve;
+  });
+  let saved = "",
+    active = "file A";
+  const out = queue("out", async () => {
+    await saving;
+    saved = active;
+    active = "";
+  });
+  const enter = queue("enter", () => {
+    active = "file B";
+  });
+  await Promise.resolve();
+  expect(active).toBe("file A");
+  completeSave();
+  await Promise.all([out, enter]);
+  expect(saved).toBe("file A");
+  expect(active).toBe("file B");
+  await expect(
+    queue("out", () => {
+      throw new Error("save failed");
+    }),
+  ).rejects.toThrow("save failed");
+  await queue("enter", () => {
+    active = "retry";
+  });
+  expect(active).toBe("retry");
+});
 
 async function packageFixture() {
   const root = temporary(),
@@ -56,7 +152,7 @@ async function packageFixture() {
   };
 }
 
-it("imports both uTools containers without execution and rejects modified authenticated metadata", async () => {
+it("imports both UPXS layouts without execution and rejects invalid metadata or store identity", async () => {
   const f = await packageFixture();
   const compressed = gzipSync(f.bytes);
   const encrypt = (kind: "header" | "check", bytes: Uint8Array) => {
@@ -72,18 +168,34 @@ it("imports both uTools containers without execution and rejects modified authen
     iv: "02".repeat(16),
     encrypt2: encrypt("check", Buffer.from("fixture-package1")).toString("hex"),
   };
-  const header = encrypt("header", Buffer.from(JSON.stringify(metadata))),
-    length = Buffer.alloc(4);
-  length.writeUInt32LE(header.length);
-  const cipher = createCipheriv(
-    "aes-256-cbc",
-    Buffer.from(metadata.key, "hex"),
-    Buffer.from(metadata.iv, "hex"),
-  );
-  const encrypted = Buffer.concat([length, header, cipher.update(compressed), cipher.final()]);
+  const legacy = { key: metadata.key, iv: metadata.iv, timestamp: metadata.timestamp };
+  const wrap = (fields: Record<string, unknown>) => {
+    const header = encrypt("header", Buffer.from(JSON.stringify(fields))),
+      length = Buffer.alloc(4);
+    length.writeUInt32LE(header.length);
+    const cipher = createCipheriv(
+      "aes-256-cbc",
+      Buffer.from(metadata.key, "hex"),
+      Buffer.from(metadata.iv, "hex"),
+    );
+    return Buffer.concat([length, header, cipher.update(compressed), cipher.final()]);
+  };
+  const encrypted = wrap(metadata);
+  // Seven real store packages have only key/iv/timestamp. Requiring the
+  // extended identity fields rejected them before any payload was inspected.
   for (const [extension, bytes] of [
     ["upx", compressed],
     ["upxs", encrypted],
+    ["legacy.upxs", wrap(legacy)],
+    [
+      "export.upxs",
+      wrap({
+        ...legacy,
+        os: { platform: "win32" },
+        app: { version: "6.0.0" },
+        developer: { name: "Fixture" },
+      }),
+    ],
   ] as const) {
     const file = path.join(f.root, "fixture." + extension);
     fs.writeFileSync(file, bytes);
@@ -103,6 +215,47 @@ it("imports both uTools containers without execution and rejects modified authen
   await expect(
     stageLocalPluginPackage(bad, defaultHostEnvironment("0.0.1"), f.paths("bad")),
   ).rejects.toThrow("认证");
+  for (const [name, fields] of [
+    ["partial-identity", { ...metadata, pluginId: undefined }],
+    ["server-decrypt", { ...legacy, serverDecrypt: true }],
+    ["unknown-layout", { ...legacy, futureFormat: 2 }],
+    ["invalid-export-info", { ...legacy, os: "win32" }],
+    [
+      "manifest-mismatch",
+      {
+        ...metadata,
+        pluginId: "different-package",
+        encrypt2: encrypt("check", Buffer.from("different-package1")).toString("hex"),
+      },
+    ],
+  ] as const) {
+    const file = path.join(f.root, name + ".upxs");
+    fs.writeFileSync(file, wrap(fields));
+    await expect(
+      stageLocalPluginPackage(file, defaultHostEnvironment("0.0.1"), f.paths(name)),
+    ).rejects.toThrow();
+  }
+  for (const [catalogId, version] of [
+    ["different-package", "1.0.0"],
+    ["fixture-package", "2.0.0"],
+  ] as const) {
+    const paths = f.paths(catalogId + version);
+    await expect(
+      stageUToolsPluginPackage(
+        {
+          catalogId,
+          version,
+          displayName: "Fixture",
+          pageURL: "https://www.u-tools.cn/plugins/detail/Fixture/",
+          downloadURL: "https://res.u-tools.cn/plugins/fixture.upxs",
+        },
+        defaultHostEnvironment("0.0.1"),
+        paths,
+        { fetch: async () => new Response(new Uint8Array(wrap(legacy))) },
+      ),
+    ).rejects.toThrow("目录身份或版本不一致");
+    expect(fs.readdirSync(paths.versionsRoot)).toEqual([]);
+  }
 });
 
 it("rejects hostile ASAR paths, external files and expansion limits before publishing a version", async () => {

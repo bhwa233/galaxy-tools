@@ -3,6 +3,23 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+/** A host-local installation identity for device-specific plugin documents.
+ * It does not identify a uTools account or grant platform authorization. */
+export function loadUToolsNativeId(file: string): string {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  try {
+    fs.writeFileSync(file, randomUUID(), { encoding: "utf8", flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  if (!fs.statSync(file).isFile() || fs.statSync(file).size > 64)
+    throw new Error("uTools 本地设备标识无效，不能自动更换已有数据身份");
+  const id = fs.readFileSync(file, "utf8");
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id))
+    throw new Error("uTools 本地设备标识损坏，不能自动更换已有数据身份");
+  return id;
+}
+
 /** Node's SQLite supplies transactions, durability and cross-window locking.
  * The existing async SDK store has no uTools revision or synchronous semantics. */
 export class UToolsStore {

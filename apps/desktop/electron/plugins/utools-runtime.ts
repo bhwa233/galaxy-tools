@@ -37,6 +37,7 @@ interface Options {
   dataDir: string;
   cacheDir: string;
   hostVersion: string;
+  getNativeId?: () => string;
   trusted: boolean;
   startupCheckOnly: boolean;
   show?: boolean;
@@ -256,6 +257,7 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
             .href,
           title: options.metadata.spark233.displayName,
           hostVersion: options.hostVersion,
+          nativeId: options.getNativeId?.(),
           dataDir: options.dataDir,
           cacheDir: options.cacheDir,
           theme: options.getTheme(),

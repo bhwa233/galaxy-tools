@@ -15,6 +15,7 @@ interface ShellState {
   inputFocus?: boolean;
   inputSelect?: boolean;
   list?: Array<{ id: string; title: string; description?: string }> | null;
+  listTruncated?: boolean;
   error?: string;
   desktopAvailable?: boolean;
   desktop?: UToolsDesktopPresentation | null;
@@ -174,7 +175,11 @@ export function Shell() {
             <Input
               ref={input}
               value={text}
-              placeholder={state.subInput.placeholder || "搜索"}
+              placeholder={
+                state.listTruncated
+                  ? "结果较多，请输入关键词缩小范围"
+                  : state.subInput.placeholder || "搜索"
+              }
               aria-label={state.subInput.placeholder || "插件输入"}
               onChange={(event) => {
                 setText(event.target.value);

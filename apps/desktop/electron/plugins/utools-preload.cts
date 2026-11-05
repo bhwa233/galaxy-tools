@@ -1,7 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-import { createRequire } from "node:module";
+import { Buffer } from "node:buffer";
+import {
+  createUToolsCallbackQueue,
+  loadUToolsPreload,
+  projectUToolsList,
+} from "./utools-preload-runtime.js";
 import type { UToolsFeature } from "./utools-manifest.js";
 const { ipcRenderer } = require("electron") as typeof import("electron");
 type Callback = (...args: unknown[]) => unknown;
@@ -11,6 +13,7 @@ const call = (operation: string, ...args: unknown[]): any => {
   return result.value;
 };
 const config = call("bootstrap");
+const callbackQueue = createUToolsCallbackQueue();
 const handlers = new Map<string, Callback[]>();
 const on = (name: string, callback: Callback) => {
   if (typeof callback !== "function") throw new Error("回调必须是函数");
@@ -30,14 +33,11 @@ let ready = false;
 let preloadFailure: string | undefined;
 const updateUI = (state: unknown) => call("ui", state);
 const setList = (rows: unknown) => {
-  if (!Array.isArray(rows) || rows.length > 1000) throw new Error("列表超过 1000 项或格式不正确");
-  legacyRows = rows;
+  const projected = projectUToolsList(rows);
+  legacyRows = projected.rows;
   updateUI({
-    list: rows.map((item, index) => ({
-      id: String(index),
-      title: String(item.title || item.text || "").slice(0, 1000),
-      description: String(item.description || "").slice(0, 2000),
-    })),
+    list: projected.list,
+    listTruncated: projected.truncated,
   });
 };
 const storage = Object.fromEntries(
@@ -128,6 +128,11 @@ const api: Record<string, unknown> = {
   isMacOs: () => process.platform === "darwin",
   allAiModels: async () => [],
   getAppVersion: () => config.hostVersion,
+  getNativeId: () => {
+    if (typeof config.nativeId !== "string" || !config.nativeId)
+      throw new Error("宿主未提供 uTools 本地设备标识");
+    return config.nativeId;
+  },
   getPluginLocalDataPath: () => config.localDataDir,
   getPluginTempPath: () => config.tempDir,
   getUser: () => null,
@@ -156,65 +161,66 @@ const api: Record<string, unknown> = {
   dipToScreenPoint: (point: unknown) => call("screen", "dipToScreenPoint", point),
   openDeveloperTools: () => call("devtools"),
 };
-const utools = new Proxy(api, {
-  get: (target, key) => {
-    if (typeof key !== "string" || key === "then") return undefined;
-    if (Object.hasOwn(target, key)) return target[key];
-    return (..._args: unknown[]) => {
-      const message = `当前兼容版本不支持 utools.${key}`;
-      call("unsupported", message);
-      throw new Error(message);
-    };
-  },
-});
+// Optional API probes must see unavailable methods as undefined, and ordinary
+// object methods such as valueOf must retain their JavaScript semantics.
+const utools = api;
 (window as unknown as Record<string, unknown>).utools = utools;
 (globalThis as unknown as Record<string, unknown>).utools = utools;
 ipcRenderer.on("utools:request", async (_event, { id, operation, value }) => {
-  try {
-    if (preloadFailure) throw new Error(preloadFailure);
-    let result: unknown;
-    if (operation === "ready") {
-      if (!ready) {
-        ready = true;
-        await emit("ready");
+  await callbackQueue(operation, async () => {
+    try {
+      if (preloadFailure) throw new Error(preloadFailure);
+      let result: unknown;
+      if (operation === "ready") {
+        if (!ready) {
+          ready = true;
+          await emit("ready");
+        }
+      } else if (operation === "enter") {
+        const revision = ++listRevision;
+        subInput = undefined;
+        action = value;
+        legacy = (window as unknown as { exports?: Record<string, any> }).exports?.[value.code];
+        if (legacy?.mode === "list") {
+          updateUI({
+            list: [],
+            listTruncated: false,
+            subInput: { placeholder: legacy.args?.placeholder || "搜索", value: "", focus: true },
+          });
+          await legacy.args?.enter?.(value, (rows: unknown) => {
+            if (revision === listRevision) setList(rows);
+          });
+        } else if (legacy?.mode === "none") await legacy.args?.enter?.(value);
+        await emit("enter", value);
+      } else if (operation === "out") {
+        listRevision++;
+        await emit("out", !!value);
+        subInput = undefined;
+        legacy = undefined;
+        action = undefined;
+        // Let frontend state from out commit before a following enter can reuse
+        // the same component. This also works for hidden desktop participants.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      } else if (operation === "query") result = pushQuery ? await pushQuery(value) : [];
+      else if (operation === "select") result = pushSelect ? await pushSelect(value) : true;
+      else if (operation === "input") {
+        const revision = ++listRevision;
+        if (subInput) await subInput({ text: value });
+        if (legacy?.mode === "list" && revision === listRevision)
+          await legacy.args?.search?.(action, value, (rows: unknown) => {
+            if (revision === listRevision) setList(rows);
+          });
+      } else if (operation === "list-select")
+        await legacy?.args?.select?.(action, legacyRows[Number(value)]);
+      else if (operation === "theme") {
+        config.theme = value;
+        await emit("theme", value);
       }
-    } else if (operation === "enter") {
-      const revision = ++listRevision;
-      subInput = undefined;
-      action = value;
-      legacy = (window as unknown as { exports?: Record<string, any> }).exports?.[value.code];
-      if (legacy?.mode === "list") {
-        updateUI({
-          list: [],
-          subInput: { placeholder: legacy.args?.placeholder || "搜索", value: "", focus: true },
-        });
-        await legacy.args?.enter?.(value, (rows: unknown) => {
-          if (revision === listRevision) setList(rows);
-        });
-      } else if (legacy?.mode === "none") await legacy.args?.enter?.(value);
-      await emit("enter", value);
-    } else if (operation === "out") {
-      listRevision++;
-      await emit("out", !!value);
-    } else if (operation === "query") result = pushQuery ? await pushQuery(value) : [];
-    else if (operation === "select") result = pushSelect ? await pushSelect(value) : true;
-    else if (operation === "input") {
-      const revision = ++listRevision;
-      if (subInput) await subInput({ text: value });
-      if (legacy?.mode === "list" && revision === listRevision)
-        await legacy.args?.search?.(action, value, (rows: unknown) => {
-          if (revision === listRevision) setList(rows);
-        });
-    } else if (operation === "list-select")
-      await legacy?.args?.select?.(action, legacyRows[Number(value)]);
-    else if (operation === "theme") {
-      config.theme = value;
-      await emit("theme", value);
+      ipcRenderer.send("utools:result", { id, value: result });
+    } catch (error) {
+      ipcRenderer.send("utools:result", { id, error: String(error) });
     }
-    ipcRenderer.send("utools:result", { id, value: result });
-  } catch (error) {
-    ipcRenderer.send("utools:result", { id, error: String(error) });
-  }
+  });
 });
 window.addEventListener("error", (event) => {
   call("unsupported", String(event.error || event.message));
@@ -226,19 +232,7 @@ if (config.preload) {
   // uTools defines the entry as CommonJS even when the frontend package is ESM.
   // Node's VM and createRequire preserve module-relative requires and filenames.
   try {
-    const source = fs.readFileSync(config.preload, "utf8").replace(/^#![^\n]*\n/, "");
-    const mod = { exports: {} };
-    const wrapper = vm.runInThisContext(
-      "(function(require,module,exports,__filename,__dirname){\n" + source + "\n})",
-      { filename: config.preload },
-    );
-    wrapper(
-      createRequire(config.preload),
-      mod,
-      mod.exports,
-      config.preload,
-      path.dirname(config.preload),
-    );
+    loadUToolsPreload(config.preload, { process, Buffer, global: globalThis });
   } catch (error) {
     preloadFailure = "preload 加载失败: " + String(error);
     call("unsupported", preloadFailure);

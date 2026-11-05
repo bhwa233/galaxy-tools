@@ -67,6 +67,8 @@ export async function startUToolsRunner(): Promise<void> {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  let pendingOut: Promise<any> | undefined;
+  let outUncertain = false;
   const send = (value: object) => process.send?.({ ...value, token: configuration?.token });
   const reply = (id: string, value?: unknown, error?: unknown) =>
     send({ id, ...(error ? { error: String(error).slice(0, 4096) } : { value }) });
@@ -107,17 +109,42 @@ export async function startUToolsRunner(): Promise<void> {
       height: Math.max(1, height - top - (desktop ? 1 : 0)),
     });
   };
-  const request = (operation: string, value?: unknown, timeout = 15000): Promise<any> =>
-    new Promise((resolve, reject) => {
+  const request = (operation: string, value?: unknown, timeout = 15000): Promise<any> => {
+    if (operation === "out" && value === false && pendingOut) return pendingOut;
+    const result = new Promise((resolve, reject) => {
       if (!view || view.webContents.isDestroyed()) return reject(new Error("插件页面已关闭"));
       const id = randomUUID();
       const timer = setTimeout(() => {
         calls.delete(id);
         reject(new Error("插件回调超时: " + operation));
       }, timeout);
-      calls.set(id, { resolve, reject, timer });
+      calls.set(id, {
+        resolve: (value) => {
+          if (operation === "out") entered = false;
+          resolve(value);
+        },
+        reject,
+        timer,
+      });
       view.webContents.send("utools:request", { id, operation, value });
     });
+    if (operation === "out" && value === false) {
+      pendingOut = result;
+      void result.then(
+        () => {
+          outUncertain = false;
+          if (pendingOut === result) pendingOut = undefined;
+        },
+        () => {
+          // A late callback can still clear the page after its acknowledgement
+          // times out. The next activation must retry the lifecycle handshake.
+          outUncertain = true;
+          if (pendingOut === result) pendingOut = undefined;
+        },
+      );
+    }
+    return result;
+  };
   const update = (value: Record<string, unknown>) => {
     for (const key of ["subInputValue", "inputFocus", "inputSelect"]) delete state[key];
     Object.assign(state, value);
@@ -803,13 +830,21 @@ export async function startUToolsRunner(): Promise<void> {
       }
       if (operation === "activate") {
         const { revealOnly, ...action } = value;
-        if (revealOnly === true && desktop && entered && state.featureCode === action.code) {
-          await hostRequest({ type: "panel", revision: desktop.revision, action: "show" });
-          window!.focus();
+        await pendingOut;
+        if (revealOnly === true && entered && !outUncertain && state.featureCode === action.code) {
+          if (desktop)
+            await hostRequest({ type: "panel", revision: desktop.revision, action: "show" });
+          if (configuration.show !== false) {
+            window!.show();
+            window!.focus();
+            shown = true;
+            visible = true;
+          }
           return reply(id, { ok: true });
         }
+        if (entered || outUncertain) await request("out", false);
         wantsVisible = true;
-        update({ list: null, error: "", subInput: null });
+        update({ list: null, listTruncated: false, error: "", subInput: null });
         await request("enter", action);
         entered = true;
         state.featureCode = action.code;
@@ -822,8 +857,12 @@ export async function startUToolsRunner(): Promise<void> {
         return reply(id, { ok: true });
       }
       if (operation === "select") {
+        await pendingOut;
         wantsVisible = true;
         if ((await request("select", value)) === true) {
+          const selectedVisibility = wantsVisible;
+          if (entered) await request("out", false);
+          wantsVisible = selectedVisibility;
           await request("enter", value);
           entered = true;
           state.featureCode = value.code;
