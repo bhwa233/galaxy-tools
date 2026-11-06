@@ -387,12 +387,6 @@ importers:
 
   examples/plugins/desktop-widgets: {}
 
-  examples/plugins/hello-web:
-    devDependencies:
-      '@spark233/sdk':
-        specifier: workspace:*
-        version: link:../../../packages/sdk
-
   packages/official/applications:
     devDependencies:
       vitest:

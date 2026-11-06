@@ -193,7 +193,7 @@ versions are independent.
 | `commands[].launcher.preferSentence` | Ranks an applicable action for sentence input, without executing it.                                                                                                                                                                |
 | `commands[].progress`                | `{ title, cancelCommand, translations? }`; cancellation stays visible until the original action settles. The cancel command must be public and belong to this plugin.                                                               |
 
-See `examples/plugins/hello-web/package.json`: no launcher source registration
+See `packages/official/traffic/package.json`: no launcher source registration
 is required. `reuse` defaults to singleton; `document` uses activation
 `parameters.documentId` when supplied, otherwise a new document identity.
 `presentation` defaults to standard. Titles fall back to the localized plugin
