@@ -350,8 +350,8 @@ export function createDesktopWindows(
       // Keep that first cold window hidden until desktop_ready, otherwise the
       // user sees the themed background as a blank flash. Once a renderer has
       // acknowledged readiness, reuse remains immediate for later hotkeys.
-      if (!existing.isVisible() && (layout.label !== "launcher" || ctx.ready.has(existing.id))) {
-        existing.show();
+      if (layout.label !== "launcher" || ctx.ready.has(existing.id)) {
+        if (!existing.isVisible()) existing.show();
         if (!existing.isFocused()) existing.focus();
       }
       return existing;

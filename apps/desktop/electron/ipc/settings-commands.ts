@@ -170,7 +170,17 @@ export function createSettingsCommands(
           patch.desktopOverlayShortcut !== undefined ||
           patch.commandShortcuts !== undefined;
         try {
-          if (shortcutsChanged) ctx.registerShortcuts(config);
+          // Only bindings this patch changed must register; an occupied binding
+          // the user did not touch (e.g. a reserved default) stays a warning.
+          if (shortcutsChanged)
+            ctx.registerShortcuts(config, true, [
+              ...(["globalShortcut", "toggleVisibilityShortcut", "desktopOverlayShortcut"] as const)
+                .filter((key) => patch[key] !== undefined && patch[key] !== previous[key])
+                .map((key) => config[key] ?? ""),
+              ...Object.entries(patch.commandShortcuts ?? {})
+                .filter(([id, shortcut]) => previous.commandShortcuts?.[id] !== shortcut)
+                .map(([, shortcut]) => shortcut),
+            ]);
           if (config.autostart !== previous.autostart)
             app.setLoginItemSettings({ openAtLogin: config.autostart, path: process.execPath });
           if (ctx.notesActive && config.locale !== previous.locale)
@@ -187,7 +197,7 @@ export function createSettingsCommands(
           }
           if (shortcutsChanged) {
             try {
-              ctx.registerShortcuts(previous);
+              ctx.registerShortcuts(previous, true);
             } catch (restoreError) {
               console.error("shortcut-rollback", restoreError);
             }

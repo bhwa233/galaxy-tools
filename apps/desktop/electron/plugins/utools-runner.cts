@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { UToolsStore } from "./utools-store.js";
 import { atomicWrite } from "../persistence.js";
-import type { UToolsManifest } from "./utools-manifest.js";
+import { utoolsFeatureSchema, type UToolsManifest } from "./utools-manifest.js";
 import type {
   UToolsDesktopPresentation,
   UToolsDesktopRequest,
@@ -28,6 +28,13 @@ const {
 
 export async function startUToolsRunner(): Promise<void> {
   if (!process.send || !process.connected) throw new Error("兼容运行器必须由宿主私有通道启动");
+  const profile = process.env.SPARK233_UTOOLS_PROFILE;
+  delete process.env.SPARK233_UTOOLS_PROFILE;
+  if (!profile || !path.isAbsolute(profile)) throw new Error("兼容运行器缺少独立浏览器目录");
+  // Must precede app ready, otherwise Chromium keeps the default shared profile.
+  fs.mkdirSync(profile, { recursive: true });
+  app.setPath("userData", profile);
+  app.setPath("sessionData", profile);
   let configuration: any;
   let window: import("electron").BrowserWindow | undefined;
   let view: import("electron").WebContentsView | undefined;
@@ -46,6 +53,9 @@ export async function startUToolsRunner(): Promise<void> {
     | undefined;
   let committed: { revision: number; finish(): void } | undefined;
   let desktopOperations: Promise<void> = Promise.resolve();
+  // activate/select each run an out -> enter handshake; overlapping them would
+  // deliver enter(A), enter(B) without onPluginOut in between.
+  let activationOperations: Promise<void> = Promise.resolve();
   const parentCalls = new Map<
     string,
     {
@@ -251,21 +261,21 @@ export async function startUToolsRunner(): Promise<void> {
         return features().filter((f) => !args[0] || args[0].includes(f.code));
       case "features.set":
       case "features.remove": {
-        const feature = args[0];
-        if (
-          operation === "features.set" &&
-          (!feature ||
-            typeof feature.code !== "string" ||
-            !Array.isArray(feature.cmds) ||
-            Buffer.byteLength(JSON.stringify(feature)) > 32768)
-        )
+        // Validate with the host's schema: an entry the host cannot parse
+        // would otherwise disable every feature of this plugin persistently.
+        const parsed =
+          operation === "features.set" ? utoolsFeatureSchema.safeParse(args[0]) : undefined;
+        if (parsed && (!parsed.success || Buffer.byteLength(JSON.stringify(parsed.data)) > 32768))
           throw new Error("动态功能格式不合法");
-        const code = operation === "features.set" ? feature.code : feature;
+        const feature = parsed?.data;
+        const code = feature ? feature.code : args[0];
         const current = features(),
           next = current.filter((f) => f.code !== code);
-        if (operation === "features.set") next.push(feature);
+        if (feature) next.push(feature);
         if (next.length > 100) throw new Error("动态功能超过 100 个");
-        atomicWrite(featuresFile(), JSON.stringify(next));
+        const serialized = JSON.stringify(next);
+        if (Buffer.byteLength(serialized) > 256 * 1024) throw new Error("动态功能文件超过限制");
+        atomicWrite(featuresFile(), serialized);
         return operation === "features.set" ? undefined : current.length !== next.length;
       }
       case "openDialog":
@@ -665,13 +675,18 @@ export async function startUToolsRunner(): Promise<void> {
         finishDesktop = resolve;
       });
       await previous;
+    } else if (operation === "activate" || operation === "select") {
+      const previous = activationOperations;
+      activationOperations = new Promise<void>((resolve) => {
+        finishDesktop = resolve;
+      });
+      await previous;
     }
     try {
       if (operation === "init") {
         if (configuration) throw new Error("不能重复初始化");
         configuration = value;
         manifest = value.manifest;
-        app.setPath("userData", path.join(value.dataDir, "browser-profile"));
         fs.mkdirSync(value.cacheDir, { recursive: true });
         store = new UToolsStore(value.dataDir);
         state = {
@@ -830,7 +845,9 @@ export async function startUToolsRunner(): Promise<void> {
       }
       if (operation === "activate") {
         const { revealOnly, ...action } = value;
-        await pendingOut;
+        // A timed-out hide sets outUncertain; retry the handshake below
+        // instead of failing this activation with the stale timeout.
+        await pendingOut?.catch(() => undefined);
         if (revealOnly === true && entered && !outUncertain && state.featureCode === action.code) {
           if (desktop)
             await hostRequest({ type: "panel", revision: desktop.revision, action: "show" });
@@ -857,12 +874,14 @@ export async function startUToolsRunner(): Promise<void> {
         return reply(id, { ok: true });
       }
       if (operation === "select") {
-        await pendingOut;
+        await pendingOut?.catch(() => undefined);
         wantsVisible = true;
         if ((await request("select", value)) === true) {
           const selectedVisibility = wantsVisible;
-          if (entered) await request("out", false);
+          if (entered || outUncertain) await request("out", false);
           wantsVisible = selectedVisibility;
+          // Same reset as activate: a stale legacy list would keep the page hidden.
+          update({ list: null, listTruncated: false, error: "", subInput: null });
           await request("enter", value);
           entered = true;
           state.featureCode = value.code;

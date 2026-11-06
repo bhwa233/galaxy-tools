@@ -151,6 +151,9 @@ export class UToolsStore {
       const rev = this.revision();
       this.db.exec("BEGIN IMMEDIATE");
       try {
+        // postAttachment creates a new doc; like put() without _rev, an
+        // existing id is a conflict rather than a silent overwrite.
+        if (this.get(key)) return { error: true, name: "conflict", status: 409 };
         this.db
           .prepare(
             "INSERT INTO attachments(id,rev,mime,body) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET rev=excluded.rev,mime=excluded.mime,body=excluded.body",

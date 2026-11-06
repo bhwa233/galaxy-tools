@@ -1211,7 +1211,8 @@ export class DesktopPluginHost {
         const record = task.snapshot.previewId && this.pending.get(task.snapshot.previewId);
         if (record) {
           const directory = this.exactDirectory(record.staged);
-          if (this.used(directory)) throw new Error("The transaction still owns this package");
+          if (!this.sharesInstalledDirectory(record) && this.used(directory))
+            throw new Error("The transaction still owns this package");
           this.pending.delete(record.previewId);
           try {
             this.persistPreviews();
@@ -1544,6 +1545,18 @@ export class DesktopPluginHost {
     this.changed();
     return this.checking;
   }
+  /** A source-binding preview reuses the installed plugin's own directory.
+   * Dropping it must never delete files, but must not be refused either. */
+  private sharesInstalledDirectory(record: { staged: StagedPluginPackage }): boolean {
+    const directory = canonical(this.exactDirectory(record.staged));
+    return this.manager
+      .list()
+      .some(
+        (item) =>
+          item.pluginId === record.staged.metadata.spark233.id &&
+          canonical(item.directory) === directory,
+      );
+  }
   private used(directory: string): boolean {
     if (this.manager.list().some((record) => canonical(record.directory) === canonical(directory)))
       return true;
@@ -1800,11 +1813,13 @@ export class DesktopPluginHost {
           const task = this.taskForPreview(record.previewId);
           this.assertTaskOwner(task, caller);
           const directory = this.exactDirectory(record.staged);
-          if (this.used(directory))
+          const shared = this.sharesInstalledDirectory(record);
+          if (!shared && this.used(directory))
             throw new Error(
               "The plugin manager still owns this package; recover its transaction first",
             );
           if (
+            !shared &&
             ![...this.pending.values()].some(
               (other) =>
                 other.previewId !== previewId &&

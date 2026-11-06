@@ -313,6 +313,10 @@ it("preserves acknowledged data and attachments across reopen while rejecting st
     expect(store.get("settings")?.value).toEqual({ theme: "dark" });
     expect(store.storage("getItem", "scene/one")).toBe("saved");
     store.attachment("postAttachment", "image", Buffer.from("persistent bytes"), "image/png");
+    expect(
+      store.attachment("postAttachment", "scene/one", Buffer.from("clobber"), "image/png"),
+    ).toMatchObject({ error: true, name: "conflict" });
+    expect(store.get("scene/one")?.value).toBe("saved");
     store.close();
     store = new UToolsStore(dir);
     expect(store.allDocs("scene/")).toMatchObject([{ _id: "scene/one", value: "saved" }]);

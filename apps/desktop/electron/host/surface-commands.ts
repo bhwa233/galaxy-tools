@@ -89,9 +89,13 @@ export function createSurfaceCommands(
     }
   }
 
-  function registerShortcuts(config: AppConfig, allowUnavailable = false): void {
+  function registerShortcuts(
+    config: AppConfig,
+    allowUnavailable = false,
+    required: readonly string[] = [],
+  ): void {
     try {
-      const warnings = ctx.hostShortcuts.configure(config, { allowUnavailable });
+      const warnings = ctx.hostShortcuts.configure(config, { allowUnavailable, required });
       ctx.shortcutWarning = warnings.join(" · ") || undefined;
     } catch (error) {
       ctx.shortcutWarning = error instanceof Error ? error.message : String(error);

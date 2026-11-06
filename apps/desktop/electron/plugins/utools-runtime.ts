@@ -134,10 +134,13 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
       !feature.platform || feature.platform.includes(process.platform as "win32");
     if (!fs.existsSync(filename)) return manifest.features.filter(supported);
     if (fs.statSync(filename).size > 256 * 1024) throw new Error("动态功能文件超过限制");
-    const dynamic = utoolsFeatureSchema
-      .array()
-      .max(100)
-      .parse(JSON.parse(fs.readFileSync(filename, "utf8")));
+    const stored: unknown = JSON.parse(fs.readFileSync(filename, "utf8"));
+    if (!Array.isArray(stored) || stored.length > 100) throw new Error("动态功能文件格式不合法");
+    // Skip entries written by older runners instead of failing every feature.
+    const dynamic = stored.flatMap((entry) => {
+      const parsed = utoolsFeatureSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    });
     const merged = new Map(manifest.features.map((feature) => [feature.code, feature]));
     for (const feature of dynamic) merged.set(feature.code, feature);
     return [...merged.values()].filter(supported);
@@ -180,6 +183,9 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
       const env = { ...process.env };
       delete env.ELECTRON_RUN_AS_NODE;
       delete env.NODE_OPTIONS;
+      // Chromium only honours a profile path set before app ready, which the
+      // runner reaches before init arrives. Hand it over at spawn time.
+      env.SPARK233_UTOOLS_PROFILE = path.join(options.dataDir, "browser-profile");
       child = spawn(
         process.execPath,
         [...(app.isPackaged ? [] : [app.getAppPath()]), "--spark233-utools-runner"],
@@ -270,6 +276,10 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
         expectedExit = true;
         running.kill();
         await exited;
+        // A failed start must not stay cached: let the next activation retry.
+        if (child === running) child = undefined;
+        starting = undefined;
+        if (!stopped) expectedExit = false;
         throw error;
       }
     })());

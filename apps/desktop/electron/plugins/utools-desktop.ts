@@ -266,7 +266,14 @@ export class UToolsDesktopHost {
         !host.manager.describe(card.pluginId).spark233.compatibility
       )
         continue;
-      await host.manager.ensureWidgetOwner(card.pluginId);
+      // One failing plugin must not block restoring the remaining cards.
+      try {
+        await host.manager.ensureWidgetOwner(card.pluginId);
+      } catch (error) {
+        const session = this.sessions.get(card.pluginId);
+        if (session) session.failure = error instanceof Error ? error.message : String(error);
+        console.error("utools-desktop-restore", card.pluginId, error);
+      }
     }
     this.options.layer.refresh();
   }

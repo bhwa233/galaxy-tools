@@ -75,11 +75,20 @@ export class ShortcutManager {
       }
     };
   }
-  configure(config: Configuration, { allowUnavailable = false } = {}): string[] {
+  /** `allowUnavailable` tolerates occupied bindings except those listed in
+   * `required`, so a settings edit only fails for the bindings it changed. */
+  configure(
+    config: Configuration,
+    {
+      allowUnavailable = false,
+      required = [],
+    }: { allowUnavailable?: boolean; required?: readonly string[] } = {},
+  ): string[] {
     this.assertActive();
     const english = this.english(config);
     const identity = (shortcut: string) =>
       shortcutIdentity(shortcut, process.platform === "darwin" ? "mac" : "windows");
+    const requiredKeys = new Set(required.filter(Boolean).map(identity));
     const commands = this.options.commands();
     const overlayShortcut = this.options.toggleDesktopOverlay
       ? (config.desktopOverlayShortcut ?? "Ctrl+Alt+D")
@@ -173,7 +182,7 @@ export class ShortcutManager {
                 { shortcut },
               );
           } catch (error) {
-            if (!allowUnavailable) throw error;
+            if (!allowUnavailable || requiredKeys.has(key)) throw error;
             warnings.push(error instanceof Error ? error.message : String(error));
             continue;
           }

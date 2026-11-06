@@ -164,6 +164,15 @@ test("binds an inspected store source without restarting identical code and pres
     catalogId: "market-fixture",
   })) as InstallPreview;
   expect(preview.change).toBe("source");
+  // A source-binding preview shares the installed directory: cancelling must
+  // drop the preview without deleting the installed plugin.
+  const installedDirectory = host.manager.list()[0]!.directory;
+  await handle("plugins_cancel_install", { previewId: preview.previewId });
+  expect(fs.existsSync(path.join(installedDirectory, "package.json"))).toBe(true);
+  preview = (await handle("plugins_prepare_utools", {
+    catalogId: "market-fixture",
+  })) as InstallPreview;
+  expect(preview.change).toBe("source");
   await expect(
     handle("plugins_confirm_install", { previewId: preview.previewId, trustNative: false }),
   ).rejects.toThrow("显式信任");

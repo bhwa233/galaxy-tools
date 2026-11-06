@@ -56,6 +56,19 @@ it("restores available shortcuts despite an occupied binding and retries after i
     native.callbacks.get("Ctrl+K")!();
     expect(invoked).toEqual(["launcher", "available"]);
     expect(native.callbacks.has("Ctrl+J")).toBe(false);
+    // A settings edit only fails for the bindings it changed.
+    const edited = { ...config, globalShortcut: "Alt+Q" };
+    expect(
+      manager.configure(edited, { allowUnavailable: true, required: ["Alt+Q"] }).join(),
+    ).toContain("Ctrl+J");
+    native.callbacks.get("Alt+Q")!();
+    expect(invoked.at(-1)).toBe("launcher");
+    expect(() =>
+      manager.configure(config, { allowUnavailable: true, required: ["Ctrl+J"] }),
+    ).toThrow("Ctrl+J");
+    native.callbacks.get("Alt+Q")!();
+    expect(invoked.at(-1)).toBe("launcher");
+    manager.configure(config, { allowUnavailable: true });
     manager.beginRecording();
     expect(manager.endRecording(config).join()).toContain("Ctrl+J");
     native.callbacks.get("Ctrl+K")!();
