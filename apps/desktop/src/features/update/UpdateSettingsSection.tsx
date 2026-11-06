@@ -14,11 +14,14 @@ import {
   installUpdate,
   saveUpdateSettings,
 } from "./api";
+import { openSettingsWindow } from "../settings/api";
 import { getUpdateErrorMessage } from "./updateErrors";
 import type { UpdateChannel, UpdateDownloadProgress, UpdateSettings, UpdateState } from "./types";
 
 interface UpdateSettingsSectionProps {
-  mode?: "settingsOnly" | "checkOnly" | "full";
+  /** `statusOnly` is for note windows: they may read update status, but
+   * checking, downloading and installing are host management commands. */
+  mode?: "settingsOnly" | "statusOnly" | "full";
 }
 
 type UpdateAction = "check" | "download" | "install";
@@ -103,8 +106,9 @@ function SettingsToggleRow({ id, label, checked, disabled, onChange }: SettingsT
 
 export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionProps) {
   const { t } = useTranslation();
-  const showSettings = mode !== "checkOnly";
+  const showSettings = mode === "settingsOnly" || mode === "full";
   const showUpdateActions = mode !== "settingsOnly";
+  const canManage = mode !== "statusOnly";
   const aliveRef = useRef(true);
   const actionRef = useRef<UpdateAction | null>(null);
   const savingRef = useRef(false);
@@ -239,6 +243,13 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
       actionRef.current = null;
       if (aliveRef.current) setPendingAction(null);
     }
+  };
+
+  const handleOpenSettings = () => {
+    setActionError(null);
+    void openSettingsWindow({ page: "general" }).catch((cause: unknown) => {
+      if (aliveRef.current) setActionError(cause);
+    });
   };
 
   const handleCheck = () => {
@@ -477,11 +488,17 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" disabled={actionsDisabled} onClick={handleCheck}>
-          {pendingAction === "check"
-            ? t("settings.update.checking", { defaultValue: "正在检查..." })
-            : t("settings.update.check", { defaultValue: "检查更新" })}
-        </Button>
+        {canManage ? (
+          <Button variant="outline" size="sm" disabled={actionsDisabled} onClick={handleCheck}>
+            {pendingAction === "check"
+              ? t("settings.update.checking", { defaultValue: "正在检查..." })
+              : t("settings.update.check", { defaultValue: "检查更新" })}
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" onClick={handleOpenSettings}>
+            {t("settings.update.openSettings", { defaultValue: "前往设置更新" })}
+          </Button>
+        )}
         {statusLabel ? <span className="text-[11px] text-ink-faint">{statusLabel}</span> : null}
       </div>
 
@@ -519,11 +536,13 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
               defaultValue: "发现新版本 {{version}}",
             })}
           </p>
-          <Button size="sm" disabled={actionsDisabled} onClick={handleDownload}>
-            {pendingAction === "download"
-              ? t("settings.update.busy", { defaultValue: "处理中" })
-              : t("settings.update.download", { defaultValue: "下载更新" })}
-          </Button>
+          {canManage ? (
+            <Button size="sm" disabled={actionsDisabled} onClick={handleDownload}>
+              {pendingAction === "download"
+                ? t("settings.update.busy", { defaultValue: "处理中" })
+                : t("settings.update.download", { defaultValue: "下载更新" })}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -535,13 +554,15 @@ export function UpdateSettingsSection({ mode = "full" }: UpdateSettingsSectionPr
               defaultValue: "版本 {{version}} 已下载完成",
             })}
           </p>
-          <Button size="sm" disabled={actionsDisabled} onClick={handleInstall}>
-            {pendingAction === "install"
-              ? t("settings.update.installPreparing", {
-                  defaultValue: "正在准备退出应用并安装更新...",
-                })
-              : t("settings.update.install", { defaultValue: "安装并重启" })}
-          </Button>
+          {canManage ? (
+            <Button size="sm" disabled={actionsDisabled} onClick={handleInstall}>
+              {pendingAction === "install"
+                ? t("settings.update.installPreparing", {
+                    defaultValue: "正在准备退出应用并安装更新...",
+                  })
+                : t("settings.update.install", { defaultValue: "安装并重启" })}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

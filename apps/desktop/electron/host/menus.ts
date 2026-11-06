@@ -2,9 +2,12 @@ import { BrowserWindow, Menu, Notification } from "electron";
 import type { NoteMetadata } from "../../src/features/notes/types.js";
 import { REMINDER_PRESETS } from "../../src/features/reminders/presets.js";
 import { buildPluginTrayMenu } from "../host/plugin-tray.js";
+import { listLayerInstances, updateLayerInstance } from "./layer-instances.js";
 import { AppError } from "../persistence.js";
 import type { ReminderNotification } from "../reminders.js";
 import type { RuntimeContext } from "../runtime.js";
+
+const NOTES_PLUGIN_ID = "spark233.notes";
 
 /** menus owns this domain; shared state remains in the composition root. */
 export function createMenus(
@@ -35,8 +38,50 @@ export function createMenus(
     | "tray"
     | "desktopLayer"
     | "toggleDesktopOverlay"
+    | "widgetHost"
+    | "utoolsDesktop"
+    | "screenshotLayer"
   >,
 ) {
+  /** Per-card show/hide toggles. The tray menu is cached, so the layout
+   * store subscription in runtime refreshes it when visibility changes. */
+  function desktopCardItems(): Electron.MenuItemConstructorOptions[] {
+    if (!ctx.widgetHost || !ctx.hostConfig.value.desktopLayer?.enabled) return [];
+    let state;
+    try {
+      state = listLayerInstances(ctx);
+    } catch (error) {
+      console.error("tray-desktop-cards", error);
+      return [];
+    }
+    if (!state.instances.length) return [];
+    const blocked = ctx.maintenance || ctx.hostShutdown.isQuitting;
+    return [
+      {
+        label: ctx.ui("桌面卡片显示", "Show desktop cards"),
+        submenu: state.instances.map((instance) => ({
+          label: (
+            instance.title ??
+            state.templates.find(
+              (template) =>
+                template.pluginId === instance.pluginId &&
+                template.widgetDefinitionId === instance.widgetDefinitionId,
+            )?.title ??
+            instance.widgetDefinitionId
+          ).replace(/&/g, "&&"),
+          type: "checkbox" as const,
+          checked: instance.visible,
+          enabled: !blocked,
+          click: (item: Electron.MenuItem) => {
+            void updateLayerInstance(ctx, instance.widgetInstanceId, { visible: item.checked })
+              .catch(ctx.reportError)
+              .finally(() => ctx.tray?.refresh());
+          },
+        })),
+      },
+    ];
+  }
+
   async function globalMenu(): Promise<Electron.Menu> {
     let notesAvailable = ctx.notesActive && ctx.notesScope?.state === "active" && !ctx.maintenance;
     let notes: NoteMetadata[] = [];
@@ -77,6 +122,7 @@ export function createMenus(
           void ctx.desktopLayer?.beginEdit().catch(ctx.reportError);
         },
       },
+      ...desktopCardItems(),
       { type: "separator" },
       ...buildPluginTrayMenu({
         plugins: () => ctx.pluginHost?.trayPlugins() ?? [],
@@ -92,22 +138,23 @@ export function createMenus(
         blocked: () => ctx.maintenance || ctx.hostShutdown.isQuitting,
         activate: ctx.activateHostCommand,
         onError: ctx.reportError,
+        extras: (pluginId) =>
+          pluginId === NOTES_PLUGIN_ID && notesAvailable
+            ? [
+                {
+                  label: ctx.ui("找回便签", "Recover a note"),
+                  submenu: notes.length
+                    ? notes.map((note) => ({
+                        label: (note.title || note.preview || ctx.ui("无标题便签", "Untitled note"))
+                          .slice(0, 50)
+                          .replace(/&/g, "&&"),
+                        click: () => void ctx.openNote(note.id).catch(ctx.reportError),
+                      }))
+                    : [{ label: ctx.ui("暂无便签", "No notes"), enabled: false }],
+                },
+              ]
+            : [],
       }),
-      ...(notesAvailable
-        ? [
-            {
-              label: ctx.ui("找回便签", "Recover a note"),
-              submenu: notes.length
-                ? notes.map((note) => ({
-                    label: (note.title || note.preview || ctx.ui("无标题便签", "Untitled note"))
-                      .slice(0, 50)
-                      .replace(/&/g, "&&"),
-                    click: () => void ctx.openNote(note.id).catch(ctx.reportError),
-                  }))
-                : [{ label: ctx.ui("暂无便签", "No notes"), enabled: false }],
-            },
-          ]
-        : []),
       { type: "separator" },
       { label: ctx.ui("退出（保存后关闭）", "Quit after saving"), click: () => void ctx.quit() },
     ]);

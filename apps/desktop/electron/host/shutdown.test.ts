@@ -9,8 +9,9 @@ test("a failed save prevents plugin shutdown and exit", async () => {
     isBlocked: () => false,
     awaitWrites: () => {},
     awaitReleases: () => {},
-    windows: () => ["unsaved"],
-    prepare: () => false,
+    windows: () => ["unsaved", "saved"],
+    prepare: (window: string) => window === "saved",
+    describe: (window: string) => window,
     remember: () => {},
     persist: () => {},
     shutdownPlugins,
@@ -20,6 +21,8 @@ test("a failed save prevents plugin shutdown and exit", async () => {
 
   await coordinator.request();
   expect(onError).toHaveBeenCalledOnce();
+  // The decision dialog must be able to name the window that did not save.
+  expect(String(onError.mock.calls[0]![0])).toMatch(/: unsaved$/);
   expect(shutdownPlugins).not.toHaveBeenCalled();
   expect(onCommit).not.toHaveBeenCalled();
   expect(coordinator.isQuitting).toBe(false);

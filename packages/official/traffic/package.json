@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-traffic",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Desktop traffic monitor with process ETW collection and history",
   "license": "MIT",
@@ -11,6 +11,7 @@
     "licenses/**",
     "renderer/**",
     "widgets/**",
+    "assets/**",
     "README.md"
   ],
   "type": "module",
@@ -156,6 +157,63 @@
     ],
     "ui": {
       "theme": "^1.0.0",
+      "icon": {
+        "png": "assets/icon.png",
+        "ico": "assets/icon.ico",
+        "monochrome": true,
+        "themes": {
+          "green": {
+            "light": {
+              "png": "assets/theme-icons/green-light/icon.png",
+              "ico": "assets/theme-icons/green-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/green-dark/icon.png",
+              "ico": "assets/theme-icons/green-dark/icon.ico"
+            }
+          },
+          "blue": {
+            "light": {
+              "png": "assets/theme-icons/blue-light/icon.png",
+              "ico": "assets/theme-icons/blue-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/blue-dark/icon.png",
+              "ico": "assets/theme-icons/blue-dark/icon.ico"
+            }
+          },
+          "purple": {
+            "light": {
+              "png": "assets/theme-icons/purple-light/icon.png",
+              "ico": "assets/theme-icons/purple-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/purple-dark/icon.png",
+              "ico": "assets/theme-icons/purple-dark/icon.ico"
+            }
+          },
+          "orange": {
+            "light": {
+              "png": "assets/theme-icons/orange-light/icon.png",
+              "ico": "assets/theme-icons/orange-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/orange-dark/icon.png",
+              "ico": "assets/theme-icons/orange-dark/icon.ico"
+            }
+          },
+          "rose": {
+            "light": {
+              "png": "assets/theme-icons/rose-light/icon.png",
+              "ico": "assets/theme-icons/rose-light/icon.ico"
+            },
+            "dark": {
+              "png": "assets/theme-icons/rose-dark/icon.png",
+              "ico": "assets/theme-icons/rose-dark/icon.ico"
+            }
+          }
+        }
+      },
       "windows": {
         "main": {
           "entry": "renderer/index.html",

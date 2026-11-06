@@ -1190,6 +1190,15 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   },
   windows: () => (backupRecoveryPending ? [] : windows.values()),
   prepare,
+  describe: (win) => {
+    const label = labelOf(win);
+    const layout = layouts.get(label);
+    const name = layout?.pluginId
+      ? (pluginHost?.trayPlugins().find((p) => p.pluginId === layout.pluginId)?.displayName ??
+        layout.pluginId)
+      : (layout?.hostPage ?? label);
+    return `${name || win.getTitle()}${ready.has(win.id) ? "" : ui("（未就绪）", " (not ready)")}`;
+  },
   remember,
   persist: async () => {
     flushPluginWindowStates();
@@ -1250,10 +1259,14 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
         "插件未能确认保存，退出已取消。",
         "A plugin could not confirm saving. Quitting was cancelled.",
       ),
-      detail: ui(
-        "可保留应用并重试。强制退出将结束应用拥有的插件进程，未保存的内容可能丢失。",
-        "Keep the app open and retry, or force quit its owned plugin processes. Unsaved work may be lost.",
-      ),
+      // Say which window or plugin refused; otherwise the user cannot act on it.
+      detail:
+        error.message +
+        "\n\n" +
+        ui(
+          "可保留应用并重试。强制退出将结束应用拥有的插件进程，未保存的内容可能丢失。",
+          "Keep the app open and retry, or force quit its owned plugin processes. Unsaved work may be lost.",
+        ),
       buttons: [ui("保留应用", "Keep open"), ui("强制退出", "Force quit")],
       defaultId: 0,
       cancelId: 0,
@@ -1540,6 +1553,18 @@ export function startDesktopHost(): void {
       layerStore = new LayerLayoutStore({
         file: path.join(hostConfigDir, "desktop-layout.json"),
         onError: (error) => console.error("desktop-layout", error),
+      });
+      // Card visibility can change from settings, a card's own menu or the
+      // tray; keep the cached tray checkboxes in step with the stored layout.
+      // Bounds commits are frequent; rebuild the menu only when the visible set changes.
+      let trayCardVisibility = "";
+      layerStore.subscribe((layout) => {
+        const next = JSON.stringify(
+          Object.entries(layout.cards).map(([id, card]) => [id, card.visible]),
+        );
+        if (next === trayCardVisibility) return;
+        trayCardVisibility = next;
+        refreshTray();
       });
       desktopLayer = new DesktopLayer({
         store: layerStore,

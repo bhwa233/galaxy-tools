@@ -506,6 +506,7 @@
         "mirrorChyan": "Mirror酱"
       },
       "title": "更新",
+      "openSettings": "前往设置更新",
       "hostInstallHint": "主程序通过新版 spark233 安装包升级。",
       "registryPluginHint": "从 npm 安装的插件会自动检查，更新需要你确认安装。"
     },

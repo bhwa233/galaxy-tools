@@ -26,9 +26,10 @@ describe("AboutPanel", () => {
     expect(markup).toContain("spark233");
     expect(markup).toContain("模块化桌面启动器与本地工具集");
     expect(markup).toContain("更新");
-    expect(markup).toContain("检查更新");
-    // The about panel is check-only: automatic or download settings stay in the
-    // settings window, and the host owns install execution.
+    // Note windows cannot call host update management, so the about panel
+    // links to the settings window instead of offering a check it cannot run.
+    expect(markup).toContain("前往设置更新");
+    expect(markup).not.toContain("检查更新");
     expect(markup).not.toContain("自动检查更新");
     expect(markup).not.toContain("自动下载");
   });

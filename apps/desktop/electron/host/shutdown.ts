@@ -6,6 +6,8 @@ export interface ShutdownCoordinatorOptions<Window> {
   awaitReleases: () => void | Promise<unknown>;
   windows: () => Iterable<Window>;
   prepare: (window: Window) => boolean | Promise<boolean>;
+  /** Human-readable name of a window, used to say which one did not save. */
+  describe?: (window: Window) => string;
   remember: (window: Window) => void;
   persist: () => void | Promise<unknown>;
   shutdownPlugins: () => void | Promise<unknown>;
@@ -56,15 +58,24 @@ export class ShutdownCoordinator<Window> {
       await this.options.awaitReleases();
       await this.options.awaitWrites();
       this.assertNotBlocked();
+      const candidates = [...this.options.windows()];
       const saved = await Promise.allSettled(
-        [...this.options.windows()].map((window) => this.options.prepare(window)),
+        candidates.map((window) => this.options.prepare(window)),
       );
-      if (!saved.every((result) => result.status === "fulfilled" && result.value))
+      const unsaved = candidates
+        .filter((_, index) => {
+          const result = saved[index]!;
+          return !(result.status === "fulfilled" && result.value);
+        })
+        .map((window) => this.options.describe?.(window) ?? "")
+        .filter(Boolean);
+      if (saved.some((result) => !(result.status === "fulfilled" && result.value)))
         throw new AppError(
           "saveFailed",
-          this.english()
+          (this.english()
             ? "Some windows could not finish saving. Quitting was cancelled."
-            : "有窗口未完成保存，已取消退出",
+            : "有窗口未完成保存，已取消退出") + (unsaved.length ? ": " + unsaved.join(", ") : ""),
+          { windows: unsaved.join(", ") },
         );
       for (const window of this.options.windows()) this.options.remember(window);
       await this.options.persist();

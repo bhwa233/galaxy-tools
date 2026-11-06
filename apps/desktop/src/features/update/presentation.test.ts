@@ -48,6 +48,15 @@ describe("update presentation helpers", () => {
     });
   });
 
+  test("does not report the running version as a pending update", () => {
+    const latest = { ...availableStatus, status: "idle" as const, latestVersion: "1.0.3" };
+    expect(createAboutUpdateReminderState(latest).hasPendingUpdate).toBe(false);
+    expect(applyAboutUpdateStatus({ hasPendingUpdate: true, showText: false }, latest)).toEqual({
+      hasPendingUpdate: false,
+      showText: false,
+    });
+  });
+
   test("dismisses the expanded reminder text while keeping the update icon", () => {
     expect(
       dismissAboutUpdateReminderText({

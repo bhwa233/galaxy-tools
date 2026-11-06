@@ -99,7 +99,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
           )}
         </section>
 
-        <UpdateSettingsSection mode="checkOnly" />
+        <UpdateSettingsSection mode="statusOnly" />
 
         <div className="space-y-2">
           <section className="space-y-1 py-2 border-y border-paper-deep/25">

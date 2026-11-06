@@ -1,5 +1,6 @@
 import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
+import { listLayerInstances, updateLayerInstance } from "../host/layer-instances.js";
 import type { CommandHandler, CommandInvocation } from "./invocation.js";
 
 export function createLayerCommands(
@@ -21,16 +22,7 @@ export function createLayerCommands(
       case "desktop_overlay_toggle":
         return ctx.toggleDesktopOverlay();
       case "layer_listTemplates": {
-        const state = ctx.widgetHost.list();
-        return {
-          ...state,
-          instances: [
-            ...state.instances,
-            ...(ctx.screenshotLayer?.list() ?? []),
-            ...(ctx.utoolsDesktop?.list() ?? []),
-          ],
-          notesMigrationError: ctx.notesMigrationError,
-        };
+        return { ...listLayerInstances(ctx), notesMigrationError: ctx.notesMigrationError };
       }
       case "layer_create":
         return {
@@ -54,12 +46,11 @@ export function createLayerCommands(
           : ctx.widgetHost.retry(id);
       }
       case "layer_update": {
-        const id = String(args.widgetInstanceId);
-        const patch = args.patch as Parameters<typeof ctx.widgetHost.update>[1];
-        if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.update(id, patch);
-        return ctx.screenshotLayer?.has(id)
-          ? ctx.screenshotLayer.update(id, patch)
-          : ctx.widgetHost.update(id, patch);
+        return updateLayerInstance(
+          ctx,
+          String(args.widgetInstanceId),
+          args.patch as Parameters<typeof ctx.widgetHost.update>[1],
+        );
       }
       case "layer_edit":
         return {

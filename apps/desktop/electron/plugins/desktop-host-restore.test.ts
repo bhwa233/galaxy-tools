@@ -227,7 +227,7 @@ test("development bundled updates replace code while preserving plugin data", as
   const source = path.join(root, "source", "package");
   fs.mkdirSync(bundle, { recursive: true });
   fs.mkdirSync(source, { recursive: true });
-  const makePackage = async (version: string) => {
+  const makePackage = async (version: string, hostRange = "^1.2.0") => {
     fs.writeFileSync(
       path.join(source, "package.json"),
       JSON.stringify({
@@ -238,7 +238,7 @@ test("development bundled updates replace code while preserving plugin data", as
           id: "spark233.search",
           displayName: "Search",
           api: "^1.2.0",
-          host: "^1.2.0",
+          host: hostRange,
           platforms: [process.platform],
           architectures: [process.arch],
           entry: "index.html",
@@ -268,12 +268,12 @@ test("development bundled updates replace code while preserving plugin data", as
       }),
     );
   };
-  const makeHost = (developmentBundledUpdates: boolean) => {
+  const makeHost = (developmentBundledUpdates: boolean, hostVersion = "1.2.0") => {
     const host = new DesktopPluginHost({
       root: path.join(root, "plugins"),
       bundledRoot: bundle,
       developmentBundledUpdates,
-      hostVersion: "1.2.0",
+      hostVersion,
       getTheme: () => ({ version: "1.0.0", preference: "light", effective: "light" }),
       createOfficialRuntime: async () => ({ activate: async () => undefined }),
     });
@@ -304,6 +304,17 @@ test("development bundled updates replace code while preserving plugin data", as
   expect(
     production.manager.list().find((item) => item.pluginId === "spark233.search")?.version,
   ).toBe("0.1.1700000000001");
+  await production.shutdown();
+  hosts.splice(hosts.indexOf(production), 1);
+  // A renumbered host cannot run the installed copy; a newer compatible
+  // bundled release replaces it even though the bundle was already consumed.
+  await makePackage("0.1.1700000000003", ">=0.0.1 <1");
+  const renumbered = makeHost(false, "0.1.4");
+  await renumbered.initialize();
+  const repaired = renumbered.manager.list().find((item) => item.pluginId === "spark233.search");
+  expect(repaired?.version).toBe("0.1.1700000000003");
+  expect(repaired?.lastError).toBeFalsy();
+  expect(fs.readFileSync(data, "utf8")).toBe("kept");
 });
 
 afterEach(async () => {

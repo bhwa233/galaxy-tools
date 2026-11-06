@@ -65,6 +65,9 @@ export function buildPluginTrayMenu(options: {
   blocked: () => boolean;
   activate: (pluginId: string, commandId: string) => Promise<unknown>;
   onError: (error: unknown) => void;
+  /** Host-built items that belong to a plugin (e.g. recovering notes). They
+   * join that plugin's submenu so each plugin keeps a single top-level entry. */
+  extras?: (pluginId: string) => MenuItemConstructorOptions[];
 }): MenuItemConstructorOptions[] {
   const preferences = options.preferences();
   const order = preferences?.order ?? [];
@@ -72,9 +75,12 @@ export function buildPluginTrayMenu(options: {
     const index = order.indexOf(plugin.pluginId);
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;
   };
-  return options
-    .plugins()
-    .filter((plugin) => plugin.enabled)
+  // Host rule: one top-level entry per plugin, every function in its submenu.
+  // Deduplicate by id so no caller can give a plugin a second entry.
+  const unique = new Map<string, TrayPlugin>();
+  for (const plugin of options.plugins())
+    if (plugin.enabled && !unique.has(plugin.pluginId)) unique.set(plugin.pluginId, plugin);
+  return [...unique.values()]
     .sort((a, b) => rank(a) - rank(b))
     .flatMap((plugin) => {
       const submenu: MenuItemConstructorOptions[] = [];
@@ -127,6 +133,9 @@ export function buildPluginTrayMenu(options: {
           },
         });
       }
+      const extras = options.extras?.(plugin.pluginId) ?? [];
+      if (submenu.length && extras.length) submenu.push({ type: "separator" });
+      submenu.push(...extras);
       return submenu.length ? [{ label: plugin.displayName.replaceAll("&", "&&"), submenu }] : [];
     });
 }

@@ -16,14 +16,20 @@ export interface AboutUpdateReminderState {
   showText: boolean;
 }
 
-export function hasPendingUpdate(
-  status: Pick<UpdateState, "latestVersion"> | null | undefined,
-): boolean {
-  return Boolean(status?.latestVersion);
+type PendingUpdateFields = Pick<UpdateState, "latestVersion" | "currentVersion" | "status">;
+
+/** The host reports the checked release even when it is the running version,
+ * so only a differing release outside the idle state counts as pending. */
+export function hasPendingUpdate(status: PendingUpdateFields | null | undefined): boolean {
+  return Boolean(
+    status?.latestVersion &&
+    status.latestVersion !== status.currentVersion &&
+    status.status !== "idle",
+  );
 }
 
 export function createAboutUpdateReminderState(
-  status: Pick<UpdateState, "latestVersion"> | null | undefined,
+  status: PendingUpdateFields | null | undefined,
 ): AboutUpdateReminderState {
   return {
     hasPendingUpdate: hasPendingUpdate(status),
@@ -33,7 +39,7 @@ export function createAboutUpdateReminderState(
 
 export function applyAboutUpdateStatus(
   current: AboutUpdateReminderState,
-  status: Pick<UpdateState, "latestVersion"> | null | undefined,
+  status: PendingUpdateFields | null | undefined,
 ): AboutUpdateReminderState {
   if (!hasPendingUpdate(status)) {
     return { hasPendingUpdate: false, showText: false };

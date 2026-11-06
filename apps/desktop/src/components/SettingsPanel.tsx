@@ -335,7 +335,7 @@ export function SettingsPanel({
                 </>
               )}
             </section>
-            <UpdateSettingsSection mode="settingsOnly" />
+            <UpdateSettingsSection mode="full" />
           </>
         ) : (
           <>

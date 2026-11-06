@@ -506,6 +506,7 @@
         "mirrorChyan": "MirrorChyan"
       },
       "title": "Updates",
+      "openSettings": "Update in Settings",
       "hostInstallHint": "Upgrade spark233 with a new installer.",
       "registryPluginHint": "Plugins installed from npm are checked automatically. Updates require your confirmation."
     },

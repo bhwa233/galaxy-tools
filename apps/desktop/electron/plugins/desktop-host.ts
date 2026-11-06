@@ -892,10 +892,17 @@ export class DesktopPluginHost {
           entry.name !== `@spark233/plugin-${entry.pluginId.slice("spark233.".length)}`)
       )
         throw new Error("Invalid development plugin identity");
-      if (consumed.includes(entry.pluginId) && !development) continue;
+      const installed = this.manager.list().find((record) => record.pluginId === entry.pluginId);
+      // Bundled packages normally install once. An installed copy that this host
+      // can no longer run (e.g. built for an older host numbering) is replaced by
+      // a newer bundled release, since leaving it means the plugin never works.
+      const repair =
+        !!installed &&
+        semver.gt(entry.version, installed.version) &&
+        !this.hostSupports(installed.directory);
+      if (consumed.includes(entry.pluginId) && !development && !repair) continue;
       try {
-        const installed = this.manager.list().find((record) => record.pluginId === entry.pluginId);
-        if (!installed || (development && installed.version !== entry.version)) {
+        if (!installed || repair || (development && installed.version !== entry.version)) {
           const candidate = getPluginVersionDirectory(this.paths, entry.pluginId, entry.version);
           if (fs.existsSync(candidate)) {
             if (this.used(candidate))
@@ -978,6 +985,21 @@ export class DesktopPluginHost {
     this.bundleError = failures.length ? failures.join("\n") : undefined;
     if (this.options.developmentBundledUpdates && failures.length)
       throw new Error(`Development plugin installation failed:\n${this.bundleError}`);
+  }
+  private hostSupports(directory: string): boolean {
+    try {
+      const metadata = readJson(path.join(directory, "package.json")) as {
+        spark233?: { host?: unknown };
+      };
+      const range = metadata.spark233?.host;
+      return (
+        typeof range === "string" &&
+        semver.validRange(range) !== null &&
+        semver.satisfies(this.environment.version, range)
+      );
+    } catch {
+      return false;
+    }
   }
   private updateSource(record: PluginInstallation): PluginUpdateSource | undefined {
     if (record.source.kind === "utools")

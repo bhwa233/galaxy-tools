@@ -82,6 +82,19 @@ it("applies visibility and ordering and rechecks old native menu callbacks again
   };
   const submenu = buildPluginTrayMenu(options)[0].submenu as MenuItemConstructorOptions[];
   expect(submenu[0].label).toBe("Pause");
+  // Host-built plugin items join the plugin's own submenu, never a second top-level entry.
+  const merged = buildPluginTrayMenu({
+    ...options,
+    plugins: () => [plugin, plugin],
+    extras: (pluginId: string) => (pluginId === "fixture.plugin" ? [{ label: "Recover" }] : []),
+  });
+  expect(merged).toHaveLength(1);
+  expect((merged[0].submenu as MenuItemConstructorOptions[]).map((item) => item.label)).toEqual([
+    "Pause",
+    "Open",
+    undefined,
+    "Recover",
+  ]);
   const checkbox = { checked: true } as MenuItem;
   submenu[0].click!(checkbox, undefined, {} as Electron.KeyboardEvent);
   expect(checkbox.checked).toBe(false);

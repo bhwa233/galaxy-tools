@@ -1631,6 +1631,13 @@ export class PluginManager {
       });
     });
   }
+  private pluginLabel(pluginId: string): string {
+    try {
+      return this.describe(pluginId).spark233.displayName || pluginId;
+    } catch {
+      return pluginId;
+    }
+  }
   async forceTerminateProcesses(): Promise<void> {
     const scopes = new Map(
       [...this.instances.values(), ...this.starting.values()].map((entry) => [
@@ -1654,7 +1661,13 @@ export class PluginManager {
         for (const { scope } of this.instances.values()) {
           if (scope.state === "releasing" || scope.state === "released") continue;
           const decision = await scope.prepareStop(this.stopReason(scope, "quit"));
-          if (!decision.ok) throw new AppError("pluginSaveRefused", decision.reason);
+          // Name the plugin: the quit dialog otherwise cannot say who refused.
+          if (!decision.ok)
+            throw new AppError(
+              "pluginSaveRefused",
+              `${this.pluginLabel(scope.owner.pluginId)}: ${decision.reason}`,
+              { pluginId: scope.owner.pluginId },
+            );
         }
         for (const [id] of this.instances) {
           await this.stop(id, "quit");
