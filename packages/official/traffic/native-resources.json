@@ -1,0 +1,8 @@
+{
+  "icon": "assets/icon.ico",
+  "processes": {
+    "spark233.TrafficClient.exe": "spark233 Traffic Monitor",
+    "spark233.TrafficService.exe": "spark233 Traffic Monitor Service",
+    "spark233.TrafficSetup.exe": "spark233 Traffic Monitor Setup"
+  }
+}

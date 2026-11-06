@@ -22,6 +22,9 @@ const inputs = [
   "native/applications/CMakeLists.txt",
   "scripts/native-applications/build.ps1",
   "packages/official/applications/build.mjs",
+  "native/common/spark233-resources.cmake",
+  "packages/official/applications/native-resources.json",
+  "packages/official/applications/assets/icon.ico",
 ].map((relative) => ({
   path: relative,
   sha256: createHash("sha256")

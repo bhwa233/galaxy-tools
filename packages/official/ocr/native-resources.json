@@ -1,0 +1,6 @@
+{
+  "icon": "assets/icon.ico",
+  "processes": {
+    "ImageReader.exe": "spark233 Image Text Recognition"
+  }
+}

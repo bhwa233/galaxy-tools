@@ -8,6 +8,7 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
     <Version>1.0.0</Version>
+    <Product>spark233</Product>
     <DebugType>portable</DebugType>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

@@ -95,8 +95,10 @@ $files = @($inventory.Keys | ForEach-Object {
   [pscustomobject][ordered]@{ name = $_; bytes = $stagedFile.Length; sha256 = (Get-FileHash -LiteralPath $stagedFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 } | Sort-Object { $_.name })
 $inputs = [ordered]@{}
-$inputFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and ($_.Extension -in '.cs', '.csproj', '.props', '.manifest' -or $_.Name -in 'packages.lock.json', 'NuGet.Config') })
+$inputFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and ($_.Extension -in '.cs', '.csproj', '.props', '.targets', '.manifest' -or $_.Name -in 'packages.lock.json', 'NuGet.Config') })
 $inputFiles += Get-Item -LiteralPath $PSCommandPath
+$pluginRoot = Join-Path $repoRoot 'packages/official/traffic'
+$inputFiles += Get-Item -LiteralPath (Join-Path $pluginRoot 'native-resources.json'), (Join-Path $pluginRoot 'assets/icon.ico')
 foreach ($inputFile in $inputFiles | Sort-Object FullName) {
   $relativeInput = $inputFile.FullName.Substring($repoRoot.TrimEnd('\','/').Length + 1).Replace('\','/')
   $inputs[$relativeInput] = (Get-FileHash -LiteralPath $inputFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()

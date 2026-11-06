@@ -1,0 +1,6 @@
+{
+  "icon": "assets/icon.ico",
+  "processes": {
+    "ScreenCapture.exe": "spark233 Screenshot"
+  }
+}

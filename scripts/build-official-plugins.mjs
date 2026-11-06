@@ -212,6 +212,9 @@ async function prepareResources(source, metadata) {
       "packages/official/search/native-src/search.cpp",
       "packages/official/search/native-src/CMakeLists.txt",
       "scripts/native-search/build.ps1",
+      "native/common/spark233-resources.cmake",
+      "packages/official/search/native-resources.json",
+      "packages/official/search/assets/icon.ico",
     ]) {
       const current = createHash("sha256")
         .update(await fs.readFile(path.join(project, relative)))
@@ -229,12 +232,18 @@ async function prepareResources(source, metadata) {
             "packages/official/clipboard/native-src/service.cpp",
             "packages/official/clipboard/native-src/clipboard-common.h",
             "packages/official/clipboard/native-src/CMakeLists.txt",
+            "native/common/spark233-resources.cmake",
+            "packages/official/clipboard/native-resources.json",
+            "packages/official/clipboard/assets/icon.ico",
           ]
         : [
             "native/applications/matcher.cpp",
             "native/applications/CMakeLists.txt",
             "scripts/native-applications/build.ps1",
             "packages/official/applications/build.mjs",
+            "native/common/spark233-resources.cmake",
+            "packages/official/applications/native-resources.json",
+            "packages/official/applications/assets/icon.ico",
           ];
     for (const relative of inputs) {
       const current = createHash("sha256")
@@ -257,6 +266,9 @@ async function prepareResources(source, metadata) {
         "native/traffic/**/*.csproj",
         "native/traffic/**/packages.lock.json",
         "native/traffic/*.props",
+        "native/traffic/*.targets",
+        "packages/official/traffic/native-resources.json",
+        "packages/official/traffic/assets/icon.ico",
         "native/traffic/**/*.manifest",
         "native/traffic/NuGet.Config",
         "scripts/native-traffic/build.ps1",

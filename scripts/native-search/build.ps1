@@ -317,7 +317,8 @@ $resourceFiles = foreach ($name in @('spark233.Search.exe', 'spark233.Index.exe'
     @{ name = $name; bytes = (Get-Item -LiteralPath $resourcePath).Length; sha256 = (Get-FileHash -LiteralPath $resourcePath -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 $sourceHashes = @{}
-foreach ($relative in @('packages/official/search/native-src/search.cpp', 'packages/official/search/native-src/CMakeLists.txt', 'scripts/native-search/build.ps1')) {
+foreach ($relative in @('packages/official/search/native-src/search.cpp', 'packages/official/search/native-src/CMakeLists.txt', 'scripts/native-search/build.ps1',
+    'native/common/spark233-resources.cmake', 'packages/official/search/native-resources.json', 'packages/official/search/assets/icon.ico')) {
     $sourceHashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $repoRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 # Windows PowerShell 5.1 writes a BOM for -Encoding utf8, and the packager's

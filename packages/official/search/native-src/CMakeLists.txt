@@ -42,6 +42,16 @@ target_include_directories(spark233_search PRIVATE "${SPARK233_PULSE_SOURCE}/src
 target_compile_definitions(spark233_search PRIVATE SPARK233_SERVICE_ONLY)
 target_link_libraries(spark233_search PRIVATE pulse_sqlite_core ole32 advapi32 user32 shell32 uuid)
 add_dependencies(spark233_search pulse_index)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../../../native/common/spark233-resources.cmake")
+set(SPARK233_PLUGIN_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
+spark233_plugin_resources(spark233_search PLUGIN "${SPARK233_PLUGIN_ROOT}" FILE spark233.Search.exe)
+# The upstream hosts carry Pulse version resources; replace them so the
+# service rows show this plugin's name and icon.
+spark233_plugin_resources(pulse_index PLUGIN "${SPARK233_PLUGIN_ROOT}" FILE spark233.Index.exe
+    REPLACE_SOURCES "/pulse_index_version\\.rc$")
+spark233_plugin_resources(pulse_document PLUGIN "${SPARK233_PLUGIN_ROOT}" FILE spark233.Document.exe
+    REPLACE_SOURCES "/pulse_document_version\\.rc$")
 add_custom_command(TARGET spark233_search_probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:spark233_search_probe>/licenses/Pulse"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SPARK233_PULSE_SOURCE}/LICENSE"

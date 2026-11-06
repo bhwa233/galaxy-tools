@@ -1,0 +1,6 @@
+{
+  "icon": "assets/icon.ico",
+  "processes": {
+    "spark233_clipboard_service.exe": "spark233 Clipboard History"
+  }
+}

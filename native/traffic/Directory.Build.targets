@@ -1,0 +1,18 @@
+<Project>
+  <!-- Task Manager shows each executable's own name (FileDescription, from
+       AssemblyTitle) and icon. Both come from the traffic plugin's
+       native-resources.json so they stay with the plugin. -->
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe'">
+    <Spark233PluginRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', 'packages', 'official', 'traffic'))</Spark233PluginRoot>
+    <Spark233NativeResources>$([System.IO.File]::ReadAllText('$(Spark233PluginRoot)native-resources.json'))</Spark233NativeResources>
+    <Spark233ProcessPattern>"$([System.Text.RegularExpressions.Regex]::Escape('$(AssemblyName).exe'))"\s*:\s*"[^"]*"</Spark233ProcessPattern>
+    <Spark233ProcessEntry>$([System.Text.RegularExpressions.Regex]::Match('$(Spark233NativeResources)', '$(Spark233ProcessPattern)').Value)</Spark233ProcessEntry>
+    <Spark233IconEntry>$([System.Text.RegularExpressions.Regex]::Match('$(Spark233NativeResources)', '"icon"\s*:\s*"[^"]*"').Value)</Spark233IconEntry>
+    <AssemblyTitle>$([System.Text.RegularExpressions.Regex]::Replace('$(Spark233ProcessEntry)', '^.*"([^"]*)"$', '$1'))</AssemblyTitle>
+    <ApplicationIcon>$(Spark233PluginRoot)$([System.Text.RegularExpressions.Regex]::Replace('$(Spark233IconEntry)', '^.*"([^"]*)"$', '$1'))</ApplicationIcon>
+  </PropertyGroup>
+  <Target Name="Spark233CheckNativeResources" BeforeTargets="CoreCompile" Condition="'$(OutputType)' == 'Exe'">
+    <Error Condition="'$(Spark233ProcessEntry)' == ''" Text="$(Spark233PluginRoot)native-resources.json does not name $(AssemblyName).exe" />
+    <Error Condition="!Exists('$(ApplicationIcon)')" Text="Traffic plugin icon is missing: $(ApplicationIcon)" />
+  </Target>
+</Project>

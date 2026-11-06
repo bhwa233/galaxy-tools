@@ -1,0 +1,8 @@
+{
+  "icon": "assets/icon.ico",
+  "processes": {
+    "spark233.Search.exe": "spark233 File Search",
+    "spark233.Index.exe": "spark233 File Search Index Service",
+    "spark233.Document.exe": "spark233 File Search Document Reader"
+  }
+}

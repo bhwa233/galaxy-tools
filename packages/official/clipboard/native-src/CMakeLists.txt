@@ -14,3 +14,6 @@ add_executable(spark233_clipboard_service service.cpp)
 target_compile_options(spark233_clipboard_service PRIVATE /W4 /utf-8 /EHsc /permissive-)
 target_compile_definitions(spark233_clipboard_service PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(spark233_clipboard_service PRIVATE user32 advapi32 shell32 windowsapp runtimeobject windowscodecs ole32)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../../native/common/spark233-resources.cmake")
+spark233_plugin_resources(spark233_clipboard_service PLUGIN "${CMAKE_CURRENT_LIST_DIR}/.."
+    FILE spark233_clipboard_service.exe)

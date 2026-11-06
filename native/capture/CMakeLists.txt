@@ -15,6 +15,8 @@ set(CMAKE_OBJECT_PATH_MAX 180)
 set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /c65001")
 add_compile_options(/utf-8 /permissive- /W3)
 add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+include("${CMAKE_CURRENT_LIST_DIR}/../common/spark233-resources.cmake")
+set(SPARK233_PLUGINS "${CMAKE_CURRENT_LIST_DIR}/../../packages/official")
 
 # Preserve the upstream source trees and their licences; CMake replaces only the
 # author's absolute Visual Studio include/library paths, not the selected backend.
@@ -31,7 +33,10 @@ target_link_libraries(spark233_ling PUBLIC spark233_yoga windowsapp runtimeobjec
   user32 shcore dwmapi shell32 shlwapi windowscodecs ole32 oleaut32 gdi32 comdlg32 advapi32 version)
 
 file(GLOB_RECURSE CAPTURE_SOURCES CONFIGURE_DEPENDS "${CAPTURE}/*.cpp" "${CAPTURE}/*.c")
-add_executable(ScreenCapture WIN32 ${CAPTURE_SOURCES} "${CAPTURE}/Res/Resource.rc")
+add_executable(ScreenCapture WIN32 ${CAPTURE_SOURCES})
+# Upstream resources stay; their icon and version info become the plugin's.
+spark233_plugin_resources(ScreenCapture PLUGIN "${SPARK233_PLUGINS}/screenshot" FILE ScreenCapture.exe
+  UPSTREAM_RC "${CAPTURE}/Res/Resource.rc")
 target_include_directories(ScreenCapture PRIVATE "${CAPTURE}")
 target_include_directories(ScreenCapture PRIVATE "$ENV{VCToolsInstallDir}/atlmfc/include")
 target_link_directories(ScreenCapture PRIVATE "$ENV{VCToolsInstallDir}/atlmfc/lib/x64")
@@ -51,7 +56,9 @@ if(SPARK233_BUILD_IMAGE_READER)
   target_link_libraries(spark233_tinyocr PUBLIC "${ORT_LIBRARY}" ${OpenCV_LIBS})
   set(READER "${SPARK233_NATIVE_SOURCE_ROOT}/ImageReader/ImageReader")
   file(GLOB READER_SOURCES CONFIGURE_DEPENDS "${READER}/*.cpp")
-  add_executable(ImageReader WIN32 ${READER_SOURCES} "${READER}/Res/Resource.rc")
+  add_executable(ImageReader WIN32 ${READER_SOURCES})
+  spark233_plugin_resources(ImageReader PLUGIN "${SPARK233_PLUGINS}/ocr" FILE ImageReader.exe
+    UPSTREAM_RC "${READER}/Res/Resource.rc")
   target_compile_definitions(ImageReader PRIVATE SPARK233_OCR_WORKER)
   target_include_directories(ImageReader PRIVATE "${READER}" "${TINY}")
   target_link_libraries(ImageReader PRIVATE spark233_ling spark233_tinyocr)

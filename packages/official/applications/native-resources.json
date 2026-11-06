@@ -1,0 +1,6 @@
+{
+  "icon": "assets/icon.ico",
+  "processes": {
+    "spark233.ApplicationMatcher.exe": "spark233 Applications"
+  }
+}

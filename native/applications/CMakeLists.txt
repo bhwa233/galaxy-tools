@@ -19,3 +19,7 @@ set_target_properties(spark233_application_matcher PROPERTIES OUTPUT_NAME "spark
 target_include_directories(spark233_application_matcher PRIVATE "${SPARK233_PULSE_SOURCE}/src")
 target_compile_options(spark233_application_matcher PRIVATE /utf-8 /permissive- /W4 /EHsc)
 target_compile_definitions(spark233_application_matcher PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+include("${CMAKE_CURRENT_LIST_DIR}/../common/spark233-resources.cmake")
+spark233_plugin_resources(spark233_application_matcher
+  PLUGIN "${CMAKE_CURRENT_LIST_DIR}/../../packages/official/applications"
+  FILE spark233.ApplicationMatcher.exe)
