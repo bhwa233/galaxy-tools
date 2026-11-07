@@ -15,6 +15,7 @@ import type {
 import type { BackendMessage, BackendRequest, BackendHostCall } from "./backend-worker.js";
 import { AppError, confined, canonical } from "../persistence.js";
 import { PluginResourceScope, samePluginOwner, type StopDecision } from "./resources.js";
+import { PendingRequests } from "./pending-requests.js";
 
 export interface PluginBackendController {
   readonly owner: PluginOwner;
@@ -81,15 +82,7 @@ function waitWithTimeout<T>(operation: Promise<T>, timeoutMs: number, message: s
 
 class UtilityBackend implements PluginBackendController {
   readonly owner: PluginOwner;
-  private pending = new Map<
-    string,
-    {
-      type: BackendRequest["type"];
-      resolve: (value: JsonValue | undefined) => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
+  private pending = new PendingRequests<BackendRequest["type"]>();
   private exited = false;
   private disposing = false;
   private prepared = false;
@@ -120,11 +113,7 @@ class UtilityBackend implements PluginBackendController {
       this.exited = true;
       this.finishExit(code);
       const error = new Error(`Plugin backend exited (${code})`);
-      for (const request of this.pending.values()) {
-        clearTimeout(request.timer);
-        request.reject(error);
-      }
-      this.pending.clear();
+      this.pending.rejectAll(error);
       for (const controller of this.hostCalls.values()) controller.abort();
       this.hostCalls.clear();
       if (!this.disposing) {
@@ -180,17 +169,16 @@ class UtilityBackend implements PluginBackendController {
       return;
     }
     if (response.type !== "response") return;
-    const request = this.pending.get(response.requestId);
-    if (!request) return;
-    this.pending.delete(response.requestId);
-    clearTimeout(request.timer);
-    if (request.type === "activate" && !this.options.scope.accepts(response.owner)) {
-      request.reject(new Error("Stale plugin backend response"));
+    const type = this.pending.meta(response.requestId);
+    if (!type) return;
+    if (type === "activate" && !this.options.scope.accepts(response.owner)) {
+      this.pending.reject(response.requestId, new Error("Stale plugin backend response"));
       return;
     }
-    if (response.ok) request.resolve(response.value);
+    if (response.ok) this.pending.resolve(response.requestId, response.value);
     else
-      request.reject(
+      this.pending.reject(
+        response.requestId,
         response.code
           ? new AppError(response.code, response.error, response.details)
           : new Error(response.error),
@@ -209,7 +197,7 @@ class UtilityBackend implements PluginBackendController {
         this.exited ||
         this.disposing ||
         !this.options.scope.accepts(message.owner) ||
-        this.pending.get(message.requestId)?.type !== "activate" ||
+        this.pending.meta(message.requestId) !== "activate" ||
         !this.options.onHostCall ||
         !this.options.hostCapabilities?.includes("storage") ||
         !["file.trash", "storage.protectRoot"].includes(message.call?.operation) ||
@@ -271,9 +259,10 @@ class UtilityBackend implements PluginBackendController {
     cancellation?: { signal: AbortSignal; cancel: () => void },
   ): Promise<JsonValue | undefined> {
     if (this.exited) return Promise.reject(new Error("Plugin backend is no longer running"));
-    const result = new Promise<JsonValue | undefined>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(message.requestId);
+    const result = this.pending.open<JsonValue | undefined>(message.requestId, {
+      timeoutMs,
+      meta: message.type,
+      onTimeout: () => {
         if (message.type === "activate") {
           try {
             this.child.postMessage({
@@ -285,24 +274,22 @@ class UtilityBackend implements PluginBackendController {
             // Exit may race a timeout; the caller must still receive its timeout.
           }
         }
-        reject(new Error(`Plugin backend ${message.type} timed out`));
-      }, timeoutMs);
-      this.pending.set(message.requestId, { type: message.type, resolve, reject, timer });
-      // Registration follows pending ownership so even an already-aborted signal
-      // releases this RPC. Never send an activation after cancellation wins.
-      cancellation?.signal.addEventListener("abort", cancellation.cancel, { once: true });
-      if (cancellation?.signal.aborted) {
-        cancellation.cancel();
-        return;
-      }
+        return new Error(`Plugin backend ${message.type} timed out`);
+      },
+    });
+    // Registration follows pending ownership so even an already-aborted signal
+    // releases this RPC. Never send an activation after cancellation wins.
+    cancellation?.signal.addEventListener("abort", cancellation.cancel, { once: true });
+    if (cancellation?.signal.aborted) cancellation.cancel();
+    else
       try {
         this.child.postMessage(message);
       } catch (error) {
-        clearTimeout(timer);
-        this.pending.delete(message.requestId);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        this.pending.reject(
+          message.requestId,
+          error instanceof Error ? error : new Error(String(error)),
+        );
       }
-    });
     return result.finally(() =>
       cancellation?.signal.removeEventListener("abort", cancellation.cancel),
     );
@@ -341,15 +328,12 @@ class UtilityBackend implements PluginBackendController {
     const requestId = randomUUID();
     const release = this.options.scope.own("task", {
       dispose: () => {
-        const request = this.pending.get(requestId);
-        if (!request) return;
-        this.pending.delete(requestId);
-        clearTimeout(request.timer);
+        if (!this.pending.has(requestId)) return;
         try {
           if (!this.exited)
             this.child.postMessage({ type: "cancel", owner: this.owner, requestId });
         } finally {
-          request.reject(new Error("Plugin task cancelled"));
+          this.pending.reject(requestId, new Error("Plugin task cancelled"));
         }
       },
     });

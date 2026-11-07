@@ -22,6 +22,7 @@ import {
   utoolsCommandId,
   type UToolsFeature,
 } from "./utools-manifest.js";
+import { PendingRequests } from "./pending-requests.js";
 
 interface Match {
   code: string;
@@ -116,14 +117,7 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
     expectedExit = false;
   const token = randomUUID();
   let desktopRequest: ((value: unknown) => Promise<unknown>) | undefined;
-  const requests = new Map<
-    string,
-    {
-      resolve: (value: any) => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
+  const requests = new PendingRequests(64);
   const selections = new Map<
     string,
     { action: Record<string, unknown>; push: boolean; context?: PluginContext; expires: number }
@@ -150,31 +144,23 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
     value?: unknown,
     timeout = 15000,
     signal?: AbortSignal,
-  ): Promise<any> =>
-    new Promise((resolve, reject) => {
-      if (signal?.aborted) return reject(new Error("查询取消"));
-      if (!child?.connected) return reject(new Error("uTools 运行器已断开"));
-      if (requests.size >= 64) return reject(new Error("uTools 请求过多"));
-      const id = randomUUID();
-      const finish = (failure?: Error, result?: unknown) => {
-        requests.delete(id);
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-        if (failure) reject(failure);
-        else resolve(result);
-      };
-      const abort = () => finish(new Error("查询取消"));
-      const timer = setTimeout(() => finish(new Error("uTools 请求超时: " + operation)), timeout);
-      requests.set(id, {
-        resolve: (result) => finish(undefined, result),
-        reject: (error) => finish(error),
-        timer,
-      });
-      signal?.addEventListener("abort", abort, { once: true });
-      child.send({ id, token, operation, value }, (error) => {
-        if (error) finish(error);
-      });
+  ): Promise<any> => {
+    if (!child?.connected) return Promise.reject(new Error("uTools 运行器已断开"));
+    if (requests.size >= 64) return Promise.reject(new Error("uTools 请求过多"));
+    const id = randomUUID();
+    const result = requests.open(id, {
+      timeoutMs: timeout,
+      onTimeout: () => new Error("uTools 请求超时: " + operation),
+      signal,
+      abortMessage: "查询取消",
+      meta: undefined,
     });
+    if (requests.has(id))
+      child.send({ id, token, operation, value }, (error) => {
+        if (error) requests.reject(id, error);
+      });
+    return result;
+  };
   const start = (): Promise<void> => {
     if (stopped || options.scope.state !== "active")
       throw new Error("uTools 插件已经停止或正在停用");
@@ -237,21 +223,13 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
           }
           if (message.event === "diagnostic") options.onDiagnostic?.(String(message.message));
           if (message.event === "crash") options.onCrash(new Error(String(message.message)));
-          const pending = requests.get(message.id);
-          if (!pending) return;
-          requests.delete(message.id);
-          clearTimeout(pending.timer);
-          if (message.error) pending.reject(new Error(message.error));
-          else pending.resolve(message.value);
+          if (message.error) requests.reject(message.id, new Error(message.error));
+          else requests.resolve(message.id, message.value);
         });
       });
       running.once("exit", () => {
         const error = new Error("uTools 兼容运行器已退出");
-        for (const pending of requests.values()) {
-          clearTimeout(pending.timer);
-          pending.reject(error);
-        }
-        requests.clear();
+        requests.rejectAll(error);
         if (!expectedExit && initialized) options.onCrash(error);
       });
       try {

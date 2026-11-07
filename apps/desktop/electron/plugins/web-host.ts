@@ -31,6 +31,7 @@ import {
 import { atomicWrite, canonical, confined, inside } from "../persistence.js";
 import { bindDevToolsShortcut } from "../host/windows.js";
 import { PluginResourceScope, type StopDecision } from "./resources.js";
+import { PendingRequests } from "./pending-requests.js";
 
 const SCHEME = "spark233-plugin";
 const CHANNEL = "spark233:plugin-web:invoke";
@@ -170,14 +171,7 @@ class WebRuntime implements WebPluginController {
   private readonly entryUrl: string;
   private readyListeners = new Set<() => void>();
   private brokers = new Map<AbortController, () => Promise<void>>();
-  private queries = new Map<
-    string,
-    {
-      resolve: (value: JsonValue) => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
+  private queries = new PendingRequests(32);
   private preparing?: {
     requestId: string;
     promise: Promise<StopDecision>;
@@ -390,10 +384,7 @@ class WebRuntime implements WebPluginController {
             error: z.string().max(1000).optional(),
           })
           .parse(request.payload);
-        const pending = this.queries.get(data.requestId);
-        if (!pending) throw new Error("Stale plugin query result");
-        this.queries.delete(data.requestId);
-        clearTimeout(pending.timer);
+        if (!this.queries.has(data.requestId)) throw new Error("Stale plugin query result");
         try {
           if (data.error !== undefined) throw new Error(data.error);
           const value = launcherPage.parse(data.value);
@@ -405,9 +396,12 @@ class WebRuntime implements WebPluginController {
             )
               throw new Error("Query result names an undeclared plugin command");
           }
-          pending.resolve(value as JsonValue);
+          this.queries.resolve(data.requestId, value as JsonValue);
         } catch (error) {
-          pending.reject(error instanceof Error ? error : new Error(String(error)));
+          this.queries.reject(
+            data.requestId,
+            error instanceof Error ? error : new Error(String(error)),
+          );
         }
         return undefined;
       }
@@ -690,29 +684,26 @@ class WebRuntime implements WebPluginController {
       throw new Error("Plugin is not accepting queries");
     if (this.queries.size >= 32) throw new Error("Too many pending plugin queries");
     const requestId = randomUUID();
-    let resolve!: (value: JsonValue) => void;
-    let reject!: (error: Error) => void;
-    const result = new Promise<JsonValue>((success, failure) => {
-      resolve = success;
-      reject = failure;
-    });
-    const cancel = (error: Error) => {
-      const pending = this.queries.get(requestId);
-      if (!pending) return;
-      this.queries.delete(requestId);
-      clearTimeout(pending.timer);
+    const notifyCancel = () => {
       try {
         this.send({ type: "query-cancel", owner: this.owner, requestId });
       } catch {
         // Cancellation still settles locally if the renderer has already gone.
       }
-      pending.reject(error);
     };
-    const timer = setTimeout(
-      () => cancel(new Error("Plugin query timed out")),
-      this.options.timeoutMs ?? 10_000,
-    );
-    this.queries.set(requestId, { resolve, reject, timer });
+    const cancel = (error: Error) => {
+      if (!this.queries.has(requestId)) return;
+      notifyCancel();
+      this.queries.reject(requestId, error);
+    };
+    const result = this.queries.open<JsonValue>(requestId, {
+      timeoutMs: this.options.timeoutMs ?? 10_000,
+      meta: undefined,
+      onTimeout: () => {
+        notifyCancel();
+        return new Error("Plugin query timed out");
+      },
+    });
     const release = this.options.scope.own("task", {
       dispose: () => cancel(new Error("Plugin query cancelled")),
     });
@@ -739,12 +730,10 @@ class WebRuntime implements WebPluginController {
     }
   }
   private cancelQueries(error: Error): void {
-    for (const [requestId, pending] of this.queries) {
-      clearTimeout(pending.timer);
+    for (const requestId of this.queries.ids()) {
       this.send({ type: "query-cancel", owner: this.owner, requestId });
-      pending.reject(error);
+      this.queries.reject(requestId, error);
     }
-    this.queries.clear();
   }
   private finishPreparation(decision: PluginSaveDecision): void {
     if (!this.preparing) return;
