@@ -57,6 +57,7 @@ import { UToolsDesktopHost } from "./plugins/utools-desktop.js";
 import { parseCliArgs, type CliCommand } from "./cli-args.js";
 import { HostConfigStore, persistedConfigSchema } from "./host-config.js";
 import { ShortcutManager } from "./host/shortcuts.js";
+import { HostLifecycle } from "./host/lifecycle.js";
 import { ShutdownCoordinator } from "./host/shutdown.js";
 import { createUpdateService, type UpdateService } from "./update/service.js";
 import { TrayController } from "./host/tray.js";
@@ -133,6 +134,7 @@ export interface RuntimeContext {
   readonly hostConfigDir: typeof hostConfigDir;
   readonly hostShortcuts: typeof hostShortcuts;
   readonly hostShutdown: typeof hostShutdown;
+  readonly lifecycle: typeof lifecycle;
   readonly IMAGE_FILE: typeof IMAGE_FILE;
   readonly isAdminView: typeof isAdminView;
   readonly isHostView: typeof isHostView;
@@ -422,6 +424,9 @@ const runtimeContext: RuntimeContext = {
   },
   get hostShortcuts(): typeof hostShortcuts {
     return hostShortcuts;
+  },
+  get lifecycle(): typeof lifecycle {
+    return lifecycle;
   },
   get hostShutdown(): typeof hostShutdown {
     return hostShutdown;
@@ -1077,7 +1082,7 @@ function toggleDesktopOverlay(): Promise<void> {
       // Shortcuts can be registered by plugin onChange before installation and
       // desktop restoration finish. Preserve the request until that fence opens.
       const startupError = await layerStartup;
-      if (maintenance || hostShutdown.isQuitting || !desktopLayer) return;
+      if (lifecycle.blocked || !desktopLayer) return;
       if (startupError || !layerStartupReady)
         throw new AppError(
           "layer.startupFailed",
@@ -1091,7 +1096,7 @@ function toggleDesktopOverlay(): Promise<void> {
         return;
       }
       const target = await captureExternalFocus();
-      if (maintenance || hostShutdown.isQuitting) return;
+      if (lifecycle.blocked) return;
       overlayFocusTarget = target;
       await desktopLayer.openOverlay();
     });
@@ -1172,8 +1177,14 @@ const hostShortcuts = new ShortcutManager({
   commands: () => pluginHost?.manager.commands() ?? [],
   activate: activateHostCommand,
   onError: reportError,
-  isBlocked: () => maintenance || hostShutdown.isQuitting,
+  isBlocked: () => lifecycle.blocked,
   getLocale: () => hostConfig?.value.locale ?? "zh-CN",
+});
+const lifecycle = new HostLifecycle({
+  started: () => startupComplete,
+  maintenance: () => maintenance,
+  quitting: () => hostShutdown.isQuitting,
+  exiting: () => exiting,
 });
 const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
   isBlocked: () => maintenance && !backupRecoveryPending,
@@ -1349,7 +1360,7 @@ if (!app.isPackaged && devUrl && process.env.SPARK233_DEV_PLUGINS === "1") {
 }
 // MCP 写操作与 IPC 写操作共用同一条磁盘事务串行链。
 function enqueueMutation<T>(run: () => T | Promise<T>): Promise<T> {
-  if (maintenance || hostShutdown.isQuitting)
+  if (lifecycle.blocked)
     return Promise.reject(new AppError("maintenance", "正在备份或恢复，请稍后重试"));
   return (mutations = mutations.catch(() => {}).then(run)) as Promise<T>;
 }
@@ -1781,8 +1792,7 @@ export function startDesktopHost(): void {
         diagnostic: (code, detail) => console.error(code, detail),
       });
       ipcMain.handle("spark233:layer", (event, value) => {
-        if (maintenance || hostShutdown.isQuitting)
-          throw new AppError("maintenance", "Desktop cards are stopping");
+        if (lifecycle.blocked) throw new AppError("maintenance", "Desktop cards are stopping");
         return desktopLayer!.handle(event, value);
       });
       stopLayerEnvironment = LayerWindow.observeEnvironment({

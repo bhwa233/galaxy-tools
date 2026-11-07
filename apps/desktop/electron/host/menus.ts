@@ -24,6 +24,7 @@ export function createMenus(
     | "pluginHost"
     | "hostConfig"
     | "hostShutdown"
+    | "lifecycle"
     | "activateHostCommand"
     | "openNote"
     | "quit"
@@ -55,7 +56,7 @@ export function createMenus(
       return [];
     }
     if (!state.instances.length) return [];
-    const blocked = ctx.maintenance || ctx.hostShutdown.isQuitting;
+    const blocked = ctx.lifecycle.blocked;
     return [
       {
         label: ctx.ui("桌面卡片显示", "Show desktop cards"),
@@ -135,7 +136,7 @@ export function createMenus(
             .commands(true)
             .some((entry) => entry.pluginId === pluginId && entry.command.id === commandId),
         state: (pluginId, id) => ctx.pluginHost?.trayStates.get(pluginId, id) ?? {},
-        blocked: () => ctx.maintenance || ctx.hostShutdown.isQuitting,
+        blocked: () => ctx.lifecycle.blocked,
         activate: ctx.activateHostCommand,
         onError: ctx.reportError,
         extras: (pluginId) =>

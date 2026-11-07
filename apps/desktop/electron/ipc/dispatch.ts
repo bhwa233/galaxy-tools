@@ -74,7 +74,7 @@ export function createDispatch(ctx: RuntimeContext) {
     const restoredSurface =
       command === "surface_state" && ctx.layouts.get(ctx.labelOf(win))?.noteId === args.noteId;
     if (
-      (ctx.maintenance || ctx.hostShutdown.isQuitting) &&
+      ctx.lifecycle.blocked &&
       !readOnly.includes(command) &&
       !(command === "backup_schedule" && args.action === "get") &&
       !windowRead &&

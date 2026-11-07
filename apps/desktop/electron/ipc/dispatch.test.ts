@@ -4,7 +4,16 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import type { BrowserWindow } from "electron";
 import type { RuntimeContext } from "../runtime.js";
+import { HostLifecycle } from "../host/lifecycle.js";
 import { createDispatch } from "./dispatch.js";
+
+const lifecycleOf = (ctx: { maintenance?: boolean; hostShutdown: { isQuitting: boolean } }) =>
+  new HostLifecycle({
+    started: () => true,
+    maintenance: () => !!ctx.maintenance,
+    quitting: () => ctx.hostShutdown.isQuitting,
+    exiting: () => false,
+  });
 
 it("distinguishes quitting from backup maintenance when rejecting workspace operations", async () => {
   const lifecycle = { isQuitting: true };
@@ -14,6 +23,7 @@ it("distinguishes quitting from backup maintenance when rejecting workspace oper
     hostShutdown: lifecycle,
     maintenance: false,
   } as unknown as RuntimeContext;
+  Object.assign(ctx, { lifecycle: lifecycleOf(ctx) });
   const dispatch = createDispatch(ctx);
   const win = { id: 1 } as BrowserWindow;
   await expect(dispatch.handle(win, "screenshot_action", { action: "list" })).rejects.toMatchObject(
@@ -45,6 +55,7 @@ it("allows screenshot history only in its own plugin workspace", async () => {
       officialRenderers: new Map([["spark233.screenshot", { scope: { state: "active" } }]]),
       pluginImages: new Map(),
     } as unknown as RuntimeContext;
+    Object.assign(ctx, { lifecycle: lifecycleOf(ctx) });
     const dispatch = createDispatch(ctx);
     await expect(dispatch.handle(win, "screenshot_action", { action: "list" })).resolves.toEqual(
       [],

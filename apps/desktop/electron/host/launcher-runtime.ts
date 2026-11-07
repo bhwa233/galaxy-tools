@@ -25,6 +25,7 @@ export function createLauncherRuntime(
     | "launcherShow"
     | "maintenance"
     | "hostShutdown"
+    | "lifecycle"
     | "releasing"
     | "clipboardRuntime"
     | "capsules"
@@ -86,7 +87,7 @@ export function createLauncherRuntime(
     },
     present: (text, revision, signal) => {
       if (signal.aborted) return;
-      if (ctx.maintenance || ctx.hostShutdown.isQuitting) return;
+      if (ctx.lifecycle.blocked) return;
       const started = performance.now();
       ctx.clearLauncherContext();
       const win = ctx.launcherExecutions.exit(() => openLauncherWindow());
@@ -117,12 +118,11 @@ export function createLauncherRuntime(
     selectionLauncher.cancel();
   }
   function captureExternalFocus(): Promise<number> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting || hostWindowFocused())
-      return Promise.resolve(0);
+    if (ctx.lifecycle.blocked || hostWindowFocused()) return Promise.resolve(0);
     return getReader().target(new AbortController().signal);
   }
   async function restoreExternalFocus(window: number): Promise<void> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting || window <= 0) return;
+    if (ctx.lifecycle.blocked || window <= 0) return;
     await reader?.restoreTarget(window);
   }
   async function stopSelectionReader(): Promise<void> {
@@ -130,7 +130,7 @@ export function createLauncherRuntime(
     await reader?.stop();
   }
   function showLauncherWithSelection(): Promise<void> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting) return Promise.resolve();
+    if (ctx.lifecycle.blocked) return Promise.resolve();
     // The hotkey toggles: pressing it while the launcher is the active window
     // dismisses it, instead of re-reading the selection and wiping typed text.
     const current = ctx.windows.get("launcher");
@@ -336,7 +336,7 @@ export function createLauncherRuntime(
   }
 
   function preloadLauncher(): void {
-    if (ctx.windows.has("launcher") || ctx.maintenance || ctx.hostShutdown.isQuitting) return;
+    if (ctx.windows.has("launcher") || ctx.lifecycle.blocked) return;
     const layout: Layout = {
       ...(ctx.layouts.get("launcher") ?? {
         label: "launcher",

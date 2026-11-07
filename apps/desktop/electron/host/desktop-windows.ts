@@ -57,6 +57,7 @@ export function createDesktopWindows(
     | "devUrl"
     | "maintenance"
     | "hostShutdown"
+    | "lifecycle"
     | "notesActive"
     | "prepare"
     | "ui"
@@ -215,8 +216,7 @@ export function createDesktopWindows(
     payload?: unknown,
     placement?: "cursor" | "edge",
   ): Promise<BrowserWindow> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("hostStopping", "Host is not available");
+    if (ctx.lifecycle.blocked) throw new AppError("hostStopping", "Host is not available");
     const renderer = ctx.officialRenderers.get(pluginId);
     if (!ctx.pluginHost || !renderer || renderer.scope.state !== "active")
       throw new AppError("pluginDisabled", "Plugin renderer is unavailable");
@@ -607,8 +607,7 @@ export function createDesktopWindows(
   }
 
   function requireNotes(): void {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
+    if (ctx.lifecycle.blocked) throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
     if (!ctx.notesActive) throw new AppError("pluginDisabled", "便签插件已停用，请从插件管理启用");
   }
 
@@ -645,7 +644,7 @@ export function createDesktopWindows(
   }
 
   async function openHostSettings(target: NonNullable<Layout["settingsTarget"]>): Promise<boolean> {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting) return false;
+    if (ctx.lifecycle.blocked) return false;
     if (target.pluginId) ctx.pluginHost?.manager.describe(target.pluginId);
     const previous = ctx.windows.get("settings");
     if (previous && ctx.ready.has(previous.id) && !(await ctx.prepare(previous))) return false;

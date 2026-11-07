@@ -17,6 +17,7 @@ export function createSurfaceCommands(
     | "showMain"
     | "maintenance"
     | "hostShutdown"
+    | "lifecycle"
     | "openNote"
     | "reportError"
     | "requestLauncher"
@@ -63,7 +64,7 @@ export function createSurfaceCommands(
   }
 
   function executeCliCommand(command: CliCommand): void {
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting) {
+    if (ctx.lifecycle.blocked) {
       console.error("正在备份或恢复，CLI 操作未执行");
       return;
     }

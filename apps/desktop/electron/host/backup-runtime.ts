@@ -15,6 +15,7 @@ export function createBackupRuntime(
     | "ui"
     | "maintenance"
     | "hostShutdown"
+    | "lifecycle"
     | "setMaintenance"
     | "pluginHost"
     | "mcpServer"
@@ -58,8 +59,7 @@ export function createBackupRuntime(
           "Recover notes and save the retained editors first",
         ),
       );
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting)
-      throw new AppError("maintenance", "已有备份或恢复任务正在运行");
+    if (ctx.lifecycle.blocked) throw new AppError("maintenance", "已有备份或恢复任务正在运行");
     ctx.setMaintenance(true);
     let resumePlugins: (() => void) | undefined;
     try {
@@ -93,7 +93,7 @@ export function createBackupRuntime(
   async function migrateNotesDirectory(directory: string): Promise<AppConfig> {
     ctx.requireNotes();
     if (!ctx.pluginHost) throw new AppError("pluginHostUnavailable", "插件宿主尚未就绪");
-    if (ctx.maintenance || ctx.hostShutdown.isQuitting || ctx.pendingNotesMigration)
+    if (ctx.lifecycle.blocked || ctx.pendingNotesMigration)
       throw new AppError("maintenance", "已有数据维护任务正在运行");
     ctx.setMaintenance(true);
     let previous = ctx.hostConfig.value;
