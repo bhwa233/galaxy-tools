@@ -14,9 +14,10 @@
 - [x] **D6** `pulls.yml`：lint、格式检查全量；只改了官方插件时只对受影响的包 typecheck，并用 `vitest --changed` 只跑相关测试；只改文档时跳过；其他改动全量。
 - [ ] **D7** 待定：客户端更新插件时是否校验 npm 来源证明。
 
-阶段二：翻译、OCR、截图。
+阶段二：翻译、OCR、截图、文件搜索。
 
-- [ ] **D8** 把界面代码从 `apps/desktop/src/features/*` 移进各自的包，改为独立发布。
+- [ ] **D8** 把翻译、OCR、截图的界面代码从 `apps/desktop/src/features/*` 移进各自的包，改为独立发布。
+- [ ] **D8b** 文件搜索：插件包目前只有 Everything 程序，搜索逻辑在宿主里（`electron/plugins/official/search.ts`、`everything-instance.ts`、`everything-ipc.ts`，以及 `launcher.ts`、`official-runtimes.ts` 中的专用分支）。把这些逻辑移进插件后端，走通用的插件接口和启动器搜索协议，再改为独立发布。
 
 阶段三：便签。
 
