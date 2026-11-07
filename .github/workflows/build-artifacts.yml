@@ -1,9 +1,8 @@
 name: Electron Windows Installer
+# Manual installer and native payload builds from source for any branch.
+# Releases are made by release.yml when the host version changes on main.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 permissions:
   contents: write
 jobs:

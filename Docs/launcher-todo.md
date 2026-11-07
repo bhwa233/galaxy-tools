@@ -1,5 +1,29 @@
 # spark233 一期实施 TODO
 
+## 2026-11-07 宿主与插件独立发布
+
+用户已确认[宿主与插件独立发布方案](plugin-independent-release.md)，阶段一已实施（D2–D6），等待 D1 的 npm 准备。
+
+阶段一：CI 与发布拆分。先拆快捷链接、流量监控、应用搜索；便签、翻译、OCR、截图暂时仍跟宿主一起发。
+
+- [ ] **D1** npm 准备（需用户操作）：在 npm 创建 `@spark233` 组织；在仓库 Secrets 添加有发布权限的 `NPM_TOKEN`；在仓库 Variables 设置 `SPARK233_NPM_READY=true`。三个插件首次发布成功后，在 npm 上为每个包配置可信发布（GitHub Actions，工作流 `release.yml`），然后删除 `NPM_TOKEN`。
+- [x] **D2** 插件包可发布：打包时生成发布用的 `package.json`（去掉 `private`、开发依赖和 `scripts`，加上仓库地址、公开访问设置和指纹）；源码保留 `private` 防止误发布。发布的就是 `build-official-plugins` 产出的同一个 tarball，CI 中附带来源证明。快捷链接已用 `npm publish --dry-run` 验证。
+- [x] **D3** `release.yml`：main 推送后 `plugin-release.mjs plan` 找出版本号还没上 npm 的独立插件，逐个构建（含原生组件）、测试、核对指纹后发布。由仓库变量 `SPARK233_NPM_READY` 开启；首次发布用 `NPM_TOKEN`，之后用可信发布。
+- [x] **D4** 发布指纹：打包产物中除原生二进制以外的全部文件，加上原生组件源码的 git blob；写入包的 `spark233Build.fingerprint`。已发布版本的指纹和当前不同就失败（PR 和 main 都检查）。本机连续两次构建指纹一致。
+- [x] **D5** 宿主发布：`apps/desktop` 版本号没有对应 `v` 标签时，`release.yml` 打标签并发布安装包（`build-artifacts.yml` 改为只手动触发）。开启 npm 后，独立插件按源码版本号从 npm 下载并校验完整性，打进安装包，应用搜索的命令匹配器也从下载的包里取；偏差：没有单独的锁定清单，源码 `package.json` 的版本号就是锁定版本。已用本地假 registry 验证下载路径。
+- [x] **D6** `pulls.yml`：lint、格式检查全量；只改了官方插件时只对受影响的包 typecheck，并用 `vitest --changed` 只跑相关测试；只改文档时跳过；其他改动全量。
+- [ ] **D7** 待定：客户端更新插件时是否校验 npm 来源证明。
+
+阶段二：翻译、OCR、截图。
+
+- [ ] **D8** 把界面代码从 `apps/desktop/src/features/*` 移进各自的包，改为独立发布。
+
+阶段三：便签。
+
+- [ ] **D9** 宿主补齐通用能力：置顶和纸片窗口、浮动贴边窗口、插件桌面卡片、动态托盘子菜单、定时通知、插件设置、停止前保存、搜索和 MCP 扩展点。
+- [ ] **D10** 便签界面和数据代码移进 `packages/official/notes`，改用 SDK 和通用插件窗口，数据放进插件数据区（不迁移旧数据）。
+- [ ] **D11** 删除宿主里的便签专用命令、`spark233://notes` 来源和各处专用分支；便签改为独立发布。
+
 ## 2026-11-07 架构审查修复
 
 依据[架构审查](review-2026-11-07.md)，用户已授权 P0–P2 全部实施。此为新增范围，不计入下方一期统计。验证：类型检查、lint、单元与浏览器测试通过；均未做实机或安装包验证。

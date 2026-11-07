@@ -21,7 +21,9 @@ try {
     & ./scripts/native-clipboard/build.ps1 @tools -BuildRoot (Join-Path $repoRoot 'local-build/spark233/native-clipboard-p6')
     & node scripts/native-everything/stage.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Everything staging failed' }
-    & ./scripts/native-applications/build.ps1 @tools
+    # Independently released plugins come from npm (SPARK233_PUBLISHED_PLUGINS),
+    # native components included; only build them from source otherwise.
+    if ($env:SPARK233_PUBLISHED_PLUGINS -ne '1') { & ./scripts/native-applications/build.ps1 @tools }
     & $PythonExecutable scripts/dictionary/build.py
     if ($LASTEXITCODE -ne 0) { throw 'Dictionary preparation failed' }
     & pnpm.cmd sdk:build

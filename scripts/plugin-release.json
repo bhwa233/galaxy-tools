@@ -1,0 +1,18 @@
+{
+  "$comment": "Official plugins released to npm on their own (Docs/plugin-independent-release.md). nativeInputs are the repository sources of each plugin's native component; they stand in for the native binaries in the release fingerprint.",
+  "registry": "https://registry.npmjs.org/",
+  "repository": "https://github.com/bhwa233/galaxy-tools.git",
+  "independent": {
+    "spark233.quicklinks": { "nativeInputs": [] },
+    "spark233.traffic": {
+      "nativeInputs": ["native/traffic/**", "scripts/native-traffic/**"]
+    },
+    "spark233.applications": {
+      "nativeInputs": [
+        "native/applications/**",
+        "scripts/native-applications/**",
+        "packages/official/applications/build.mjs"
+      ]
+    }
+  }
+}

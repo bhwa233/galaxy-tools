@@ -1,0 +1,154 @@
+name: Release
+# Releases follow version numbers on main (Docs/plugin-independent-release.md):
+#   - an independent plugin whose version is not on npm yet is built, tested and
+#     published to npm on its own;
+#   - the host is released when apps/desktop has a version without a v<version> tag.
+# A plugin whose contents changed without a version bump fails the plan.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: windows-latest
+    outputs:
+      plugins: ${{ steps.plugins.outputs.plugins }}
+      host: ${{ steps.host.outputs.release }}
+      version: ${{ steps.host.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm sdk:build
+      - id: plugins
+        name: Plan plugin releases
+        shell: bash
+        run: |
+          if [ "${{ vars.SPARK233_NPM_READY }}" = "true" ]; then
+            node scripts/plugin-release.mjs plan --github-output
+          else
+            echo "npm publishing is not enabled yet (repository variable SPARK233_NPM_READY)."
+            echo "plugins=[]" >> "$GITHUB_OUTPUT"
+          fi
+      - id: host
+        name: Plan host release
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Host $version is already released."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Host $version is due for release."
+          fi
+
+  plugin:
+    needs: plan
+    if: needs.plan.outputs.plugins != '[]'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    name: ${{ matrix.plugin.name }}@${{ matrix.plugin.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm sdk:build
+      - uses: actions/setup-python@v5
+        if: matrix.plugin.id == 'spark233.applications'
+        with:
+          python-version: "3.12"
+      - name: Native toolchain
+        if: matrix.plugin.id == 'spark233.applications'
+        shell: pwsh
+        run: ./scripts/native-capture/prepare-toolchain.ps1 -PythonExecutable python -PythonArguments @()
+      - name: Tests
+        run: pnpm --filter @spark233/desktop exec vitest run packages/official/${{ matrix.plugin.directory }}/ --passWithNoTests
+      - name: Build and publish
+        run: node scripts/plugin-release.mjs publish ${{ matrix.plugin.id }} --expect ${{ matrix.plugin.fingerprint }}
+        env:
+          # Only needed for a package's first release; later releases use npm
+          # trusted publishing through the id-token permission.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  host:
+    needs: [plan, plugin]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.host == 'true' &&
+      (needs.plugin.result == 'success' || needs.plugin.result == 'skipped')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      # Once plugins are on npm, the installer bundles the published packages.
+      SPARK233_PUBLISHED_PLUGINS: ${{ vars.SPARK233_NPM_READY == 'true' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pwsh -NoProfile -File scripts/prepare-windows-resources.ps1
+      - run: pnpm test
+      - id: tag
+        name: Tag the release commit
+        shell: bash
+        run: |
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "v$VERSION"
+      - name: Build and publish the matching release channel
+        shell: bash
+        run: |
+          release_channel=latest
+          release_type=release
+          if [[ "$VERSION" == *-beta || "$VERSION" == *-beta.* ]]; then
+            release_channel=beta
+            release_type=prerelease
+          elif [[ "$VERSION" == *-* ]]; then
+            echo "Unsupported release channel: $VERSION" >&2
+            exit 1
+          fi
+          pnpm dist:win --publish always \
+            "--config.publish.channel=$release_channel" \
+            "--config.publish.releaseType=$release_type"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # A failed build must not leave a tag behind: the next run would skip it.
+      - name: Remove the tag of a failed release
+        if: failure() && steps.tag.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release view "v$VERSION" > /dev/null 2>&1 || git push --delete origin "v$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spark233-installer-x64
+          path: release-electron/*.exe
+          if-no-files-found: error

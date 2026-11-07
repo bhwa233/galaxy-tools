@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { create } from "tar";
+import { create, extract } from "tar";
 
 // Reuse the production tar reader's npm layout and integrity contract. Packages
 // are assembled locally; no install lifecycle or registry publication runs here.
@@ -25,10 +25,27 @@ const { values: buildOptions } = parseArgs({
     "update-registry": { type: "string" },
     "update-channel": { type: "string" },
     renderer: { type: "string" },
+    // Package without building or checking native components. The result is
+    // not shippable; it only yields release fingerprints (scripts/plugin-release.mjs).
+    "skip-native": { type: "boolean" },
+    // Take independently released plugins from the npm registry at their
+    // source version instead of building them (host release builds).
+    published: { type: "boolean" },
   },
   strict: true,
 });
+// One plugin id, or a comma-separated list.
 const selectedPlugin = buildOptions.plugin;
+const selectedIds = selectedPlugin ? new Set(selectedPlugin.split(",")) : undefined;
+const skipNative = buildOptions["skip-native"] === true;
+const releaseConfig = JSON.parse(
+  await fs.readFile(path.join(project, "scripts/plugin-release.json"), "utf8"),
+);
+const usePublished =
+  buildOptions.published === true || process.env.SPARK233_PUBLISHED_PLUGINS === "1";
+const publishedIds = new Set(usePublished ? Object.keys(releaseConfig.independent) : []);
+if (skipNative && usePublished)
+  throw new Error("--skip-native cannot be combined with --published");
 const updateRegistry = new URL(
   buildOptions["update-registry"] ??
     process.env.SPARK233_PLUGIN_UPDATE_REGISTRY ??
@@ -81,8 +98,8 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
 const uiMetadata = JSON.parse(
   await fs.readFile(path.join(project, "packages/ui/package.json"), "utf8"),
 );
-if (selectedPlugin !== undefined && !expectedIds.has(selectedPlugin))
-  throw new Error(`Unknown official plugin: ${selectedPlugin}`);
+for (const id of selectedIds ?? [])
+  if (!expectedIds.has(id)) throw new Error(`Unknown official plugin: ${id}`);
 const projectRelativeToOutput = path.relative(output, project);
 if (
   output === path.parse(output).root ||
@@ -542,7 +559,87 @@ async function copyBusinessRenderer(packageRoot, source, metadata) {
   );
   return sharedUi;
 }
-if (!selectedPlugin || rendererPlugins.has(selectedPlugin))
+const sha256 = (content) => createHash("sha256").update(content).digest("hex");
+const sha512Integrity = (content) =>
+  `sha512-${createHash("sha512").update(content).digest("base64")}`;
+/**
+ * Release fingerprint of a staged package: every packaged file except the
+ * native binaries (they are not bit-for-bit reproducible), plus the git blob ids
+ * of the native component's sources. A changed fingerprint at an unchanged
+ * version means the plugin changed without a version bump.
+ */
+async function packageFingerprint(packageRoot, metadata) {
+  const nativeDirs = Object.values(metadata.spark233.native ?? {}).map(
+    ({ path: entry }) => `${path.posix.dirname(entry.replaceAll("\\", "/"))}/`,
+  );
+  const lines = [];
+  for await (const name of fs.glob("**/*", { cwd: packageRoot })) {
+    const relative = name.replaceAll("\\", "/");
+    const filename = path.join(packageRoot, name);
+    if (!(await fs.stat(filename)).isFile()) continue;
+    if (nativeDirs.some((directory) => relative.startsWith(directory))) continue;
+    lines.push(`file ${relative} ${sha256(await fs.readFile(filename))}`);
+  }
+  const inputs = releaseConfig.independent[metadata.spark233.id]?.nativeInputs ?? [];
+  if (inputs.length) {
+    const listed = execFileSync(
+      "git",
+      ["ls-files", "-s", "--", ...inputs.map((pattern) => `:(glob)${pattern}`)],
+      { cwd: project, encoding: "utf8", windowsHide: true },
+    );
+    for (const line of listed.split("\n").filter(Boolean)) {
+      const [stage, file] = line.split("\t");
+      lines.push(`native ${file} ${stage.split(" ")[1]}`);
+    }
+  }
+  return `sha256-${sha256(lines.sort().join("\n"))}`;
+}
+/** The packaged package.json: no workspace-only fields, ready for npm. */
+function publishedMetadata(metadata, directory) {
+  const value = structuredClone(metadata);
+  delete value.private;
+  delete value.devDependencies;
+  delete value.scripts;
+  value.repository = {
+    type: "git",
+    url: `git+${releaseConfig.repository}`,
+    directory: `packages/official/${directory}`,
+  };
+  value.publishConfig = { access: "public" };
+  return value;
+}
+const registryBase = new URL(releaseConfig.registry);
+/**
+ * Download an independently released plugin at exactly the source version and
+ * check it against the registry's integrity. A just-published version can take
+ * a few minutes to appear in the registry document.
+ */
+async function downloadPublished(metadata) {
+  const documentUrl = new URL(metadata.name.replace("/", "%2f"), registryBase);
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(documentUrl, { headers: { accept: "application/json" } });
+    if (!response.ok && response.status !== 404)
+      throw new Error(`Registry lookup failed for ${metadata.name}: ${response.status}`);
+    const version = response.ok ? (await response.json()).versions?.[metadata.version] : undefined;
+    if (version) {
+      const { tarball, integrity } = version.dist ?? {};
+      if (typeof tarball !== "string" || !/^sha512-/.test(integrity ?? ""))
+        throw new Error(`Registry entry is incomplete: ${metadata.name}@${metadata.version}`);
+      const archive = await fetch(tarball);
+      if (!archive.ok) throw new Error(`Tarball download failed: ${metadata.name}`);
+      const bytes = Buffer.from(await archive.arrayBuffer());
+      if (sha512Integrity(bytes) !== integrity)
+        throw new Error(`Tarball integrity mismatch: ${metadata.name}@${metadata.version}`);
+      return bytes;
+    }
+    if (attempt >= 10)
+      throw new Error(
+        `${metadata.name}@${metadata.version} is not published; release the plugin first`,
+      );
+    await new Promise((resolve) => setTimeout(resolve, 30_000));
+  }
+}
+if (!selectedIds || [...selectedIds].some((id) => rendererPlugins.has(id) && !publishedIds.has(id)))
   run(process.execPath, [path.join(project, "packages/ui/build.mjs")]);
 await fs.mkdir(output, { recursive: true });
 if ((await fs.lstat(output)).isSymbolicLink()) throw new Error("Plugin output cannot be a symlink");
@@ -555,6 +652,9 @@ if (
   throw new Error("Default plugin output must be the real workspace dist-plugins directory");
 const index = [];
 const offline = [];
+const release = {};
+const cleanup = [];
+let applicationSource = path.join(root, "applications");
 const devBuild = process.env.SPARK233_DEV_PLUGIN_BUILD;
 if (devBuild && !/^[0-9]{1,15}$/.test(devBuild)) throw new Error("Invalid development build id");
 if (devBuild && process.env.SPARK233_DEV_PLUGIN_OUTPUT) {
@@ -579,72 +679,103 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       throw new Error(`Development build requires a stable version: ${metadata.name}`);
     metadata.version = `${parts[0]}.${parts[1]}.${devBuild}`;
   }
-  if (selectedPlugin && metadata.spark233.id !== selectedPlugin) continue;
+  if (selectedIds && !selectedIds.has(metadata.spark233.id)) continue;
   if (!expectedIds.has(metadata.spark233.id))
     throw new Error(`Unexpected official plugin ${metadata.spark233.id}`);
-  if ((await prepareResources(source, metadata)) === false) continue;
+  const fromRegistry = publishedIds.has(metadata.spark233.id);
+  if (fromRegistry && devBuild) throw new Error("Development builds cannot use published plugins");
+  if (!fromRegistry && !skipNative && (await prepareResources(source, metadata)) === false)
+    continue;
 
-  if (metadata.spark233.id === "spark233.clipboard")
-    run(process.execPath, [path.join(source, "build.mjs"), "--backend-only"]);
-  if (metadata.spark233.id === "spark233.notes")
-    run(process.execPath, [path.join(source, "build.mjs")]);
-  if (metadata.spark233.id === "spark233.traffic")
-    run(process.execPath, [path.join(source, "build.mjs")]);
-  if (metadata.spark233.id === "spark233.quicklinks")
-    run(process.execPath, [path.join(source, "build.mjs")]);
+  if (!fromRegistry) {
+    if (metadata.spark233.id === "spark233.clipboard")
+      run(process.execPath, [path.join(source, "build.mjs"), "--backend-only"]);
+    if (metadata.spark233.id === "spark233.notes")
+      run(process.execPath, [path.join(source, "build.mjs")]);
+    if (metadata.spark233.id === "spark233.traffic")
+      run(process.execPath, [path.join(source, "build.mjs")]);
+    if (metadata.spark233.id === "spark233.quicklinks")
+      run(process.execPath, [path.join(source, "build.mjs")]);
+  }
   const temporaryRoot = await fs.realpath(os.tmpdir());
   const work = await fs.mkdtemp(path.join(temporaryRoot, "spark233-package-"));
   if (path.dirname(await fs.realpath(work)) !== temporaryRoot)
     throw new Error("Package staging escaped its temporary directory");
+  let keepWork = false;
   try {
-    await copyAllowlist(source, path.join(work, "package"), metadata);
-    if (devBuild)
-      await fs.writeFile(
-        path.join(work, "package", "package.json"),
-        JSON.stringify(metadata, null, 2),
-      );
-    await fs.copyFile(
-      path.join(project, "LICENSE"),
-      path.join(work, "package", "LICENSE.spark233"),
-    );
-    let sharedUi;
-    if (rendererPlugins.has(metadata.spark233.id)) {
-      // Trusted business plugins carry their renderer build. Their windows load
-      // the installed version, so a plugin update does not replace the host.
-      sharedUi = await copyBusinessRenderer(path.join(work, "package"), source, metadata);
-      await fs.mkdir(path.join(work, "package", "legal"), { recursive: true });
-      await fs.copyFile(
-        path.join(project, "THIRD_PARTY_NOTICES.md"),
-        path.join(work, "package", "legal", "spark233-renderer-THIRD_PARTY_NOTICES.md"),
-      );
-      await fs.copyFile(
-        path.join(project, "apps/desktop/src/assets/fonts/LICENSE_Fonts"),
-        path.join(work, "package", "legal", "HarmonyOS_Fonts.txt"),
-      );
-      await fs.copyFile(
-        path.join(project, "apps/desktop/src/assets/fonts/LICENSE_SourceHanSerif"),
-        path.join(work, "package", "legal", "SourceHanSerif.txt"),
-      );
-    }
-    for await (const name of fs.glob("**/*", { cwd: path.join(work, "package") }))
-      if ((await fs.lstat(path.join(work, "package", name))).isSymbolicLink())
-        throw new Error(`A packaged resource is a symlink: ${metadata.name}/${name}`);
+    const packageRoot = path.join(work, "package");
     const filename = `${entry.name}-${metadata.version}.tgz`;
     const archive = path.join(output, filename);
-    await create({ cwd: work, file: archive, gzip: true, portable: true, noMtime: true }, [
-      "package",
-    ]);
-    const integrity = `sha512-${createHash("sha512")
-      .update(await fs.readFile(archive))
-      .digest("base64")}`;
+    let sharedUi;
+    let fingerprint;
+    if (fromRegistry) {
+      // Ship the exact published bytes so the bundled copy equals the npm release.
+      const bytes = await downloadPublished(metadata);
+      await fs.writeFile(archive, bytes);
+      await extract({ cwd: work, file: archive, strict: true });
+      const packaged = JSON.parse(
+        await fs.readFile(path.join(packageRoot, "package.json"), "utf8"),
+      );
+      if (
+        packaged.name !== metadata.name ||
+        packaged.version !== metadata.version ||
+        packaged.spark233?.id !== metadata.spark233.id
+      )
+        throw new Error(`Published package identity mismatch: ${metadata.name}`);
+      fingerprint = packaged.spark233Build?.fingerprint;
+      const sharedFile = path.join(packageRoot, "renderer/spark233-shared-ui.json");
+      if (await exists(sharedFile)) sharedUi = JSON.parse(await fs.readFile(sharedFile, "utf8"));
+      // The host's command matcher is taken from the applications package.
+      if (metadata.spark233.id === "spark233.applications") {
+        applicationSource = packageRoot;
+        keepWork = true;
+      }
+    } else {
+      await copyAllowlist(source, packageRoot, metadata);
+      const packageFile = path.join(packageRoot, "package.json");
+      const packaged = publishedMetadata(metadata, entry.name);
+      await fs.writeFile(packageFile, JSON.stringify(packaged, null, 2));
+      await fs.copyFile(path.join(project, "LICENSE"), path.join(packageRoot, "LICENSE.spark233"));
+      if (rendererPlugins.has(metadata.spark233.id)) {
+        // Trusted business plugins carry their renderer build. Their windows load
+        // the installed version, so a plugin update does not replace the host.
+        sharedUi = await copyBusinessRenderer(packageRoot, source, metadata);
+        await fs.mkdir(path.join(packageRoot, "legal"), { recursive: true });
+        await fs.copyFile(
+          path.join(project, "THIRD_PARTY_NOTICES.md"),
+          path.join(packageRoot, "legal", "spark233-renderer-THIRD_PARTY_NOTICES.md"),
+        );
+        await fs.copyFile(
+          path.join(project, "apps/desktop/src/assets/fonts/LICENSE_Fonts"),
+          path.join(packageRoot, "legal", "HarmonyOS_Fonts.txt"),
+        );
+        await fs.copyFile(
+          path.join(project, "apps/desktop/src/assets/fonts/LICENSE_SourceHanSerif"),
+          path.join(packageRoot, "legal", "SourceHanSerif.txt"),
+        );
+      }
+      for await (const name of fs.glob("**/*", { cwd: packageRoot }))
+        if ((await fs.lstat(path.join(packageRoot, name))).isSymbolicLink())
+          throw new Error(`A packaged resource is a symlink: ${metadata.name}/${name}`);
+      fingerprint = await packageFingerprint(packageRoot, metadata);
+      packaged.spark233Build = { fingerprint };
+      await fs.writeFile(packageFile, JSON.stringify(packaged, null, 2));
+      await create({ cwd: work, file: archive, gzip: true, portable: true, noMtime: true }, [
+        "package",
+      ]);
+    }
+    const integrity = sha512Integrity(await fs.readFile(archive));
+    const iconFile = metadata.spark233.ui?.icon
+      ? path.join(fromRegistry ? packageRoot : source, metadata.spark233.ui.icon.png)
+      : undefined;
     index.push({
       pluginId: metadata.spark233.id,
       name: metadata.name,
       version: metadata.version,
       displayName: metadata.spark233.displayName,
-      ...(metadata.spark233.ui?.icon
+      ...(iconFile
         ? {
-            icon: `data:image/png;base64,${(await fs.readFile(path.join(source, metadata.spark233.ui.icon.png))).toString("base64")}`,
+            icon: `data:image/png;base64,${(await fs.readFile(iconFile)).toString("base64")}`,
             iconMonochrome: metadata.spark233.ui.icon.monochrome === true,
           }
         : {}),
@@ -653,16 +784,20 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       integrity,
       updateSource,
     });
+    release[metadata.spark233.id] = {
+      directory: entry.name,
+      name: metadata.name,
+      version: metadata.version,
+      file: filename,
+      fingerprint,
+      source: fromRegistry ? "registry" : "build",
+    };
     const files = [];
-    for await (const name of fs.glob("**/*", { cwd: path.join(work, "package") })) {
-      const filename = path.join(work, "package", name);
+    for await (const name of fs.glob("**/*", { cwd: packageRoot })) {
+      const filename = path.join(packageRoot, name);
       if (!(await fs.stat(filename)).isFile()) continue;
       const bytes = await fs.readFile(filename);
-      files.push({
-        path: name.replaceAll("\\", "/"),
-        bytes: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-      });
+      files.push({ path: name.replaceAll("\\", "/"), bytes: bytes.length, sha256: sha256(bytes) });
     }
     offline.push({
       pluginId: metadata.spark233.id,
@@ -673,10 +808,11 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       ...(sharedUi ? { sharedUi } : {}),
     });
   } finally {
-    await fs.rm(work, { recursive: true, force: true });
+    if (keepWork) cleanup.push(work);
+    else await fs.rm(work, { recursive: true, force: true });
   }
 }
-const expectedCount = selectedPlugin ? 1 : expectedIds.size;
+const expectedCount = selectedIds ? selectedIds.size : expectedIds.size;
 // A development run may skip plugins whose prebuilt native payload is absent.
 const developmentSkip = process.env.SPARK233_DEV_SKIP_MISSING_NATIVE === "1" && !!devBuild;
 const minimumCount = developmentSkip ? 1 : expectedCount;
@@ -701,9 +837,11 @@ await fs.writeFile(
   path.join(output, "resources.json"),
   JSON.stringify({ schemaVersion: 1, plugins: offline }, null, 2),
 );
+// Release bookkeeping for scripts/plugin-release.mjs; the host never reads it.
+await fs.writeFile(path.join(output, "release.json"), JSON.stringify(release, null, 2));
 // A live Electron startup may still hold the previous index. Development
 // launchers reclaim its archives only after that Electron exits safely.
-if (!selectedPlugin && !buildOptions.output) {
+if (!selectedPlugin && !buildOptions.output && !skipNative) {
   // General launcher commands use the same pinned matcher even while the
   // applications business plugin is disabled. Keep wrapper-relative native
   // paths and provenance in a dedicated host resource, outside app.asar.
@@ -716,7 +854,6 @@ if (!selectedPlugin && !buildOptions.output) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  const applicationSource = path.join(root, "applications");
   await fs.rm(hostResource, { recursive: true, force: true });
   await fs.mkdir(path.join(hostResource, "native/win32-x64"), { recursive: true });
   for (const relative of [
@@ -730,4 +867,5 @@ if (!selectedPlugin && !buildOptions.output) {
   });
   await fs.copyFile(path.join(project, "LICENSE"), path.join(hostResource, "LICENSE.spark233"));
 }
+for (const directory of cleanup) await fs.rm(directory, { recursive: true, force: true });
 console.log(`Prepared ${index.length} independent official plugin packages in ${output}`);

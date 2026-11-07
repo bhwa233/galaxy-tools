@@ -9,15 +9,51 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
+      # Lint and formatting are fast and always cover the whole repository.
       - run: pnpm lint
       - run: pnpm fmt --check
-      - run: pnpm test
-      - run: pnpm --filter @spark233/desktop exec playwright install chromium --only-shell
-      - run: pnpm test:ui
+      # Typecheck and tests only cover what the change can affect:
+      #   full    - the host, SDK, UI, root configuration, lockfile or scripts changed
+      #   plugins - only official plugin packages changed
+      #   none    - documentation only
+      - name: Scope
+        id: scope
+        shell: bash
+        run: |
+          base="origin/${{ github.base_ref || 'main' }}"
+          changed="$(git diff --name-only "$base"...HEAD)"
+          printf '%s\n' "$changed"
+          code="$(printf '%s\n' "$changed" | grep -vE '^(Docs/|.*\.md$)' || true)"
+          rest="$(printf '%s\n' "$code" | grep -vE '^packages/official/' || true)"
+          if [ -z "$code" ]; then scope=none
+          elif [ -z "$rest" ]; then scope=plugins
+          else scope=full
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "Check scope: $scope"
+      - if: steps.scope.outputs.scope == 'full'
+        run: pnpm typecheck
+      - if: steps.scope.outputs.scope == 'full'
+        run: pnpm test
+      - if: steps.scope.outputs.scope == 'full'
+        run: pnpm --filter @spark233/desktop exec playwright install chromium --only-shell
+      - if: steps.scope.outputs.scope == 'full'
+        run: pnpm test:ui
+      - if: steps.scope.outputs.scope == 'plugins'
+        run: pnpm sdk:build
+      - if: steps.scope.outputs.scope == 'plugins'
+        run: pnpm -r --filter "...[${{ steps.scope.outputs.base }}]" --if-present typecheck
+      - if: steps.scope.outputs.scope == 'plugins'
+        run: pnpm --filter @spark233/desktop exec vitest run --changed ${{ steps.scope.outputs.base }} --passWithNoTests
+      # Independent plugins whose contents changed must bump their version.
+      - if: steps.scope.outputs.scope != 'none'
+        run: node scripts/plugin-release.mjs plan
