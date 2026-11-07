@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-traffic",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "Desktop traffic monitor with process ETW collection and history",
   "license": "MIT",
