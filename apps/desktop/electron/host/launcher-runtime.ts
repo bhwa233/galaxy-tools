@@ -131,6 +131,14 @@ export function createLauncherRuntime(
   }
   function showLauncherWithSelection(): Promise<void> {
     if (ctx.maintenance || ctx.hostShutdown.isQuitting) return Promise.resolve();
+    // The hotkey toggles: pressing it while the launcher is the active window
+    // dismisses it, instead of re-reading the selection and wiping typed text.
+    const current = ctx.windows.get("launcher");
+    if (current && !current.isDestroyed() && current.isVisible() && current.isFocused()) {
+      selectionLauncher.cancel();
+      hideHostWindow(current);
+      return Promise.resolve();
+    }
     return selectionLauncher.open();
   }
   function launcherPresentationGuard(): () => boolean {

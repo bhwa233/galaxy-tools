@@ -1,4 +1,5 @@
 import { showToast } from "./Toast";
+import { getErrorMessage } from "../platform/errors";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApplicationsDialog } from "../features/applications/ApplicationsDialog";
@@ -578,15 +579,17 @@ export function SettingsPanel({
                 <button
                   type="button"
                   onClick={() => {
-                    void chooseBackgroundImage().then(async (path) => {
-                      if (!path) return;
-                      const originalName = path.split(/[/\\]/).pop() ?? "";
-                      const saved = await invoke("copy_background_image", {
-                        sourcePath: path,
-                      });
-                      localStorage.setItem("backgroundImageName", originalName);
-                      setConfigValue("backgroundImagePath", saved);
-                    });
+                    void chooseBackgroundImage()
+                      .then(async (path) => {
+                        if (!path) return;
+                        const originalName = path.split(/[/\\]/).pop() ?? "";
+                        const saved = await invoke("copy_background_image", {
+                          sourcePath: path,
+                        });
+                        localStorage.setItem("backgroundImageName", originalName);
+                        setConfigValue("backgroundImagePath", saved);
+                      })
+                      .catch((error: unknown) => showToast(getErrorMessage(error)));
                   }}
                   className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
                 >

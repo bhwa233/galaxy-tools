@@ -64,6 +64,7 @@ import {
 import type { AppConfig, AppConfigPatch } from "./types";
 import { CommandSettings } from "./CommandSettings";
 import { SettingsFooter, SettingsFooterHost } from "./SettingsFooter";
+import { getErrorMessage } from "../../platform/errors";
 
 const pages = [
   "general",
@@ -170,10 +171,7 @@ export function SettingsWindow() {
   const rejected = useRef<AppConfigPatch>({});
   const writes = useRef<Promise<unknown>>(Promise.resolve());
   const mounted = useRef(true);
-  const text = (value: unknown) =>
-    value && typeof value === "object" && "message" in value
-      ? String(value.message)
-      : String(value);
+  const text = (value: unknown) => getErrorMessage(value);
   useEffect(() => {
     mounted.current = true;
     void getConfig()
@@ -222,8 +220,9 @@ export function SettingsWindow() {
       await prepareHostWindow();
       setTarget(next);
       setError(undefined);
-    } catch {
-      /* The relevant editor owns its save decision. */
+    } catch (value) {
+      // The editor owns its save decision; still say why navigation did not happen.
+      setError(text(value));
     }
   };
   const change = (patch: AppConfigPatch) => {

@@ -74,3 +74,38 @@ export function createCommandPinyinMatcher(options: {
     },
   };
 }
+
+/**
+ * Literal score of a command for an NFKC-lowercased needle against its
+ * NFKC-lowercased words (title, keywords, aliases). Besides exact/prefix/substring
+ * hits it accepts every-token matches ("note new") and Latin initials ("sn" for
+ * "save note"). A single character only matches as a prefix, so typing one letter
+ * does not list every command that happens to contain it.
+ */
+export function literalCommandScore(words: readonly string[], needle: string): number {
+  if (!needle) return 1;
+  if (words.some((word) => word === needle)) return 100;
+  if (words.some((word) => word.startsWith(needle))) return 75;
+  const single = [...needle].length === 1;
+  if (!single && words.some((word) => word.includes(needle))) return 40;
+  const tokens = needle.split(/\s+/u).filter(Boolean);
+  if (tokens.length > 1) {
+    const parts = words.flatMap((word) => word.split(/[\s\-_/·.]+/u)).filter(Boolean);
+    if (tokens.every((token) => parts.some((part) => part.startsWith(token)))) return 60;
+    if (tokens.every((token) => parts.some((part) => part.includes(token)))) return 35;
+  }
+  if (!single && /^[a-z0-9]+$/.test(needle)) {
+    const initials = words
+      .filter((word) => /^[\p{L}\p{N}\s\-_/·.]+$/u.test(word) && /[a-z]/.test(word))
+      .map((word) =>
+        word
+          .split(/[\s\-_/·.]+/u)
+          .filter(Boolean)
+          .map((part) => part[0])
+          .join(""),
+      );
+    if (initials.some((value) => value.length > 1 && value === needle)) return 65;
+    if (initials.some((value) => value.length > 1 && value.startsWith(needle))) return 45;
+  }
+  return 0;
+}

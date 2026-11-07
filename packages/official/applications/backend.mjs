@@ -95,12 +95,41 @@ export default function applicationsPlugin(lifetime) {
   const calibration = setInterval(invalidate, CACHE_MS);
   calibration.unref();
 
+  // Launch counts only break ties between equally good matches, so the
+  // application the user opens every day wins over one with a similar name.
+  const usageFile = path.join(lifetime.dataDir, "launch-usage.json");
+  let launchUsage = new Map();
+  let usageWrite = Promise.resolve();
   async function loadSettings() {
     if (!settingsLoaded)
       settingsLoaded = (async () => {
         customEntries = (await readSettingsFile(customFile))?.entries ?? [];
+        try {
+          const saved = JSON.parse(await fs.readFile(usageFile, "utf8"));
+          if (saved && typeof saved === "object" && !Array.isArray(saved))
+            for (const [id, value] of Object.entries(saved).slice(0, 500))
+              if (/^[a-f0-9]{64}$/.test(id) && Number.isSafeInteger(value?.count))
+                launchUsage.set(id, { count: value.count, lastUsedAt: Number(value.lastUsedAt) || 0 });
+        } catch {
+          /* Missing or unreadable usage only loses the tiebreak. */
+        }
       })();
     await settingsLoaded;
+  }
+  function recordLaunch(id) {
+    const previous = launchUsage.get(id);
+    launchUsage.delete(id);
+    launchUsage.set(id, { count: (previous?.count ?? 0) + 1, lastUsedAt: Date.now() });
+    while (launchUsage.size > 500) launchUsage.delete(launchUsage.keys().next().value);
+    const snapshot = JSON.stringify(Object.fromEntries(launchUsage));
+    usageWrite = usageWrite
+      .then(async () => {
+        const temp = usageFile + "." + randomUUID() + ".tmp";
+        await fs.mkdir(path.dirname(usageFile), { recursive: true });
+        await fs.writeFile(temp, snapshot);
+        await fs.rename(temp, usageFile);
+      })
+      .catch(() => {});
   }
   function applyCustomEntries(target) {
     for (const [id, entry] of target) if (entry.customKind) target.delete(id);
@@ -440,6 +469,7 @@ export default function applicationsPlugin(lifetime) {
           throw error;
         }
       }
+      if (action === "launch") recordLaunch(input.id);
       return {
         action:
           action === "launch"
@@ -556,6 +586,8 @@ export default function applicationsPlugin(lifetime) {
       results.sort(
         (left, right) =>
           right.score - left.score ||
+          (launchUsage.get(right.entry.id)?.count ?? 0) -
+            (launchUsage.get(left.entry.id)?.count ?? 0) ||
           Number(left.entry.target.kind !== "shortcut") -
             Number(right.entry.target.kind !== "shortcut") ||
           left.entry.title.localeCompare(right.entry.title, "zh-CN"),

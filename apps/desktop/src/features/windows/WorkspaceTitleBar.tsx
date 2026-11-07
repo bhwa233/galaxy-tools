@@ -55,6 +55,34 @@ export function WorkspaceTitleBar({
     };
   }, []);
 
+  // One Esc policy for every workspace window: close through the workspace's own
+  // close path (saving/cancel confirmations included), unless something more
+  // local owns the key: an open dialog or menu, IME composition, or a text field
+  // that still holds text.
+  const closeOnEscape = useEffectEvent(() => void perform(onClose));
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        document.querySelector(
+          '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot$="-content"][data-open]',
+        )
+      )
+        return;
+      if (
+        (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
+        target.value
+      )
+        return;
+      if (target?.isContentEditable) return;
+      event.preventDefault();
+      closeOnEscape();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const perform = async (operation: () => void | Promise<void>) => {
     try {
       await operation();

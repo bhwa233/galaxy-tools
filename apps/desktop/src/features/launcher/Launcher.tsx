@@ -73,13 +73,10 @@ import type {
   LauncherQueryResult,
   LauncherState,
 } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
 function message(value: unknown): string {
-  return value instanceof Error
-    ? value.message
-    : value && typeof value === "object" && "message" in value
-      ? String(value.message)
-      : String(value);
+  return getErrorMessage(value);
 }
 const itemKey = (item: LauncherItem) => JSON.stringify([item.pluginId, item.id]);
 
@@ -98,6 +95,7 @@ export function Launcher() {
   const [selected, setSelected] = useState("");
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const [busyVisible, setBusyVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progressCommands, setProgressCommands] = useState<
     Array<{ key: string; command: LauncherCommand }>
@@ -682,7 +680,21 @@ export function Launcher() {
     }
     if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
       const fromInput = event.target === input.current;
-      if (fromInput && (event.key === "ArrowLeft" || event.key === "ArrowRight")) return;
+      if (fromInput && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        // Left/Right edit the text, except at the caret's boundary while an
+        // application card is selected: then they move through the grid.
+        const field = input.current!;
+        const atBoundary =
+          field.selectionStart === field.selectionEnd &&
+          (event.key === "ArrowLeft"
+            ? field.selectionStart === 0
+            : field.selectionEnd === field.value.length);
+        const inGrid = !!event.currentTarget
+          .querySelector('[data-query-group="applications"]')
+          ?.querySelector('[aria-selected="true"]');
+        if (!atBoundary || !inGrid) return;
+        userNavigated.current = true;
+      }
       const target = event.target as HTMLElement;
       if (target.closest("button")) return;
       // cmdk provides linear navigation; use the rendered rows for this grid so
@@ -816,6 +828,15 @@ export function Launcher() {
       item.commandId === pluginEntries.get(item.pluginId) &&
       !["action", "keyword-only", "hidden"].includes(findCommand(item)?.launcher?.role ?? ""));
   const gridItems = result?.items.filter(isGridEntry) ?? [];
+  const busy = loading || !!result?.pending;
+  useEffect(() => {
+    if (!busy) {
+      setBusyVisible(false);
+      return;
+    }
+    const timer = setTimeout(() => setBusyVisible(true), 200);
+    return () => clearTimeout(timer);
+  }, [busy]);
   // Mirrors the rendered order: the application grid first, then each group's list rows.
   visualOrder.current = (next) => [
     ...next.items.filter(isGridEntry),
@@ -1192,13 +1213,15 @@ export function Launcher() {
             </CommandGroup>
           )}
           <div
-            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+            className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
             role="region"
             aria-label={t("launcher.informationRegion")}
           >
-            {(loading || result?.pending) && (
+            {/* Floats over the results instead of inserting a row, so typing does
+                not push the list under the pointer; brief queries never show it. */}
+            {busyVisible && (
               <div
-                className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
+                className="pointer-events-none absolute top-1 right-2 z-10 flex items-center gap-2 rounded-md bg-background/90 px-2 py-1 text-xs text-muted-foreground"
                 role="status"
                 data-testid="launcher-query-status"
               >

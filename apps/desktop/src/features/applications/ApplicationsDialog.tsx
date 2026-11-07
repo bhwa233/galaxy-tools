@@ -29,6 +29,7 @@ import type {
   CustomApplicationKind,
   CustomApplicationTarget,
 } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
 export interface ApplicationsDialogProps {
   embedded?: boolean;
@@ -459,7 +460,5 @@ export function ApplicationsDialog({
 }
 
 function errorMessage(value: unknown): string {
-  return value && typeof value === "object" && "message" in value
-    ? String(value.message)
-    : String(value);
+  return getErrorMessage(value);
 }

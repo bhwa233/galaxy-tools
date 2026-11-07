@@ -8,6 +8,7 @@ import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { BackupSchedule } from "../../../shared/backup-schedule";
 import { useUnsavedChanges } from "../settings/useUnsavedChanges";
+import { getErrorMessage } from "../../platform/errors";
 
 export function BackupSchedulePanel() {
   const { t } = useTranslation();
@@ -23,12 +24,7 @@ export function BackupSchedulePanel() {
     setIntervalDays(value.intervalDays);
     setKeep(value.keep);
   };
-  const report = (value: unknown) =>
-    setError(
-      value && typeof value === "object" && "message" in value
-        ? String(value.message)
-        : String(value),
-    );
+  const report = (value: unknown) => setError(getErrorMessage(value));
   useEffect(() => {
     let active = true;
     void invoke("backup_schedule", { action: "get" })

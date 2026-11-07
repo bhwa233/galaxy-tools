@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { invoke, listen } from "../../platform/desktop";
+import { getErrorMessage } from "../../platform/errors";
 
 interface HistoryEntry {
   id: string;
@@ -44,10 +45,7 @@ export function ScreenshotHistoryWorkspace({ onClose }: { onClose: () => void })
       active.current = false;
     };
   }, []);
-  const message = (value: unknown) =>
-    value && typeof value === "object" && "message" in value
-      ? String(value.message)
-      : String(value);
+  const message = (value: unknown) => getErrorMessage(value);
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current;
     try {

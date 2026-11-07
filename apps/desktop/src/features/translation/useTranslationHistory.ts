@@ -3,13 +3,9 @@ import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { translationAction } from "./api";
 import type { TranslationHistory, TranslationHistoryEntry, TranslationPreferences } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
-const errorText = (value: unknown) =>
-  value instanceof Error
-    ? value.message
-    : value && typeof value === "object" && "message" in value
-      ? String((value as { message: unknown }).message)
-      : String(value);
+const errorText = (value: unknown) => getErrorMessage(value);
 
 /** History lives in the plugin's private data directory. Every mutation
  * returns the authoritative list so the drawer never guesses at server state. */

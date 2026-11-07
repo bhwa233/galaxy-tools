@@ -95,23 +95,30 @@ const preferencesSchema = z
 
 /** Stable identity includes package ownership; titles, versions and temporary
  * execution tokens cannot transfer a preference to a different target. */
+// The launcher derives keys for every command on every keystroke; hashing is the
+// hot part, so identical identities reuse their digest (bounded, oldest first out).
+const targetKeys = new Map<string, string>();
 export function launcherTargetKey(target: LauncherPreferenceTarget): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify([
-        target.kind,
-        target.packageName,
-        target.pluginId,
-        target.kind === "command" ? target.commandId : target.applicationId,
-      ]),
-    )
-    .digest("hex");
+  const identity = JSON.stringify([
+    target.kind,
+    target.packageName,
+    target.pluginId,
+    target.kind === "command" ? target.commandId : target.applicationId,
+  ]);
+  let key = targetKeys.get(identity);
+  if (key === undefined) {
+    key = createHash("sha256").update(identity).digest("hex");
+    if (targetKeys.size >= 4096) targetKeys.delete(targetKeys.keys().next().value!);
+    targetKeys.set(identity, key);
+  }
+  return key;
 }
 
 /** Reuses the host's atomic JSON persistence. A single field-operation writer
  * keeps usage/onboarding saves from erasing pins, aliases or hidden commands. */
 export class LauncherPreferences {
   private value: z.infer<typeof preferencesSchema>;
+  private byKey?: Map<string, SavedLauncherPreference>;
   private learningPolicyRevision = 0;
   constructor(private file: string) {
     this.value = preferencesSchema.parse(
@@ -176,13 +183,22 @@ export class LauncherPreferences {
     return structuredClone(this.value.entries);
   }
   find(key: string): SavedLauncherPreference | undefined {
-    const entry = this.value.entries.find((entry) => launcherTargetKey(entry.target) === key);
+    if (!this.byKey) {
+      this.byKey = new Map();
+      // First entry wins, matching the previous linear search.
+      for (const entry of this.value.entries) {
+        const entryKey = launcherTargetKey(entry.target);
+        if (!this.byKey.has(entryKey)) this.byKey.set(entryKey, entry);
+      }
+    }
+    const entry = this.byKey.get(key);
     return entry ? structuredClone(entry) : undefined;
   }
   private save(value: z.infer<typeof preferencesSchema>): void {
     const next = preferencesSchema.parse(value);
     atomicWrite(this.file, JSON.stringify(next));
     this.value = next;
+    this.byKey = undefined;
   }
   completeOnboarding(): void {
     this.save({ ...this.value, onboardingComplete: true });

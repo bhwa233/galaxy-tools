@@ -23,6 +23,7 @@ import type {
   TranslationPreferences,
   TranslationResult,
 } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
 export interface TranslationWorkspaceProps {
   initialResult?: unknown;
@@ -34,12 +35,7 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-const errorText = (value: unknown) =>
-  value instanceof Error
-    ? value.message
-    : object(value)?.message
-      ? String(object(value)?.message)
-      : String(value);
+const errorText = (value: unknown) => getErrorMessage(value);
 const TARGETS = ["en", "zh-CN"] as const;
 type Target = (typeof TARGETS)[number];
 type WorkspaceView = "dictionary" | "translation" | "search-history";
@@ -496,12 +492,6 @@ export function TranslationWorkspace({
     <section
       className="flex min-h-0 flex-1 flex-col"
       aria-label={t("translation.title", { defaultValue: "词典与翻译" })}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
-        const tag = (event.target as HTMLElement | null)?.tagName;
-        if (tag === "TEXTAREA" || tag === "INPUT") return;
-        void cancel().finally(onClose);
-      }}
     >
       <WorkspaceTitleBar
         title={t("translation.title")}

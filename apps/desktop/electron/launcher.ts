@@ -21,7 +21,7 @@ import {
   normalizeLearningKeyword,
   type LauncherPreferenceTarget,
 } from "./launcher-preferences.js";
-import type { CommandPinyinMatcher } from "./launcher-command-matcher.js";
+import { literalCommandScore, type CommandPinyinMatcher } from "./launcher-command-matcher.js";
 
 const querySchema = z.strictObject({
   query: z.string().max(65536),
@@ -1174,15 +1174,7 @@ export class LauncherController {
         commandsGroup.items = commands
           .map((entry, index) => {
             const words = wordsByCommand[index];
-            const literal = !needle
-              ? 1
-              : words.some((word) => word === needle)
-                ? 100
-                : words.some((word) => word.startsWith(needle))
-                  ? 75
-                  : words.some((word) => word.includes(needle))
-                    ? 40
-                    : 0;
+            const literal = literalCommandScore(words, needle);
             const score = Math.max(literal, pinyin.get(index) ?? 0);
             const matches = (context: PluginContext) =>
               !entry.command.match ||
@@ -1218,12 +1210,9 @@ export class LauncherController {
               !!commandContext &&
               entry.command.inputs.includes(commandContext.kind) &&
               matches(commandContext);
-            const usage = !needle
-              ? this.preferences.usage.find(
-                  (value) =>
-                    value.pluginId === entry.pluginId && value.commandId === entry.command.id,
-                )
-              : undefined;
+            const usage = this.preferences.usage.find(
+              (value) => value.pluginId === entry.pluginId && value.commandId === entry.command.id,
+            );
             const preferred =
               textInput && sentenceInput && !!entry.command.launcher?.preferSentence;
             return {
@@ -1278,7 +1267,11 @@ export class LauncherController {
                   Number(a.contextInput || !!a.command.sourceApplications) ||
                 (b.usage?.lastUsedAt ?? 0) - (a.usage?.lastUsedAt ?? 0) ||
                 (b.usage?.count ?? 0) - (a.usage?.count ?? 0)
-              : b.score - a.score || Number(b.learned) - Number(a.learned),
+              : b.score - a.score ||
+                Number(b.learned) - Number(a.learned) ||
+                // Within an equal match quality, the commands the user actually runs win.
+                (b.usage?.count ?? 0) - (a.usage?.count ?? 0) ||
+                (b.usage?.lastUsedAt ?? 0) - (a.usage?.lastUsedAt ?? 0),
           )
           .filter(
             (entry, index) =>
@@ -1365,14 +1358,14 @@ export class LauncherController {
           (error: unknown) => {
             if (!this.current(session) || !session.streaming) return;
             commandsGroup.status = "error";
-            commandsGroup.hint = String(error);
+            commandsGroup.hint = groupErrorHint(error, locale);
             this.publish(session);
           },
         )
         .catch((error) => {
           if (!this.current(session)) return;
           commandsGroup.status = "error";
-          commandsGroup.hint = String(error);
+          commandsGroup.hint = groupErrorHint(error, locale);
           this.publish(session);
         });
     }
@@ -1498,7 +1491,7 @@ export class LauncherController {
           if (!this.current(session) || !session.streaming || provider.controller.signal.aborted)
             return;
           group.status = "error";
-          group.hint = String(error);
+          group.hint = groupErrorHint(error, locale);
           this.publish(session);
         });
     }
@@ -1650,4 +1643,18 @@ export class LauncherController {
         this.learningExecutions.delete(callerId);
     }
   }
+}
+
+/** Show a provider's own short message, but never raw stacks or schema dumps. */
+function groupErrorHint(error: unknown, locale: string): string {
+  console.error("launcher-provider", error);
+  const message = (error instanceof Error ? error.message : String(error))
+    .replace(/^\w*Error:\s*/u, "")
+    .trim();
+  const technical =
+    !message || message.length > 160 || /[\r\n]/u.test(message) || /^[[{]/u.test(message);
+  if (!technical) return message;
+  return locale.startsWith("en")
+    ? "This source could not return results. Try again."
+    : "此来源暂时无法返回结果，请重试。";
 }

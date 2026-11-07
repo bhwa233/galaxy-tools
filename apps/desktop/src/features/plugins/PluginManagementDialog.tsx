@@ -88,6 +88,7 @@ import type {
   PluginReleaseNotes,
   PluginSummary,
 } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
 const capabilityLabels: Record<PluginSummary["capabilities"][number], string> = {
   storage: "插件私有存储",
@@ -196,8 +197,9 @@ export function PluginManagementDialog({
       await prepareHostWindow();
       setSelectedPlugin(id);
       setDetailTab("config");
-    } catch {
-      /* The editor retains its prompt and error. */
+    } catch (value) {
+      // The editor keeps its own prompt; say why the click did nothing.
+      setError(errorText(value));
     }
   };
   const initialSnapshot = useRef(initialState);
@@ -241,12 +243,7 @@ export function PluginManagementDialog({
   const request = useRef(0);
   const operating = useRef(false);
   const commandTasks = useRef(new Set<string>());
-  const errorText = (value: unknown) =>
-    value instanceof Error
-      ? value.message
-      : value && typeof value === "object" && "message" in value
-        ? String(value.message)
-        : String(value);
+  const errorText = (value: unknown) => getErrorMessage(value);
 
   // Merge the host's immutable task snapshots before applying a full list: an
   // earlier list response must not overwrite a newer progress/cancel event.
@@ -434,7 +431,8 @@ export function PluginManagementDialog({
     if (operating.current) return false;
     try {
       await prepareHostWindow();
-    } catch {
+    } catch (value) {
+      setError(errorText(value));
       return false;
     }
     operating.current = true;
@@ -1653,6 +1651,8 @@ export function PluginManagementDialog({
                                 disabled={disabled}
                                 onClick={() => {
                                   setDeleteData(false);
+                                  // An earlier failure must not read as this uninstall failing.
+                                  setError(undefined);
                                   setRemoving(plugin);
                                 }}
                               >

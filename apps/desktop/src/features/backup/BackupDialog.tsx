@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createBackup, inspectBackup, releaseBackupSelection, restoreBackup } from "./api";
 import type { BackupReport, BackupSelection } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
 export interface BackupDialogProps {
   embedded?: boolean;
@@ -101,11 +102,7 @@ export function BackupDialog({ open, onOpenChange, embedded = false }: BackupDia
           clearSelection();
           setError(t("backup.selectionChanged"));
         } else {
-          setError(
-            value && typeof value === "object" && "message" in value
-              ? String(value.message)
-              : String(value),
-          );
+          setError(getErrorMessage(value));
         }
       }
     } finally {

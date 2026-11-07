@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
+import { getErrorMessage } from "../../platform/errors";
 
 export interface PluginWindowContent {
   info: PluginWindowInfo;
@@ -43,12 +44,7 @@ export function PluginWindow({
           setError(undefined);
         }
       } catch (value) {
-        if (active && request === infoRevision)
-          setError(
-            value && typeof value === "object" && "message" in value
-              ? String(value.message)
-              : String(value),
-          );
+        if (active && request === infoRevision) setError(getErrorMessage(value));
       }
     };
     const accept = (next?: PluginWindowActivation) => {
@@ -66,12 +62,7 @@ export function PluginWindow({
       .then(() => (active ? invoke("plugin_window_take_activation") : undefined))
       .then(accept)
       .catch((value) => {
-        if (active)
-          setError(
-            value && typeof value === "object" && "message" in value
-              ? String(value.message)
-              : String(value),
-          );
+        if (active) setError(getErrorMessage(value));
       });
     return () => {
       active = false;
@@ -83,11 +74,7 @@ export function PluginWindow({
       await prepareHostWindow();
       await getCurrentWindow().close();
     } catch (value) {
-      setError(
-        value && typeof value === "object" && "message" in value
-          ? String(value.message)
-          : String(value),
-      );
+      setError(getErrorMessage(value));
     }
   };
   if (!info && error)

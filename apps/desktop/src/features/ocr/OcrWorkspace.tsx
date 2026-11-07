@@ -28,6 +28,7 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { OcrImage } from "./OcrImage";
+import { getErrorMessage } from "../../platform/errors";
 interface OcrWorkspaceProps {
   initialResult: unknown;
   onClose: () => void;
@@ -68,12 +69,7 @@ export function OcrWorkspace({ initialResult, ...callbacks }: OcrWorkspaceProps)
     return operation;
   };
   const report = (value: unknown) => {
-    if (alive.current)
-      setError(
-        value && typeof value === "object" && "message" in value
-          ? String(value.message)
-          : String(value),
-      );
+    if (alive.current) setError(getErrorMessage(value));
   };
   useEffect(() => {
     alive.current = true;
@@ -316,12 +312,7 @@ function OcrResultWorkspace({
         onResult(value);
       }
     } catch (value) {
-      if (active.current)
-        showToast(
-          value && typeof value === "object" && "message" in value
-            ? String(value.message)
-            : String(value),
-        );
+      if (active.current) showToast(getErrorMessage(value));
     } finally {
       if (active.current) setBusy(false);
     }
@@ -351,12 +342,7 @@ function OcrResultWorkspace({
                   if (active.current) showToast(t("notifications.copied"), "success");
                 })
                 .catch((value) => {
-                  if (active.current)
-                    showToast(
-                      value && typeof value === "object" && "message" in value
-                        ? String(value.message)
-                        : String(value),
-                    );
+                  if (active.current) showToast(getErrorMessage(value));
                 });
             }}
           >

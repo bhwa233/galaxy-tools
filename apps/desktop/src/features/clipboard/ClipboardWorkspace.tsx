@@ -30,6 +30,7 @@ import { openSettingsWindow } from "../settings/api";
 import { WorkspaceTitleBar } from "../windows/WorkspaceTitleBar";
 import { usePluginWindow } from "../windows/PluginWindowContext";
 import type { ClipboardEntry, ClipboardKind, ClipboardPage, ClipboardRequest } from "./types";
+import { getErrorMessage } from "../../platform/errors";
 
 export interface ClipboardWorkspaceProps {
   request: (command: ClipboardRequest) => Promise<unknown>;
@@ -55,10 +56,7 @@ export function ClipboardWorkspace({
   const windowInfo = usePluginWindow();
   const errorText = useCallback(
     (value: unknown) => {
-      const message =
-        value && typeof value === "object" && "message" in value
-          ? String(value.message)
-          : String(value);
+      const message = getErrorMessage(value);
       return t(message, { keySeparator: false, defaultValue: message });
     },
     [t],
