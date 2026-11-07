@@ -10,7 +10,6 @@ import {
   type PluginTheme,
   type PluginPackageMetadata,
   type PluginOwner,
-  type PluginActivation,
   type JsonValue,
   type ResourceHandle,
   type StopReason,
@@ -25,11 +24,7 @@ import type {
   PackageTaskSnapshot,
 } from "../../src/features/plugins/types.js";
 import { AppError, atomicWrite, canonical, confined, readJson } from "../persistence.js";
-import {
-  createTrustedBackend,
-  type PluginBackendController,
-  type TrustedBackendOptions,
-} from "./backend.js";
+import { type PluginBackendController, type TrustedBackendOptions } from "./backend.js";
 import { PluginManager, type PluginInstallation, type ManagedPluginRuntime } from "./manager.js";
 import type { PluginResourceScope } from "./resources.js";
 import {
@@ -48,10 +43,6 @@ import {
   type StagedPluginPackage,
 } from "./package-installer.js";
 import { resolveRegistryPluginPackage } from "./package-source.js";
-import { createWebPluginRuntime, type WebPluginController } from "./web-host.js";
-import { createNativePluginRuntime } from "./native-runtime.js";
-import { createUToolsRuntime } from "./utools-runtime.js";
-import { loadUToolsNativeId } from "./utools-store.js";
 import { UToolsCatalog } from "./utools-catalog.js";
 import { compatibilityManifest, utoolsPluginId, utoolsUpstreamVersion } from "./utools-manifest.js";
 import {
@@ -60,10 +51,10 @@ import {
   type RegistryPluginUpdateSource,
 } from "../../shared/plugin-sources.js";
 import { runPluginDataMigration } from "./migration.js";
-import { createCapabilityBroker } from "./capabilities.js";
 import { registryPackageUrl, requirePackageIntegrity } from "./package-io.js";
 import type { DiagnosticEvent, DiagnosticKind } from "../../src/features/diagnostics/types.js";
 import { PluginTrayStateStore } from "../host/plugin-tray.js";
+import { composePluginRuntime } from "./runtime-composer.js";
 
 export interface WidgetSourceEvent {
   owner: PluginOwner;
@@ -301,310 +292,24 @@ export class DesktopPluginHost {
           dataDir: this.manager.dataDirectory(installation.pluginId),
           cacheDir: confined(this.paths.cacheRoot, "migration", installation.pluginId),
         }),
-      createRuntime: async (installation, metadata, scope, startupCheckOnly, purpose) => {
-        if (metadata.spark233.compatibility)
-          return createUToolsRuntime({
-            scope,
-            metadata,
-            directory: installation.directory,
-            dataDir: this.manager.dataDirectory(installation.pluginId),
-            cacheDir: confined(this.paths.cacheRoot, "utools", scope.owner.instanceId),
-            hostVersion: options.hostVersion,
-            getNativeId: () => loadUToolsNativeId(confined(this.root, "utools-native-id")),
-            trusted: installation.grant.native,
-            startupCheckOnly,
-            desktop: options.utoolsDesktop,
-            resolveResource: options.resolveResource,
-            getTheme: options.getTheme,
-            subscribeTheme: options.subscribeTheme,
-            onCrash: (error) => {
-              void this.manager
-                .reportCrash(scope.owner, error)
-                .catch((failure) => console.error("utools-crash", failure));
-            },
-            onDiagnostic: (message) =>
-              console.error("utools-compatibility", scope.owner.pluginId, message),
-          });
-        const updateTray = this.trayStates.attach(scope, metadata.spark233);
-        const widgetDefinitions = Object.keys(metadata.spark233.ui?.widgets ?? {});
-        if (widgetDefinitions.length && !startupCheckOnly) {
-          let reason: StopReason = "disable";
-          let resumeTimer: ReturnType<typeof setImmediate> | undefined;
-          scope.own("event", {
-            prepareStop: async (nextReason) => {
-              reason = nextReason;
-              if (resumeTimer) clearImmediate(resumeTimer);
-              await options.onWidgetLifecycle?.(scope.owner, "quiesce", reason);
-              return { ok: true };
-            },
-            cancelStop: () => {
-              // ResourceScope changes to active only after all cancelStop hooks
-              // finish. Reattach views on the next turn, with a fresh owner check.
-              resumeTimer = setImmediate(() => {
-                resumeTimer = undefined;
-                if (scope.state === "active" && this.manager.isOwnerCurrent(scope.owner))
-                  void Promise.resolve()
-                    .then(() => options.onWidgetLifecycle?.(scope.owner, "resume", reason))
-                    .catch((error) => console.error("widget-resume", error));
-              });
-            },
-            dispose: async () => {
-              if (resumeTimer) clearImmediate(resumeTimer);
-              this.widgetSubscribers.delete(scope.owner.instanceId);
-              await options.onWidgetLifecycle?.(scope.owner, "revoke", reason);
-            },
-          });
-        }
-        const onEvent = (
-          event: { name: string; payload?: JsonValue },
-          source: "backend" | "native",
-          entryId?: string,
-        ) => {
-          if (event.name === "tray-state") {
-            try {
-              updateTray(event.payload);
-            } catch (error) {
-              console.error("plugin-tray-state", error);
-            }
-          } else {
-            try {
-              options.onPluginEvent?.(scope.owner, event.name, event.payload);
-            } catch (error) {
-              console.error("plugin-event-listener", error);
-            }
-          }
-          if (scope.state === "active") {
-            const widgetEvent: WidgetSourceEvent = {
-              owner: { ...scope.owner },
-              source,
-              ...(entryId ? { entryId } : {}),
-              name: event.name,
-              payload: event.payload,
-            };
-            for (const listener of this.widgetSubscribers.get(scope.owner.instanceId) ?? []) {
-              try {
-                listener(widgetEvent);
-              } catch (error) {
-                console.error("widget-source-listener", error);
-              }
-            }
-          }
-        };
-        const entries = resolvePluginEntries(installation.directory, metadata);
-        const backend = entries.backend
-          ? await createTrustedBackend({
-              scope,
-              pluginRoot: installation.directory,
-              entryPath: entries.backend.entry,
-              dataDir: this.manager.dataDirectory(installation.pluginId),
-              cacheDir: confined(this.paths.cacheRoot, "runtime", installation.pluginId),
-              approveTrust: () => installation.grant.native,
-              startupCheckOnly,
-              hostCapabilities: installation.grant.capabilities,
-              onHostCall: options.onBackendHostCall,
-              onLogBytes: (stream, bytes) =>
-                this.diagnosticOutput(scope.owner, stream, bytes, "backend"),
-              onEvent: (event) => onEvent(event, "backend"),
-              onCrash: (error) => {
-                void this.manager
-                  .reportCrash(scope.owner, error)
-                  .catch((failure) => console.error("plugin-crash-recovery", failure));
-              },
-              activationTimeoutMs: (activation) =>
-                (installation.pluginId === "spark233.translation" &&
-                  activation.commandId === "translate") ||
-                (installation.pluginId === "spark233.traffic" &&
-                  activation.commandId === "process.enable")
-                  ? 120_000
-                  : undefined,
-            })
-          : undefined;
-        const official = await options.createOfficialRuntime?.(
+      createRuntime: (installation, metadata, scope, startupCheckOnly, purpose) =>
+        composePluginRuntime(
+          {
+            options,
+            manager: () => this.manager,
+            root: this.root,
+            paths: this.paths,
+            trayStates: this.trayStates,
+            widgetSubscribers: this.widgetSubscribers,
+            diagnosticOutput: (owner, stream, bytes, kind) =>
+              this.diagnosticOutput(owner, stream, bytes, kind),
+          },
           installation,
           metadata,
           scope,
-          backend,
           startupCheckOnly,
-        );
-        if (official) return official;
-        if (
-          !entries.web &&
-          Object.keys(entries.native).length &&
-          metadata.spark233.commands.some((command) =>
-            command.inputs.some((kind) => kind === "files" || kind === "image"),
-          )
-        )
-          throw new Error(
-            "Generic native-only entries cannot yet resolve file/image resource handles",
-          );
-        const native = Object.keys(entries.native).length
-          ? await createNativePluginRuntime({
-              scope,
-              pluginRoot: installation.directory,
-              entries: entries.native,
-              capabilities: installation.grant.capabilities,
-              dataDir: this.manager.dataDirectory(installation.pluginId),
-              cacheDir: confined(this.paths.cacheRoot, "runtime", installation.pluginId),
-              approveTrust: () => installation.grant.native,
-              onOutputBytes: (stream, bytes) =>
-                this.diagnosticOutput(scope.owner, stream, bytes, "native"),
-              onEvent: (event) => onEvent(event, "native", event.entryId),
-              onCrash: (error) => {
-                void this.manager
-                  .reportCrash(scope.owner, error)
-                  .catch((failure) => console.error("plugin-crash-recovery", failure));
-              },
-            })
-          : undefined;
-        const broker = entries.web
-          ? createCapabilityBroker({
-              scope,
-              manifest: metadata.spark233,
-              manager: () => this.manager,
-              updateTray,
-              resolveResource: options.resolveResource,
-              ...(backend
-                ? {
-                    invokeBackend: (activation: PluginActivation, signal: AbortSignal) =>
-                      backend.activate(activation, signal),
-                  }
-                : {}),
-              ...(native
-                ? {
-                    invokeNative: (entryId, activation, signal) =>
-                      native.request(entryId, activation, signal),
-                  }
-                : {}),
-            })
-          : undefined;
-        if (broker && options.subscribeResourceRevocations) {
-          const stop = options.subscribeResourceRevocations((ids) => broker.revokeContext(ids));
-          scope.own("event", { dispose: stop });
-        }
-        const webControllers = new Map<string, Promise<WebPluginController>>();
-        const getWeb = (
-          profile = Object.keys(metadata.spark233.ui?.windows ?? {})[0],
-          documentKey?: string,
-        ): Promise<WebPluginController | undefined> => {
-          if (!entries.web && !profile) return Promise.resolve(undefined);
-          const key = JSON.stringify([profile, documentKey]);
-          const known = webControllers.get(key);
-          if (known) return known;
-          const declaration = profile ? metadata.spark233.ui?.windows?.[profile] : undefined;
-          const opening = createWebPluginRuntime({
-            scope,
-            pluginRoot: installation.directory,
-            entryPath: declaration
-              ? confined(installation.directory, declaration.entry)
-              : entries.web!,
-            windowProfile: profile,
-            getLocale: options.getLocale,
-            manifest: metadata.spark233,
-            dataDir: this.manager.dataDirectory(installation.pluginId),
-            grant: installation.grant,
-            getTheme: options.getTheme,
-            subscribeTheme: options.subscribeTheme,
-            capabilityBroker: broker,
-            capabilityTimeoutMs: (request) => {
-              const payload = request.payload;
-              return installation.pluginId === "spark233.traffic" &&
-                metadata.name === "@spark233/plugin-traffic" &&
-                request.capability === "node.backend" &&
-                request.operation === "invoke" &&
-                payload &&
-                typeof payload === "object" &&
-                !Array.isArray(payload) &&
-                payload.commandId === "process.enable"
-                ? 120_000
-                : undefined;
-            },
-            onCrash: (error) => {
-              void this.manager
-                .reportCrash(scope.owner, error)
-                .catch((failure) => console.error("plugin-crash-recovery", failure));
-            },
-          });
-          webControllers.set(key, opening);
-          return opening;
-        };
-        // Startup widgets need the backend and lightweight owner; installing or
-        // updating still checks the packaged main page, while ordinary startup
-        // keeps its renderer cold until an explicit window command.
-        const deferWeb =
-          purpose === "widget" ||
-          (!startupCheckOnly &&
-            metadata.spark233.activation === "on-startup" &&
-            !!backend &&
-            widgetDefinitions.length > 0);
-        const web = deferWeb ? undefined : await getWeb();
-        if (
-          !backend &&
-          !web &&
-          !entries.web &&
-          !Object.keys(metadata.spark233.ui?.windows ?? {}).length
-        ) {
-          if (!native && !widgetDefinitions.length)
-            throw new Error("Plugin has no supported runtime entry");
-          if (native && purpose !== "widget") await native.checkStartup();
-          return {
-            activate: (activation) => native?.activate(activation) ?? Promise.resolve(undefined),
-            query: (activation, signal) =>
-              native?.query(activation, signal) ?? Promise.resolve(undefined),
-            executeWidget: async ({ activation, entryId, signal }) => {
-              if (!native) throw new Error("Widget has no headless runtime");
-              return entryId
-                ? native.request(entryId, activation, signal)
-                : native.query(activation, signal);
-            },
-          };
-        }
-        await web?.checkStartup();
-        return {
-          executeWidget: async ({ activation, entryId, signal }) => {
-            signal.throwIfAborted();
-            if (entryId) {
-              if (!native) throw new Error("Widget native entry is unavailable");
-              return native.request(entryId, activation, signal);
-            }
-            if (backend) return backend.activate(activation, signal);
-            if (native) return native.query(activation, signal);
-            throw new Error("Widget has no headless runtime");
-          },
-          query: async (activation, signal) => {
-            signal?.throwIfAborted();
-            broker?.grantContext(activation.context);
-            return backend
-              ? backend.activate(activation, signal)
-              : (await getWeb())?.query(activation, signal);
-          },
-          activate: async (activation) => {
-            broker?.grantContext(activation.context);
-            const result = await backend?.activate(activation);
-            // An on-startup activation must not display a window.
-            if (activation.commandId || activation.context) {
-              const profile = metadata.spark233.commands.find(
-                (command) => command.id === activation.commandId,
-              )?.window;
-              const declaration = profile ? metadata.spark233.ui?.windows?.[profile] : undefined;
-              const parameters = activation.parameters;
-              const documentKey =
-                declaration?.reuse === "document"
-                  ? parameters &&
-                    typeof parameters === "object" &&
-                    !Array.isArray(parameters) &&
-                    typeof parameters.documentId === "string" &&
-                    parameters.documentId.length <= 200
-                    ? parameters.documentId
-                    : randomUUID()
-                  : undefined;
-              const controller = await getWeb(profile, documentKey);
-              await controller?.checkStartup();
-              await controller?.activate(activation);
-            }
-            return result;
-          },
-        };
-      },
+          purpose,
+        ),
     });
   }
 

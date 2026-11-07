@@ -6,7 +6,8 @@ claim that its npm scope has been registered. Publishing is a separate step.
 Host API 1.7 adds launcher budget fields to `commands[].launcher`: `quota`
 (results a search provider contributes per query, 1–100), `immediate` (query
 without the typing debounce) and `alwaysListed` (stay listed past the per-query
-command cutoff). Privileges such as host workspaces stay bound to reserved
+command cutoff), and `commands[].timeoutMs` (how long a backend activation of
+that command may run, 1 s–10 min, default 10 s). Privileges such as host workspaces stay bound to reserved
 official identities and are not declarable.
 
 Host API 1.6 adds an optional uTools compatibility runtime. Its generated package

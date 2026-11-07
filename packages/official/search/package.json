@@ -17,7 +17,7 @@
     "schemaVersion": 1,
     "id": "spark233.search",
     "displayName": "文件搜索",
-    "api": "^1.0.0",
+    "api": "^1.7.0",
     "host": ">=0.0.1 <1",
     "platforms": [
       "win32"
@@ -161,7 +161,8 @@
         },
         "launcher": {
           "role": "action",
-          "input": "query"
+          "input": "query",
+          "alwaysListed": true
         }
       },
       {

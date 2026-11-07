@@ -42,7 +42,7 @@
         "displayName": "Traffic monitor"
       }
     },
-    "api": ">=1.5.0 <2.0.0",
+    "api": ">=1.7.0 <2.0.0",
     "host": ">=0.0.1 <1",
     "platforms": [
       "win32"
@@ -117,7 +117,8 @@
         "title": "启用进程采集",
         "launcher": {
           "role": "hidden"
-        }
+        },
+        "timeoutMs": 120000
       },
       {
         "id": "process.scope",

@@ -28,10 +28,10 @@
 **P2**
 
 - [x] **S1** 新增 `HostLifecycle` 推导宿主阶段，各模块 26 处 `maintenance || isQuitting` 改为 `lifecycle.blocked`。
-- [ ] **S2** 已完成：`PendingRequests` 统一 uTools、Node 后端与 Web 查询的请求表（新增单元测试）。剩余：原生运行时迁移、`desktop-host.ts` 运行时组装拆分（与 Everything 改造合并后进行）。
-- [ ] **S3** 已完成：宿主 API 1.7 新增 `launcher.quota/immediate/alwaysListed`，翻译与应用插件改为声明；应用插件作为“应用清单”宿主角色集中为一个常量；工作区、文件预览等权限继续绑定官方身份。剩余：搜索插件特例随 Everything 改造处理，诊断分类与超时的插件特例。
-- [ ] **S4** 已完成：`Launcher.tsx` 六处重置合并为 `resetQuery`；`useNoteSession.ts` 拆出分类管理与 `isUnsaved()`。剩余：`PluginManagementDialog.tsx` 拆分（与 Everything 改造合并后进行）。
-- [ ] **S5** 已完成：插件包文件解析共用 `resolvePackageFile`（新增边界测试）；胶囊光标轮询按需运行；三个手写菜单补齐键盘操作并使用语义色。剩余：手写菜单迁移到共享组件（UI 阶段）；运行时与胶囊两个环境观察者合并（需实机确认锁屏恢复）。
+- [x] **S2** `PendingRequests` 统一 uTools、Node 后端、原生与 Web 查询四种运行时的请求表（新增单元测试）；`desktop-host.ts` 的运行时组装移到 `runtime-composer.ts`，失败的 Web 页面不再被缓存。
+- [x] **S3** 宿主 API 1.7 新增 `launcher.quota/immediate/alwaysListed` 与 `commands[].timeoutMs`，翻译、应用、搜索、流量插件改为声明；应用清单与调用方作用域等宿主角色集中为具名常量；工作区等权限继续绑定官方身份。
+- [x] **S4** `Launcher.tsx` 六处重置合并为 `resetQuery`；`useNoteSession.ts` 拆出分类管理与 `isUnsaved()`；`PluginManagementDialog.tsx` 拆出任务列表与卸载对话框。
+- [ ] **S5** 已完成：插件包文件解析共用 `resolvePackageFile`（新增边界测试）；胶囊光标轮询按需运行；三个手写菜单补齐键盘操作并使用语义色。按用户确认推迟：手写菜单迁移到共享组件（UI 阶段）；运行时与胶囊两个环境观察者合并（实机确认锁屏恢复后）。
 
 ## 2026-11-07 插件窗口统一状态栏
 

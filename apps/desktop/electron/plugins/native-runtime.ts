@@ -14,6 +14,7 @@ import type {
 } from "@spark233/sdk";
 import { canonical, inside } from "../persistence.js";
 import { PluginResourceScope, samePluginOwner, type StopDecision } from "./resources.js";
+import { PendingRequests } from "./pending-requests.js";
 
 const MAX_LINE = 1024 * 1024;
 const ownerSchema = z.strictObject({
@@ -86,10 +87,7 @@ class NativeEntryProcess {
   private prepared = false;
   private disposing = false;
   private fault?: Error;
-  private pending = new Map<
-    string,
-    { resolve: (value?: JsonValue) => void; reject: (error: Error) => void; cleanup: () => void }
-  >();
+  private pending = new PendingRequests(64);
   constructor(
     private options: NativePluginRuntimeOptions,
     private entryId: string,
@@ -136,11 +134,7 @@ class NativeEntryProcess {
   private fail(error: Error, report = true) {
     const first = !this.fault;
     this.fault = error;
-    for (const request of this.pending.values()) {
-      request.cleanup();
-      request.reject(error);
-    }
-    this.pending.clear();
+    this.pending.rejectAll(error);
     if (first && report && this.initialized && !this.disposing) {
       try {
         this.options.onCrash?.(error);
@@ -196,12 +190,12 @@ class NativeEntryProcess {
           continue;
         }
         if (typeof message.ok !== "boolean") throw new Error("Invalid native plugin response");
-        const request = this.pending.get(message.requestId);
-        if (!request) continue;
-        this.pending.delete(message.requestId);
-        request.cleanup();
-        if (message.ok) request.resolve(message.value as JsonValue | undefined);
-        else request.reject(new Error(message.error ?? "Native plugin request failed"));
+        if (message.ok) this.pending.resolve(message.requestId, message.value);
+        else
+          this.pending.reject(
+            message.requestId,
+            new Error(message.error ?? "Native plugin request failed"),
+          );
       }
       if (Buffer.byteLength(this.buffer) > MAX_LINE)
         throw new Error("Native plugin unfinished line exceeds 1 MiB");
@@ -236,40 +230,39 @@ class NativeEntryProcess {
       sessionId: this.sessionId,
       requestId,
     };
-    return new Promise((resolve, reject) => {
-      const cancel = (error: Error) => {
-        if (!this.pending.delete(requestId)) return;
-        cleanup();
-        try {
-          this.send({ ...identity, type: "cancel" });
-        } catch {
-          /* The original timeout/abort remains the actionable failure. */
-        }
-        reject(error);
-      };
-      const abort = () => cancel(new Error("Native plugin request cancelled"));
-      const timer = setTimeout(
-        () => cancel(new Error(`Native plugin ${body.type} timed out; process remains tracked`)),
-        this.options.timeoutMs ?? 10_000,
-      );
-      const cleanup = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-      };
-      this.pending.set(requestId, { resolve, reject, cleanup });
-      signal?.addEventListener("abort", abort, { once: true });
-      if (signal?.aborted) {
-        abort();
-        return;
+    const notifyCancel = () => {
+      try {
+        this.send({ ...identity, type: "cancel" });
+      } catch {
+        /* The original timeout/abort remains the actionable failure. */
       }
+    };
+    const result = this.pending.open<JsonValue | undefined>(requestId, {
+      timeoutMs: this.options.timeoutMs ?? 10_000,
+      meta: undefined,
+      onTimeout: () => {
+        notifyCancel();
+        return new Error(`Native plugin ${body.type} timed out; process remains tracked`);
+      },
+    });
+    const abort = () => {
+      if (!this.pending.has(requestId)) return;
+      notifyCancel();
+      this.pending.reject(requestId, new Error("Native plugin request cancelled"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    void result.then(
+      () => signal?.removeEventListener("abort", abort),
+      () => signal?.removeEventListener("abort", abort),
+    );
+    if (signal?.aborted) abort();
+    else
       try {
         this.send({ ...identity, ...body });
       } catch (error) {
-        this.pending.delete(requestId);
-        cleanup();
-        reject(error instanceof Error ? error : new Error(String(error)));
+        this.pending.reject(requestId, error instanceof Error ? error : new Error(String(error)));
       }
-    });
+    return result;
   }
   async initialize() {
     try {

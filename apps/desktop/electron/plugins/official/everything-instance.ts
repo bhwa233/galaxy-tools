@@ -154,10 +154,8 @@ export function everythingSearchArgument(query: string): string {
   // Quotes are dropped rather than trusting Everything's argv unescaping;
   // control characters never belong in a search.
   // eslint-disable-next-line no-control-regex
-  const text = query
-    .replace(/[\u0000-\u001f\u007f"]/g, " ")
-    .trim()
-    .slice(0, 4096);
+  const unsafe = /[\u0000-\u001f\u007f"]/g;
+  const text = query.replace(unsafe, " ").trim().slice(0, 4096);
   return /^[-/]/.test(text) ? ` ${text}` : text;
 }
 

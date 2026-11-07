@@ -10,16 +10,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DownloadIcon, FolderOpenIcon, PackageIcon, RefreshCwIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,6 +47,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { MarkdownPreviewLazy } from "../markdown/MarkdownPreviewLazy";
 import { PluginMarketSortControl } from "./PluginMarketSort";
 import { UToolsCatalogList } from "./UToolsCatalogList";
+import { PackageTaskList } from "./PackageTaskList";
+import { UninstallPluginDialog } from "./UninstallPluginDialog";
 import {
   pluginMarketSorts,
   sortPluginMarketEntries,
@@ -678,120 +670,11 @@ export function PluginManagementDialog({
                 className="flex flex-col gap-4"
               >
                 {marketTab === "tasks" && tasks.length > 0 && (
-                  <section className="flex flex-col gap-3" aria-label={t("plugins.tasks.title")}>
-                    <h3 className="text-sm font-medium">{t("plugins.tasks.title")}</h3>
-                    {tasks.map((task) => {
-                      const terminal = [
-                        "completed",
-                        "cancelled",
-                        "failed",
-                        "recovery-required",
-                      ].includes(task.stage);
-                      const failed = task.stage === "failed" || task.stage === "recovery-required";
-                      const total =
-                        task.totalBytes !== undefined &&
-                        Number.isFinite(task.totalBytes) &&
-                        task.totalBytes > 0
-                          ? task.totalBytes
-                          : undefined;
-                      const received = Math.max(
-                        0,
-                        Number.isFinite(task.receivedBytes) ? task.receivedBytes : 0,
-                      );
-                      return (
-                        <Card
-                          key={task.taskId}
-                          size="sm"
-                          role="group"
-                          aria-label={task.packageName}
-                        >
-                          <CardHeader>
-                            <CardTitle className="break-all">{task.packageName}</CardTitle>
-                            <CardDescription className="flex flex-wrap gap-x-3 gap-y-1">
-                              {task.currentVersion && (
-                                <span>
-                                  {t("plugins.currentVersion", { version: task.currentVersion })}
-                                </span>
-                              )}
-                              {task.candidateVersion && (
-                                <span>
-                                  {t("plugins.candidateVersion", {
-                                    version: task.candidateVersion,
-                                  })}
-                                </span>
-                              )}
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="flex min-w-0 flex-col gap-2">
-                            <p
-                              role="status"
-                              aria-live="polite"
-                              className="flex items-center gap-2 text-sm"
-                            >
-                              {!terminal && task.stage !== "awaiting-confirmation" && <Spinner />}
-                              {t(`plugins.tasks.stage.${task.stage}`)}
-                            </p>
-                            {(task.stage === "downloading" || received > 0) && (
-                              <p className="text-xs text-muted-foreground">
-                                {total
-                                  ? t("plugins.tasks.bytesKnown", {
-                                      received: received.toLocaleString(i18n.resolvedLanguage),
-                                      total: total.toLocaleString(i18n.resolvedLanguage),
-                                    })
-                                  : t("plugins.tasks.bytesUnknown", {
-                                      received: received.toLocaleString(i18n.resolvedLanguage),
-                                    })}
-                              </p>
-                            )}
-                            {task.stage === "downloading" && (
-                              <>
-                                <progress
-                                  className="h-2 w-full accent-primary"
-                                  aria-label={t("plugins.tasks.downloadProgress", {
-                                    name: task.packageName,
-                                  })}
-                                  {...(total
-                                    ? { value: Math.min(received, total), max: total }
-                                    : {})}
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                  {t("plugins.tasks.downloadHint")}
-                                </p>
-                              </>
-                            )}
-                            {failed && (
-                              <Alert variant="destructive">
-                                <AlertDescription className="break-words">
-                                  {task.error || t("plugins.tasks.failedHint")}
-                                </AlertDescription>
-                              </Alert>
-                            )}
-                          </CardContent>
-                          {task.cancelable && (
-                            <CardFooter>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={
-                                  cancelling.includes(task.taskId) || task.stage === "cancelling"
-                                }
-                                aria-label={t("plugins.tasks.cancelNamed", {
-                                  name: task.packageName,
-                                })}
-                                onClick={() => {
-                                  void cancelTask(task.taskId);
-                                }}
-                              >
-                                {cancelling.includes(task.taskId) || task.stage === "cancelling"
-                                  ? t("plugins.tasks.stage.cancelling")
-                                  : t("plugins.tasks.cancel")}
-                              </Button>
-                            </CardFooter>
-                          )}
-                        </Card>
-                      );
-                    })}
-                  </section>
+                  <PackageTaskList
+                    tasks={tasks}
+                    cancelling={cancelling}
+                    onCancel={(taskId) => void cancelTask(taskId)}
+                  />
                 )}
 
                 {marketTab === "tasks" && !tasks.length && !state?.pending.length && (
@@ -1664,73 +1547,23 @@ export function PluginManagementDialog({
           </div>
         </DialogContent>
       </Dialog>
-      <AlertDialog
-        open={!!removing}
-        onOpenChange={(value) => {
-          if (!value && !disabled) setRemoving(undefined);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("plugins.uninstallTitle", { defaultValue: "卸载插件" })} · {removing?.displayName}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("plugins.uninstallDescription", {
-                defaultValue: "插件将停止运行并移除。默认保留插件数据，以便之后重新安装。",
-              })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription className="break-words">{error}</AlertDescription>
-            </Alert>
-          )}
-          <FieldGroup>
-            <Field orientation="horizontal" data-disabled={disabled}>
-              <Checkbox
-                id="plugin-delete-data"
-                checked={deleteData}
-                onCheckedChange={(checked) => setDeleteData(checked === true)}
-                disabled={disabled}
-              />
-              <FieldContent>
-                <FieldLabel htmlFor="plugin-delete-data">
-                  {t("plugins.deleteData", { defaultValue: "同时删除此插件的数据" })}
-                </FieldLabel>
-                <FieldDescription>
-                  {t("plugins.deleteDataHint", {
-                    defaultValue: "勾选后会永久删除插件私有数据，无法撤销。",
-                  })}
-                </FieldDescription>
-              </FieldContent>
-            </Field>
-          </FieldGroup>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disabled}>
-              {t("plugins.keep", { defaultValue: "取消" })}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={disabled || !removing}
-              onClick={(event) => {
-                event.preventDefault();
-                if (removing)
-                  void run(
-                    t("plugins.uninstalling", { defaultValue: "正在卸载插件" }),
-                    () => uninstallPlugin(removing.pluginId, deleteData),
-                    t("notifications.uninstalled", { name: removing.displayName }),
-                  ).then((ok) => {
-                    if (ok) setRemoving(undefined);
-                  });
-              }}
-            >
-              {disabled && <Spinner data-icon="inline-start" />}
-              {t("plugins.confirmUninstall", { defaultValue: "确认卸载" })}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <UninstallPluginDialog
+        plugin={removing}
+        busy={disabled}
+        error={error}
+        deleteData={deleteData}
+        onDeleteDataChange={setDeleteData}
+        onClose={() => setRemoving(undefined)}
+        onConfirm={(plugin) =>
+          void run(
+            t("plugins.uninstalling", { defaultValue: "正在卸载插件" }),
+            () => uninstallPlugin(plugin.pluginId, deleteData),
+            t("notifications.uninstalled", { name: plugin.displayName }),
+          ).then((ok) => {
+            if (ok) setRemoving(undefined);
+          })
+        }
+      />
     </>
   );
 }

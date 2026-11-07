@@ -29,6 +29,8 @@ import {
  * Presentation budgets (quota, debounce, always listed) are manifest fields.
  */
 const APPLICATION_INVENTORY = "spark233.applications";
+/** Official providers whose result selections are scoped per launcher caller. */
+const CALLER_SCOPED_PROVIDERS = new Set([APPLICATION_INVENTORY, "spark233.search"]);
 import { literalCommandScore, type CommandPinyinMatcher } from "./launcher-command-matcher.js";
 
 const querySchema = z.strictObject({
@@ -1275,7 +1277,6 @@ export class LauncherController {
           .filter(
             (entry, index) =>
               index < (needle ? 40 : 40 + pinned.length) ||
-              (entry.pluginId === "spark233.search" && entry.command.id === "open-search") ||
               !!entry.command.launcher?.alwaysListed ||
               (!needle &&
                 pinnedKeys.has(
@@ -1530,7 +1531,7 @@ export class LauncherController {
         context: this.providerContext(callerId, input.pluginId, command!.command.id),
       },
     };
-    if (selected.owner && ["spark233.search", APPLICATION_INVENTORY].includes(selected.pluginId)) {
+    if (selected.owner && CALLER_SCOPED_PROVIDERS.has(selected.pluginId)) {
       const parameters = selected.activation.parameters;
       if (parameters && typeof parameters === "object" && !Array.isArray(parameters))
         selected.activation = { ...selected.activation, parameters: { ...parameters, callerId } };

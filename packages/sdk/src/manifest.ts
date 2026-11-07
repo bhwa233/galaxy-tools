@@ -128,6 +128,8 @@ const commandSchema = z.strictObject({
   internal: z.boolean().default(false),
   title: label,
   launcher: launcherPresentationSchema.optional(),
+  /** Host API 1.7: how long a backend activation of this command may run (default 10 s). */
+  timeoutMs: z.number().int().min(1000).max(600_000).optional(),
   window: localId.optional(),
   progress: z
     .strictObject({
