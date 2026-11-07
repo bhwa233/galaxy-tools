@@ -57,11 +57,9 @@ function readZip(archive) {
     const local = archive.readUInt32LE(offset + 42);
     const name = archive.toString("utf8", offset + 46, offset + 46 + nameLength);
     if (archive.readUInt32LE(local) !== 0x04034b50) throw new Error("Bad zip entry");
-    const start =
-      local + 30 + archive.readUInt16LE(local + 26) + archive.readUInt16LE(local + 28);
+    const start = local + 30 + archive.readUInt16LE(local + 26) + archive.readUInt16LE(local + 28);
     const raw = archive.subarray(start, start + compressed);
-    const data =
-      method === 0 ? raw : method === 8 ? zlib.inflateRawSync(raw) : undefined;
+    const data = method === 0 ? raw : method === 8 ? zlib.inflateRawSync(raw) : undefined;
     if (!data || data.length !== size) throw new Error(`Unsupported zip entry: ${name}`);
     entries.set(name, data);
     offset += 46 + nameLength + extraLength + commentLength;
