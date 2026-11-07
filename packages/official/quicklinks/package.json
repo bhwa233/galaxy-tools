@@ -38,7 +38,7 @@
         "displayName": "Quick search & quicklinks"
       }
     },
-    "api": ">=1.5.0 <2.0.0",
+    "api": ">=1.7.0 <2.0.0",
     "host": ">=0.0.1 <1",
     "platforms": [
       "win32"
@@ -186,8 +186,7 @@
           "maximizable": true,
           "taskbar": true,
           "reuse": "singleton",
-          "presentation": "standard",
-          "titleBar": "custom"
+          "presentation": "standard"
         }
       }
     }

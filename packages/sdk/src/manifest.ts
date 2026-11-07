@@ -105,6 +105,10 @@ export const pluginWindowSchema = z.strictObject({
   taskbar: z.boolean().optional(),
   reuse: z.enum(["singleton", "document"]).optional(),
   presentation: z.enum(["standard", "compact"]).optional(),
+  /**
+   * @deprecated Host API 1.7: every plugin window gets the host status bar.
+   * Still accepted so existing packages validate; it no longer changes anything.
+   */
   titleBar: z.enum(["native", "custom"]).optional(),
   legacyLabels: z.array(localId).max(8).optional(),
 });

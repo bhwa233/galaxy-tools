@@ -9,7 +9,6 @@ import {
   Input,
   Spinner,
   Textarea,
-  WindowTitleBar,
 } from "@spark233/ui/components";
 import { createPluginClient } from "../../../sdk/src/browser.js";
 import type { JsonValue, PluginActivation, PluginTheme } from "../../../sdk/src/index.js";
@@ -45,7 +44,6 @@ function QuickLinksPage() {
   const [filter, setFilter] = useState("");
   const [presets, setPresets] = useState(false);
   const [run, setRun] = useState<RunDraft>();
-  const [maximized, setMaximized] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -95,15 +93,6 @@ function QuickLinksPage() {
       }
       return { ok: true };
     });
-    const syncWindow = () =>
-      void client.window
-        .isMaximized()
-        .then((value) => {
-          if (active) setMaximized(value);
-        })
-        .catch(report);
-    window.addEventListener("resize", syncWindow);
-    syncWindow();
     void client
       .context()
       .then((context) => {
@@ -125,7 +114,6 @@ function QuickLinksPage() {
       stopTheme();
       stopActivation();
       stopPrepare();
-      window.removeEventListener("resize", syncWindow);
     };
   }, [retry]);
   const act = async (action: () => Promise<void>) => {
@@ -204,23 +192,8 @@ function QuickLinksPage() {
       }
     });
   };
-  const close = async () => {
-    if (dirty) {
-      setCloseRequested(true);
-      return;
-    }
-    await client.close();
-  };
   return (
     <main className="quicklinks-app flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <WindowTitleBar
-        title="快捷搜索与快开"
-        isMaximized={maximized}
-        labels={{ minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" }}
-        onMinimize={() => void client.window.minimize().catch(report)}
-        onToggleMaximize={() => void client.window.toggleMaximize().catch(report)}
-        onClose={() => void close().catch(report)}
-      />
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
         <div>
           <h2 className="text-base font-semibold">让常用入口带上你的输入</h2>

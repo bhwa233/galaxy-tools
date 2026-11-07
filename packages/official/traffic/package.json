@@ -231,8 +231,7 @@
           "maximizable": true,
           "taskbar": true,
           "reuse": "singleton",
-          "presentation": "standard",
-          "titleBar": "custom"
+          "presentation": "standard"
         }
       },
       "widgets": {

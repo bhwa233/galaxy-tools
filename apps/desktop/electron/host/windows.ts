@@ -65,8 +65,10 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
 /** Share the host shortcut with independently managed plugin windows. */
 export function bindDevToolsShortcut(
   win: BrowserWindow,
-  options: { isolatedSession?: boolean } = {},
+  options: { isolatedSession?: boolean; contents?: Electron.WebContents } = {},
 ): void {
+  // A shell window can host the inspected page in a child view.
+  const contents = options.contents ?? win.webContents;
   let tools: BrowserWindow | undefined;
   const releaseTools = () => {
     const current = tools;
@@ -74,8 +76,8 @@ export function bindDevToolsShortcut(
     if (current && !current.isDestroyed()) current.destroy();
   };
   win.once("closed", releaseTools);
-  win.webContents.on("devtools-closed", releaseTools);
-  win.webContents.on("before-input-event", (event, input) => {
+  contents.on("devtools-closed", releaseTools);
+  contents.on("before-input-event", (event, input) => {
     if (
       input.type !== "keyDown" ||
       input.key !== "F12" ||
@@ -87,8 +89,8 @@ export function bindDevToolsShortcut(
     )
       return;
     event.preventDefault();
-    if (win.webContents.isDevToolsOpened() || tools) {
-      win.webContents.closeDevTools();
+    if (contents.isDevToolsOpened() || tools) {
+      contents.closeDevTools();
       releaseTools();
       return;
     }
@@ -112,11 +114,11 @@ export function bindDevToolsShortcut(
       frontend.once("closed", () => {
         if (tools === frontend) {
           tools = undefined;
-          if (!win.isDestroyed()) win.webContents.closeDevTools();
+          if (!contents.isDestroyed()) contents.closeDevTools();
         }
       });
-      win.webContents.setDevToolsWebContents(frontend.webContents);
+      contents.setDevToolsWebContents(frontend.webContents);
     }
-    win.webContents.openDevTools({ mode: "detach" });
+    contents.openDevTools({ mode: "detach" });
   });
 }

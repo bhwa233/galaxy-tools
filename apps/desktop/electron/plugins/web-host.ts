@@ -7,6 +7,8 @@ import {
   type CustomScheme,
   type IpcMainInvokeEvent,
   type Session,
+  type WebContents,
+  WebContentsView,
 } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -135,11 +137,18 @@ const launcherPage = z.object({
 const CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+const SHELL_CHANNEL = "spark233:plugin-shell";
+/** Height of the host status bar (WindowTitleBar h-12). */
+export const SHELL_BAR_HEIGHT = 48;
+
 // Reuse Electron sandbox/session/protocol, Zod, and the existing confined/atomic
 // storage primitives. Existing note windows cannot safely own third-party pages.
 class WebRuntime implements WebPluginController {
   readonly owner: PluginOwner;
+  /** Host-owned shell window: status bar and window state. */
   private currentWindow?: BrowserWindow;
+  /** The plugin page, in its own isolated session, inside the shell. */
+  private currentView?: WebContentsView;
   private currentSession?: Session;
   private opening?: Promise<BrowserWindow>;
   private disposed = false;
@@ -194,9 +203,41 @@ class WebRuntime implements WebPluginController {
     if (options.subscribeTheme) {
       const unsubscribe = options.subscribeTheme(() => {
         this.applyWindowIdentity();
+        this.publishShell();
         this.send({ type: "theme", owner: this.owner, theme: options.getTheme() });
       });
       options.scope.own("event", { dispose: unsubscribe });
+    }
+  }
+  private async shellRequest(
+    window: BrowserWindow,
+    event: IpcMainInvokeEvent,
+    operation: unknown,
+  ): Promise<unknown> {
+    // Only the host shell page of this exact window may drive it.
+    if (
+      this.currentWindow !== window ||
+      window.isDestroyed() ||
+      event.sender !== window.webContents ||
+      event.senderFrame !== window.webContents.mainFrame
+    )
+      throw new Error("Shell request is not from its own window");
+    switch (operation) {
+      case "state":
+        return this.shellState();
+      case "minimize":
+        window.minimize();
+        return undefined;
+      case "toggleMaximize":
+        if (!window.isResizable() || !window.isMaximizable()) return undefined;
+        if (window.isMaximized()) window.unmaximize();
+        else window.maximize();
+        return undefined;
+      case "close":
+        window.close();
+        return undefined;
+      default:
+        throw new Error("Unsupported shell operation");
     }
   }
   get window(): BrowserWindow | undefined {
@@ -245,10 +286,41 @@ class WebRuntime implements WebPluginController {
       this.options.scope.accepts(this.owner)
     );
   }
+  private page(): WebContents | undefined {
+    const contents = this.currentView?.webContents;
+    return contents && !contents.isDestroyed() ? contents : undefined;
+  }
   private send(event: PluginWebEvent): void {
     const window = this.currentWindow;
-    if (!window || !this.accepts(window) || !this.connected) return;
-    window.webContents.send("spark233:plugin-web:event", event);
+    const page = this.page();
+    if (!window || !page || !this.accepts(window) || !this.connected) return;
+    page.send("spark233:plugin-web:event", event);
+  }
+  /** Status bar state, pushed only to the trusted shell page. */
+  private shellState() {
+    const window = this.currentWindow;
+    const presentation = this.presentation();
+    return {
+      title: presentation.window?.title ?? presentation.manifest.displayName,
+      maximized: !!window && !window.isDestroyed() && window.isMaximized(),
+      maximizable: presentation.window?.maximizable ?? true,
+      locale: this.options.getLocale?.() ?? "zh-CN",
+      theme: this.options.getTheme(),
+    };
+  }
+  private publishShell(): void {
+    const window = this.currentWindow;
+    if (window && !window.isDestroyed())
+      window.webContents.send("spark233:plugin-shell:state", this.shellState());
+  }
+  /** Places the page below the host status bar. */
+  private layout(): void {
+    const window = this.currentWindow;
+    const view = this.currentView;
+    if (!window || window.isDestroyed() || !view) return;
+    const [width, height] = window.getContentSize();
+    const top = SHELL_BAR_HEIGHT;
+    view.setBounds({ x: 0, y: top, width, height: Math.max(1, height - top) });
   }
   private context(): PluginWebContext {
     return {
@@ -273,10 +345,12 @@ class WebRuntime implements WebPluginController {
     event: IpcMainInvokeEvent,
     input: unknown,
   ): Promise<JsonValue | undefined> {
+    const page = this.page();
     if (
       !this.accepts(window) ||
-      event.sender !== window.webContents ||
-      event.senderFrame !== window.webContents.mainFrame
+      !page ||
+      event.sender !== page ||
+      event.senderFrame !== page.mainFrame
     )
       throw new Error("Plugin request is not from its active main frame");
     if (new URL(event.senderFrame.url).href.split("#")[0] !== this.entryUrl)
@@ -394,10 +468,8 @@ class WebRuntime implements WebPluginController {
       case "window.isMaximized": {
         // This handler already authenticates the active owner and main frame.
         // No target window, coordinates or renderer-controlled flags are accepted.
+        // Host API 1.7: available to every page; they act on the host shell window.
         z.undefined().parse(request.payload);
-        const declaration = this.presentation().window;
-        if (declaration?.titleBar !== "custom")
-          throw new Error("Custom window controls were not declared");
         if (request.operation === "window.isMaximized") return window.isMaximized();
         if (request.operation === "window.minimize") {
           window.minimize();
@@ -536,17 +608,31 @@ class WebRuntime implements WebPluginController {
       });
       const declaration = this.presentation().window;
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+      // Every page gets the host status bar; titleBar "custom" is deprecated and ignored.
+      const bar = SHELL_BAR_HEIGHT;
+      // The shell is a host page in the default session; the plugin never runs in it.
       const window = new BrowserWindow({
         width: Math.min(declaration?.size?.width ?? 900, area.width),
-        height: Math.min(declaration?.size?.height ?? 620, area.height),
+        height: Math.min((declaration?.size?.height ?? 620) + bar, area.height),
         minWidth: Math.min(declaration?.minSize?.width ?? 160, area.width),
-        minHeight: Math.min(declaration?.minSize?.height ?? 60, area.height),
+        minHeight: Math.min((declaration?.minSize?.height ?? 60) + bar, area.height),
         resizable: declaration?.resizable ?? true,
         maximizable: declaration?.maximizable ?? true,
         skipTaskbar: declaration?.taskbar === false,
-        frame: declaration?.titleBar !== "custom",
+        frame: false,
         show: false,
         title: this.options.manifest.displayName,
+        webPreferences: {
+          preload: fileURLToPath(new URL("./plugin-shell-preload.cjs", import.meta.url)),
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+          webSecurity: true,
+          webviewTag: false,
+          navigateOnDragDrop: false,
+        },
+      });
+      const view = new WebContentsView({
         webPreferences: {
           session: ownSession,
           preload: fileURLToPath(new URL("./plugin-preload.cjs", import.meta.url)),
@@ -561,22 +647,40 @@ class WebRuntime implements WebPluginController {
           additionalArguments: [`--spark233-instance=${this.owner.instanceId}`],
         },
       });
+      window.contentView.addChildView(view);
       this.currentWindow = window;
-      bindDevToolsShortcut(window, { isolatedSession: true });
+      this.currentView = view;
+      const page = view.webContents;
+      bindDevToolsShortcut(window, { isolatedSession: true, contents: page });
       this.applyWindowIdentity();
       window.on("page-title-updated", (event) => event.preventDefault());
       this.connected = false;
       window.setMenuBarVisibility(false);
+      // The shell page only ever shows the bundled status bar.
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-      window.webContents.on("will-navigate", (event, url) => {
+      window.webContents.on("will-navigate", (event) => event.preventDefault());
+      window.webContents.on("will-attach-webview", (event) => event.preventDefault());
+      window.webContents.ipc.handle(SHELL_CHANNEL, (event, name: unknown) =>
+        this.shellRequest(window, event, name),
+      );
+      for (const change of ["maximize", "unmaximize", "enter-full-screen", "leave-full-screen"])
+        window.on(change as "maximize", () => this.publishShell());
+      window.on("resize", () => this.layout());
+      // Keyboard input belongs to the plugin page, not the status bar.
+      window.on("focus", () => {
+        if (this.currentView === view && !page.isDestroyed()) page.focus();
+      });
+      this.layout();
+      page.setWindowOpenHandler(() => ({ action: "deny" }));
+      page.on("will-navigate", (event, url) => {
         if (url !== this.entryUrl) event.preventDefault();
       });
-      window.webContents.on("will-frame-navigate", (event) => {
+      page.on("will-frame-navigate", (event) => {
         if (!event.isMainFrame || event.url !== this.entryUrl) event.preventDefault();
       });
-      window.webContents.on("will-redirect", (event) => event.preventDefault());
-      window.webContents.on("will-attach-webview", (event) => event.preventDefault());
-      window.webContents.on("render-process-gone", (_event, details) => {
+      page.on("will-redirect", (event) => event.preventDefault());
+      page.on("will-attach-webview", (event) => event.preventDefault());
+      page.on("render-process-gone", (_event, details) => {
         if (this.currentWindow !== window || this.disposed) return;
         this.crashed = true;
         this.connected = false;
@@ -585,9 +689,7 @@ class WebRuntime implements WebPluginController {
         this.finishPreparation({ ok: false, reason: error.message });
         this.options.onCrash?.(error);
       });
-      window.webContents.ipc.handle(CHANNEL, (event, value: unknown) =>
-        this.request(window, event, value),
-      );
+      page.ipc.handle(CHANNEL, (event, value: unknown) => this.request(window, event, value));
       window.on("close", (event) => {
         event.preventDefault();
         void this.prepareStop("window-close").then((decision) => {
@@ -598,7 +700,12 @@ class WebRuntime implements WebPluginController {
         if (this.currentWindow === window) this.destroyWindow();
       });
       try {
-        await window.loadURL(this.entryUrl);
+        await Promise.all([
+          window.loadFile(
+            fileURLToPath(new URL("../../../dist/plugin-shell.html", import.meta.url)),
+          ),
+          page.loadURL(this.entryUrl),
+        ]);
         if (!this.accepts(window)) throw new Error("Plugin window was released while loading");
       } catch (error) {
         this.destroyWindow();
@@ -732,7 +839,7 @@ class WebRuntime implements WebPluginController {
       this.saveApproved = true;
       return Promise.resolve({ ok: true });
     }
-    if (this.crashed || this.currentWindow.webContents.isCrashed())
+    if (this.crashed || !this.page() || this.page()!.isCrashed())
       return Promise.resolve(
         reason === "crash"
           ? ((this.saveApproved = true), { ok: true })
@@ -760,16 +867,23 @@ class WebRuntime implements WebPluginController {
   private destroyWindow(): void {
     this.cancelQueries(new Error("Plugin page closed before query completion"));
     const window = this.currentWindow;
+    const view = this.currentView;
     const ownSession = this.currentSession;
     this.currentWindow = undefined;
+    this.currentView = undefined;
     this.currentSession = undefined;
     this.connected = false;
     for (const listener of this.readyListeners) listener();
     this.finishPreparation({ ok: false, reason: "Plugin page closed before save acknowledgement" });
     const releasing = [...this.brokers.values()].map((release) => release());
     this.brokers.clear();
+    if (view && !view.webContents.isDestroyed()) {
+      view.webContents.ipc.removeHandler(CHANNEL);
+      // A view's page is not destroyed with its window; close it explicitly.
+      view.webContents.close();
+    }
     if (window && !window.isDestroyed()) {
-      window.webContents.ipc.removeHandler(CHANNEL);
+      window.webContents.ipc.removeHandler(SHELL_CHANNEL);
       window.destroy();
     }
     if (ownSession) {

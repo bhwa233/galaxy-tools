@@ -208,13 +208,14 @@ name; window icons inherit `ui.icon`. Dimensions are constrained to the display.
 Existing official window geometry takes priority. `legacyLabels` migrates old
 official window labels.
 
-Host API 1.5 adds `ui.windows.<profile>.titleBar: "custom"` for a frameless Web
-window. Declare `api: ">=1.5.0 <2.0.0"`; omitted or `"native"` retains the system
-title bar. `client.window.minimize()`, `toggleMaximize()` and `isMaximized()` act
-only on the calling plugin's declared custom window and accept no target or
-options. Maximize respects both `resizable` and `maximizable`. `client.close()`
-keeps the existing save-before-close lifecycle. Use native CSS drag regions for
-title bar movement and exclude controls with `app-region: no-drag`.
+Since Host API 1.7 every Web plugin window is a host shell: the host draws the
+status bar (title and window controls) and the plugin page fills the area below
+it. `ui.windows.<profile>.titleBar` is deprecated; `"custom"` still validates but
+no longer removes the host bar, so packages should delete their own title bar.
+`client.window.minimize()`, `toggleMaximize()` and `isMaximized()` work for every
+page, act on the calling plugin's own window and accept no target or options.
+Maximize respects both `resizable` and `maximizable`. `client.close()` keeps the
+existing save-before-close lifecycle.
 
 HTML/icon paths are confined to the package, including symlink resolution.
 Icons are signature checked, limited to 1 MiB and PNG 1024 pixels per side.

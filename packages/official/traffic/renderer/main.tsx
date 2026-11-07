@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
-import { Alert, AlertDescription, Badge, Button, WindowTitleBar } from "@spark233/ui/components";
+import { Alert, AlertDescription, Badge, Button } from "@spark233/ui/components";
 import type { JsonValue } from "../../../sdk/src/index.js";
 import type {
   TrafficProcessAction,
@@ -27,7 +27,6 @@ export function TrafficPage() {
   const selectedIds = useMemo(() => selected?.instances.map((instance) => instance.id), [selected]);
   const [termination, setTermination] = useState<ProcessSelection>();
   const [notice, setNotice] = useState<string>();
-  const [maximized, setMaximized] = useState(false);
   const mounted = useRef(false);
   const generation = useRef(0);
   const mutation = useRef(false);
@@ -38,20 +37,6 @@ export function TrafficPage() {
     const theme = client.onTheme((value) => {
       document.documentElement.dataset.theme = value.effective;
     });
-    let windowRevision = 0;
-    const refreshWindow = () => {
-      const revision = ++windowRevision;
-      void client.window
-        .isMaximized()
-        .then((value) => {
-          if (active && revision === windowRevision) setMaximized(value);
-        })
-        .catch((value) => {
-          if (active && revision === windowRevision) setActionError(errorMessage(value));
-        });
-    };
-    window.addEventListener("resize", refreshWindow);
-    refreshWindow();
     const stop = client.onPrepareStop(() => {
       active = false;
       mounted.current = false;
@@ -90,7 +75,6 @@ export function TrafficPage() {
       clearTimeout(timer);
       theme();
       stop();
-      window.removeEventListener("resize", refreshWindow);
     };
   }, []);
   const act = async (commandId: string, parameters?: JsonValue) => {
@@ -167,23 +151,8 @@ export function TrafficPage() {
   );
   const processNotice =
     state && state.process.status !== "collecting" && state.process.status !== "paused";
-  const windowAction = async (operation: () => Promise<unknown>) => {
-    try {
-      await operation();
-    } catch (value) {
-      if (mounted.current) setActionError(errorMessage(value));
-    }
-  };
   return (
     <main className="traffic-page">
-      <WindowTitleBar
-        title="流量监控"
-        isMaximized={maximized}
-        labels={{ minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" }}
-        onMinimize={() => void windowAction(client.window.minimize)}
-        onToggleMaximize={() => void windowAction(client.window.toggleMaximize)}
-        onClose={() => void windowAction(client.close)}
-      />
       <header className="traffic-topbar">
         <nav className="traffic-tabs" aria-label="流量视图">
           <Button

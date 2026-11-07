@@ -87,6 +87,7 @@ export default defineConfig(async () => ({
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         utools: fileURLToPath(new URL("./utools.html", import.meta.url)),
+        pluginShell: fileURLToPath(new URL("./plugin-shell.html", import.meta.url)),
       },
       output: {
         // 把体积最大的第三方库拆成独立 chunk：markdown 渲染链（懒加载后
