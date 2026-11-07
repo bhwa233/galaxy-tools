@@ -5,6 +5,7 @@ import { POPUP_VIEWPORT_MARGIN } from "../../components/popupPosition";
 import { showToast } from "../../components/Toast";
 import { ReminderPicker } from "../reminders/ReminderPicker";
 import type { NoteSession } from "./useNoteSession";
+import { useMenuKeyboard } from "../../components/useMenuKeyboard";
 type Props = Pick<
   NoteSession,
   | "noteMenu"
@@ -40,11 +41,13 @@ export const NoteDocumentMenu = memo(function NoteDocumentMenu({
   handleMoveNote,
   categories,
 }: Props) {
+  useMenuKeyboard(noteMenuRef, !!noteMenu && !noteMenuClosing, () => setNoteMenuClosing(true));
   return (
     noteMenu &&
     noteMenuTarget && (
       <div
         ref={noteMenuRef}
+        role="menu"
         className={`popup-menu fixed z-[9999] min-w-[168px] p-1 bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 rounded-lg overflow-x-hidden overflow-y-auto select-none ${noteMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
         style={{
           left: noteMenuPosition?.x ?? noteMenu.x,

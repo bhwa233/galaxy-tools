@@ -602,7 +602,7 @@ export function SettingsPanel({
                       localStorage.removeItem("backgroundImageName");
                       setConfigValue("backgroundImagePath", "");
                     }}
-                    className="h-8 px-3 rounded-lg border border-red-400/40 text-[11px] text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer"
+                    className="h-8 px-3 rounded-lg border border-destructive/40 text-[11px] text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
                   >
                     {t("settings.background.clear", { defaultValue: "清除" })}
                   </button>
@@ -896,7 +896,7 @@ export function ShortcutRecorder({ label, value, onChange, validate }: ShortcutR
     checkState === "ok"
       ? "text-bamboo"
       : checkState === "warning" || checkState === "error"
-        ? "text-red-400"
+        ? "text-destructive"
         : "text-ink-ghost";
   const isChecking = checkState === "checking";
 
@@ -946,7 +946,7 @@ export function ShortcutRecorder({ label, value, onChange, validate }: ShortcutR
           onClick={clearShortcut}
           aria-label={t("settings.shortcut.clear", { defaultValue: "清除" })}
           title={t("settings.shortcut.clear", { defaultValue: "清除" })}
-          className="w-8 h-8 rounded-lg border border-paper-deep/45 text-[15px] leading-none text-ink-faint hover:text-red-400 hover:bg-paper-warm/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          className="w-8 h-8 rounded-lg border border-paper-deep/45 text-[15px] leading-none text-ink-faint hover:text-destructive hover:bg-paper-warm/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
         >
           ×
         </button>

@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { memo } from "react";
 import { POPUP_VIEWPORT_MARGIN } from "../../components/popupPosition";
 import type { NoteSession } from "./useNoteSession";
+import { useMenuKeyboard } from "../../components/useMenuKeyboard";
 type Props = Pick<
   NoteSession,
   | "categoryMenu"
@@ -31,10 +32,14 @@ export const CategoryMenu = memo(function CategoryMenu({
   setRenamingCategory,
   setRenameCategoryValue,
 }: Props) {
+  useMenuKeyboard(categoryMenuRef, !!categoryMenu && !categoryMenuClosing, () =>
+    setCategoryMenuClosing(true),
+  );
   return (
     categoryMenu && (
       <div
         ref={categoryMenuRef}
+        role="menu"
         className={`popup-menu fixed z-[9999] min-w-[140px] p-1 bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 rounded-lg overflow-x-hidden overflow-y-auto select-none ${categoryMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
         data-hover-suppressed={categoryMenuHoverSuppressed ? "" : undefined}
         style={{
