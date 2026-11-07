@@ -1,9 +1,13 @@
-import { showToast } from "../../components/Toast";
+import { showToast } from "@/components/Toast";
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { translationAction } from "./api";
-import type { TranslationHistory, TranslationHistoryEntry, TranslationPreferences } from "./types";
-import { getErrorMessage } from "../../platform/errors";
+import type {
+  TranslationHistory,
+  TranslationHistoryEntry,
+  TranslationPreferences,
+} from "../../../../../apps/desktop/shared/translation";
+import { getErrorMessage } from "@/platform/errors";
 
 const errorText = (value: unknown) => getErrorMessage(value);
 

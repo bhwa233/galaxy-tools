@@ -1,15 +1,19 @@
-import { showToast } from "../../components/Toast";
+import { showToast } from "@/components/Toast";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { invoke, writeText } from "../../platform/desktop";
-import { WorkspaceTitleBar } from "../windows/WorkspaceTitleBar";
+import { invoke, writeText } from "@/platform/desktop";
+import { WorkspaceTitleBar } from "@/features/windows/WorkspaceTitleBar";
 
-import type { OcrSession, OcrSessionSummary, OcrDocument } from "../../../shared/ocr-sessions";
-import { registerHostPreparation } from "../windows/hostPreparation";
+import type {
+  OcrSession,
+  OcrSessionSummary,
+  OcrDocument,
+} from "../../../../../apps/desktop/shared/ocr-sessions";
+import { registerHostPreparation } from "@/features/windows/hostPreparation";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +32,7 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { OcrImage } from "./OcrImage";
-import { getErrorMessage } from "../../platform/errors";
+import { getErrorMessage } from "@/platform/errors";
 interface OcrWorkspaceProps {
   initialResult: unknown;
   onClose: () => void;

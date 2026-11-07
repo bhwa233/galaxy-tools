@@ -1,6 +1,6 @@
 import { mountDesktopApp } from "../../../../apps/desktop/src/platform/mount";
 import { PluginWindow } from "../../../../apps/desktop/src/features/windows/PluginWindow";
-import { OcrWorkspace } from "../../../../apps/desktop/src/features/ocr/OcrWorkspace";
+import { OcrWorkspace } from "./workspace/OcrWorkspace";
 const Page = () => (
   <PluginWindow>
     {({ payload, onClose, info }) => (

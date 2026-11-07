@@ -25,6 +25,10 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "../../packages/official/*/renderer/**/*.tsx"],
+  "include": [
+    "src",
+    "../../packages/official/*/renderer/**/*.tsx",
+    "../../packages/official/*/renderer/**/*.ts"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

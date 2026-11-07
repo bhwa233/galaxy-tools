@@ -1,6 +1,6 @@
 import { mountDesktopApp } from "../../../../apps/desktop/src/platform/mount";
 import { PluginWindow } from "../../../../apps/desktop/src/features/windows/PluginWindow";
-import { TranslationWorkspace } from "../../../../apps/desktop/src/features/translation/TranslationWorkspace";
+import { TranslationWorkspace } from "./workspace/TranslationWorkspace";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 const Page = () => (

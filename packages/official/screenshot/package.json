@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-screenshot",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "spark233 native screenshot and optional OCR transfer",
   "license": "MIT",
   "files": [

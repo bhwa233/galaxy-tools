@@ -1,9 +1,10 @@
 {
   "name": "@spark233/plugin-search",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Everything 1.5 powered file name and content search for spark233",
   "license": "Apache-2.0",
   "files": [
+    "backend.mjs",
     "native/**",
     "licenses/**",
     "README.md",
@@ -11,7 +12,15 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.search"
+    "build": "node ../../../scripts/build-official-plugins.mjs --plugin spark233.search",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@spark233/sdk": "workspace:*",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   },
   "spark233": {
     "schemaVersion": 1,
@@ -27,6 +36,7 @@
     ],
     "activation": "on-command",
     "capabilities": [
+      "node.backend",
       "native.process",
       "files.read",
       "search.index"
@@ -296,6 +306,9 @@
         "commandId": "workspace",
         "order": 0
       }
-    ]
+    ],
+    "backend": {
+      "entry": "backend.mjs"
+    }
   }
 }

@@ -75,20 +75,39 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm sdk:build
       - uses: actions/setup-python@v5
-        if: matrix.plugin.id == 'spark233.applications'
+        if: contains(fromJSON('["spark233.applications","spark233.ocr","spark233.screenshot","spark233.translation"]'), matrix.plugin.id)
         with:
           python-version: "3.12"
       - name: Native toolchain
-        if: matrix.plugin.id == 'spark233.applications'
+        if: contains(fromJSON('["spark233.applications","spark233.ocr","spark233.screenshot"]'), matrix.plugin.id)
         shell: pwsh
         run: ./scripts/native-capture/prepare-toolchain.ps1 -PythonExecutable python -PythonArguments @()
+      # Screenshot and OCR package the shared capture build (ScreenCapture,
+      # ImageReader); build-official-plugins stages it into each package.
+      - name: Capture native build
+        if: contains(fromJSON('["spark233.ocr","spark233.screenshot"]'), matrix.plugin.id)
+        shell: pwsh
+        run: |
+          $tools = @{
+            ToolchainSetup = Join-Path $env:LOCALAPPDATA 'spark233/toolchains/vs2026/msvc/setup_x64.bat'
+            CMakeExecutable = (Get-Command cmake -ErrorAction Stop).Source
+            NinjaExecutable = (Get-Command ninja -ErrorAction Stop).Source
+          }
+          $capture = Join-Path $PWD 'local-build/spark233/native-capture-p4'
+          ./scripts/native-capture/prepare.ps1 -OutputRoot $capture -SkipReleases
+          ./scripts/native-capture/prepare-ocr-deps.ps1 @tools
+          ./scripts/native-capture/build.ps1 @tools -OutputRoot $capture -WithOcr
+          ./scripts/native-capture/prepare-vc-runtime.ps1
       - name: Tests
         run: pnpm --filter @spark233/desktop exec vitest run packages/official/${{ matrix.plugin.directory }}/ --passWithNoTests
       # npm trusted publishing: the id-token permission authenticates this
-      # workflow and no token is stored. A brand-new package needs one release
-      # with a temporary NODE_AUTH_TOKEN before trusted publishing can be set up.
+      # workflow and no token is stored. A package that is not on npm yet needs a
+      # temporary NPM_TOKEN secret for its first release; trusted publishing is
+      # configured on npm afterwards and the secret removed again.
       - name: Build and publish
         run: node scripts/plugin-release.mjs publish ${{ matrix.plugin.id }} --expect ${{ matrix.plugin.fingerprint }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   host:
     needs: [plan, plugin]

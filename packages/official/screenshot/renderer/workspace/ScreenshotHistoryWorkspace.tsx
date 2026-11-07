@@ -1,12 +1,12 @@
-import { showToast } from "../../components/Toast";
+import { showToast } from "@/components/Toast";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, XIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { invoke, listen } from "../../platform/desktop";
-import { getErrorMessage } from "../../platform/errors";
+import { invoke, listen } from "@/platform/desktop";
+import { getErrorMessage } from "@/platform/errors";
 
 interface HistoryEntry {
   id: string;

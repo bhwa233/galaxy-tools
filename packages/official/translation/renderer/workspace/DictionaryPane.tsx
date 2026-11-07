@@ -4,7 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import type { DictionaryEntryResult, DictionaryItem } from "./types";
+import type {
+  DictionaryEntryResult,
+  DictionaryItem,
+} from "../../../../../apps/desktop/shared/translation";
 
 export interface DictionaryPaneProps {
   className?: string;

@@ -4,9 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
-import { PluginResourceScope } from "../resources.js";
 import { everythingPipeName } from "./everything-ipc.js";
-import { createSearchRuntime } from "./search.js";
+import { createSearchRuntime } from "./search-runtime.js";
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -85,33 +84,32 @@ it("decodes chunked SDK3 search replies and drops host private paths", async () 
     });
   });
   await new Promise<void>((resolve) => server.listen(everythingPipeName(instance), resolve));
-  const scope = new PluginResourceScope({
-    pluginId: "spark233.search",
-    version: "0.2.0",
-    instanceId: "test",
-  });
-  cleanups.push(
-    () => new Promise<void>((resolve) => server.close(() => resolve())),
-    () => fs.rmSync(root, { recursive: true, force: true }),
-    async () => void (await scope.stop("disable")),
-  );
   const runtime = createSearchRuntime({
-    scope,
     pluginRoot,
-    descriptor: { path: path.join(pluginRoot, "native", "Everything.exe"), args: [] },
+    executable: path.join(pluginRoot, "native", "Everything.exe"),
     dataDir: path.join(root, "data"),
     cacheDir: path.join(root, "cache"),
-    approveTrust: () => true,
-    privateRoots: () => [privateRoot],
-    openPath: async () => undefined,
     fixture: {
       profileRoot: root,
       bundledInstance: `${instance}-bundled`,
       userInstances: [instance],
     },
   });
-  const page = (await runtime.query!(
-    { commandId: "content", parameters: { query: "quarterly report", callerId: "c" } },
+  cleanups.push(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+    () => fs.rmSync(root, { recursive: true, force: true }),
+    () => runtime.dispose(),
+  );
+  const page = (await runtime.activate(
+    {
+      commandId: "content",
+      parameters: {
+        query: "quarterly report",
+        callerId: "c",
+        privateRoots: [privateRoot],
+        queryOnly: true,
+      },
+    },
     new AbortController().signal,
   )) as { items: { title: string; description?: string; commandId: string }[] };
   expect(searches).toEqual(['content:"quarterly" content:"report"']);

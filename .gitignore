@@ -83,3 +83,4 @@ packages/ui/dist/
 packages/official/notes/backend.mjs
 packages/official/quicklinks/backend.mjs
 packages/official/traffic/backend.mjs
+packages/official/search/backend.mjs

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import semver from "semver";
-import { AppError, atomicWrite, confined } from "../persistence.js";
+import { AppError, atomicWrite, canonical, confined, inside } from "../persistence.js";
 import { type DesktopPluginHostOptions } from "../plugins/desktop-host.js";
 import { resolvePluginEntries } from "../plugins/manifest.js";
 import {
@@ -20,9 +20,23 @@ import {
 import { createClipboardRuntime } from "../plugins/official/clipboard.js";
 import { NotesDataClient } from "../plugins/official/notes-data-client.js";
 import { createNotesRuntime } from "../plugins/official/notes.js";
-import { createSearchRuntime } from "../plugins/official/search.js";
 import { createQuicklinksRuntime } from "../plugins/official/quicklinks.js";
 import type { RuntimeContext } from "../runtime.js";
+import type { JsonValue, PluginActivation } from "@spark233/sdk";
+
+/** A file action the search backend asks the host to perform. */
+function searchHostAction(
+  value: JsonValue | undefined,
+): { hostAction: "open" | "reveal" | "copy-path"; path: string } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const { hostAction, path: target } = value;
+  if (
+    (hostAction === "open" || hostAction === "reveal" || hostAction === "copy-path") &&
+    typeof target === "string" &&
+    target.length <= 32_767
+  )
+    return { hostAction, path: target };
+}
 export function createOfficialRuntimeFactory(
   ctx: Pick<
     RuntimeContext,
@@ -409,22 +423,61 @@ export function createOfficialRuntimeFactory(
       },
     };
     if (id === "spark233.search") {
-      if (!entries.native.everything) throw new Error("Everything executable entry is required");
-      const runtime = createSearchRuntime({
-        ...common,
-        descriptor: entries.native.everything,
-        getLocale: () => ctx.hostConfig.value.locale,
-        privateRoots: () => ctx.privateDataRoots.list(),
-        subscribePrivateRoots: (listener) => ctx.privateDataRoots.subscribe(listener),
-        openPath: (filename) => shell.openPath(filename),
-        revealPath: (filename) => {
-          shell.showItemInFolder(filename);
-        },
-        copyPath: (filename) => {
-          clipboard.writeText(filename);
-        },
+      // The search logic runs in the plugin backend. The host adds its locale and
+      // private roots, and performs the file actions after checking the path.
+      if (!backend) throw new Error("Search backend entry is required");
+      const call = (activation: PluginActivation, signal?: AbortSignal, queryOnly = false) => {
+        if (!installation.grant.native)
+          throw new Error("Host trust approval is required for native plugins");
+        const parameters =
+          activation.parameters &&
+          typeof activation.parameters === "object" &&
+          !Array.isArray(activation.parameters)
+            ? activation.parameters
+            : {};
+        return backend.activate(
+          {
+            ...activation,
+            parameters: {
+              ...parameters,
+              locale: ctx.hostConfig.value.locale,
+              privateRoots: ctx.privateDataRoots.list(),
+              queryOnly,
+            },
+          },
+          signal,
+        );
+      };
+      // Selections into a root that just became private must not open.
+      scope.own("event", {
+        dispose: ctx.privateDataRoots.subscribe(async () => {
+          if (scope.accepts(scope.owner))
+            await call({ commandId: "revoke" }).catch(() => undefined);
+        }),
       });
-      return { query: runtime.query, activate: runtime.activate };
+      return {
+        query: (activation, signal) => call(activation, signal, true),
+        activate: async (activation) => {
+          const value = await call(activation);
+          const action = searchHostAction(value);
+          if (!action) return value;
+          const target = path.win32.resolve(action.path);
+          if (
+            !path.win32.isAbsolute(action.path) ||
+            ctx.privateDataRoots
+              .list()
+              .some((root) => inside(root, target) || inside(root, canonical(target)))
+          )
+            throw new AppError("permissionDenied", "This path is not available to search");
+          if (action.hostAction === "reveal") shell.showItemInFolder(target);
+          else if (action.hostAction === "copy-path") clipboard.writeText(target);
+          else {
+            const error = await shell.openPath(target);
+            if (error) throw new Error(error);
+          }
+          return undefined;
+        },
+      };
     }
     if (id === "spark233.clipboard") {
       if (!entries.native.clipboard) throw new Error("Clipboard executable entry is required");

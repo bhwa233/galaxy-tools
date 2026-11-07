@@ -1,9 +1,12 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { atomicWrite, canonical, confined, inside } from "../../persistence.js";
-import { createTrustedNativeProcess, type PluginNativeController } from "../backend.js";
-import { PluginResourceScope } from "../resources.js";
+import {
+  atomicWrite,
+  canonical,
+  confined,
+  inside,
+} from "../../../apps/desktop/electron/persistence.js";
 import {
   EverythingClient,
   EverythingIpcError,
@@ -160,15 +163,12 @@ export function everythingSearchArgument(query: string): string {
 }
 
 export interface EverythingInstanceOptions {
-  scope: PluginResourceScope;
   pluginRoot: string;
   executable: string;
   dataDir: string;
   profileRoot: string;
   excludedRoots: () => readonly string[];
-  approveTrust: () => boolean | Promise<boolean>;
-  onOutputBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
-  /** Host-only test seams; production uses the defaults. */
+  /** Test seams; production uses the defaults. */
   bundledInstance?: string;
   userInstances?: readonly (string | undefined)[];
   startTimeoutMs?: number;
@@ -183,7 +183,8 @@ export interface EverythingInstanceOptions {
 export class EverythingInstances {
   private target?: EverythingTarget;
   private starting?: Promise<EverythingTarget>;
-  private process?: PluginNativeController;
+  /** The bundled instance this backend started; exited with the plugin. */
+  private process?: ChildProcess;
   private disposed = false;
   readonly bundledInstance: string;
   private readonly userInstances: readonly (string | undefined)[];
@@ -278,28 +279,19 @@ export class EverythingInstances {
       config,
       patchEverythingIni(fs.existsSync(config) ? fs.readFileSync(config, "utf8") : "", settings),
     );
-    if (this.disposed || this.options.scope.state !== "active")
-      throw new EverythingIpcError("Search plugin is disabled", "closed");
-    this.process = await createTrustedNativeProcess({
-      scope: this.options.scope,
-      pluginRoot: this.root,
-      descriptor: {
-        path: this.executable,
-        args: [
-          ...this.instanceArguments(this.bundledInstance),
-          "-config",
-          config,
-          "-db",
-          database,
-          "-startup",
-          "-no-auto-include",
-        ],
-      },
-      approveTrust: this.options.approveTrust,
-      onOutputBytes: this.options.onOutputBytes,
-      prepareStop: () => ({ ok: true }),
-      requestShutdown: () => this.exitBundled(),
-      timeoutMs: 15000,
+    if (this.disposed) throw new EverythingIpcError("Search plugin is disabled", "closed");
+    const child = this.run([
+      ...this.instanceArguments(this.bundledInstance),
+      "-config",
+      config,
+      "-db",
+      database,
+      "-startup",
+      "-no-auto-include",
+    ]);
+    this.process = child;
+    child.once("exit", () => {
+      if (this.process === child) this.process = undefined;
     });
     const deadline = Date.now() + (this.options.startTimeoutMs ?? 15000);
     while (Date.now() < deadline) {
@@ -310,60 +302,46 @@ export class EverythingInstances {
     throw new EverythingIpcError("The bundled Everything did not start", "timeout");
   }
 
-  /** Runs the bundled executable briefly to forward a command line to an instance. */
-  private async forward(args: string[]): Promise<void> {
-    const scope = new PluginResourceScope(this.options.scope.owner);
-    try {
-      const helper = await createTrustedNativeProcess({
-        scope,
-        pluginRoot: this.root,
-        descriptor: { path: this.executable, args },
-        approveTrust: this.options.approveTrust,
-        onOutputBytes: this.options.onOutputBytes,
-        prepareStop: () => ({ ok: true }),
-        requestShutdown: () => undefined,
-        timeoutMs: 10000,
-      });
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const exited = await Promise.race([
-        helper.waitForExit().then(() => true),
-        new Promise<false>((resolve) => {
-          timer = setTimeout(() => resolve(false), 10000);
-        }),
-      ]);
-      clearTimeout(timer);
-      if (!exited) throw new Error("Everything did not accept the command");
-    } finally {
-      // A helper that did not exit is force-terminated with its scope.
-      await scope.stop("quit").catch(() => undefined);
-    }
+  /** Starts the packaged executable; arguments never come from a query unquoted. */
+  private run(args: string[]): ChildProcess {
+    const child = spawn(this.executable, args, {
+      cwd: this.root,
+      shell: false,
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    child.once("error", (error) => console.error("everything-process", error.message));
+    return child;
   }
 
-  private exitBundled(): Promise<void> {
-    // Not routed through the plugin scope: shutdown must not depend on it.
+  /** Waits for a short-lived process; one that does not exit in time is killed. */
+  private settle(child: ChildProcess, timeoutMs: number): Promise<boolean> {
     return new Promise((resolve) => {
-      const child = spawn(
-        this.executable,
-        [...this.instanceArguments(this.bundledInstance), "-exit"],
-        {
-          shell: false,
-          windowsHide: true,
-          stdio: "ignore",
-        },
-      );
+      if (child.exitCode !== null || child.signalCode !== null) return resolve(true);
       const timer = setTimeout(() => {
         child.kill();
-        resolve();
-      }, 10000);
-      child.once("error", () => {
+        resolve(false);
+      }, timeoutMs);
+      const done = () => {
         clearTimeout(timer);
-        resolve();
-      });
-      child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
+        resolve(true);
+      };
+      child.once("error", done);
+      child.once("exit", done);
     });
+  }
+
+  /** Runs the bundled executable briefly to forward a command line to an instance. */
+  private async forward(args: string[]): Promise<void> {
+    if (!(await this.settle(this.run(args), 10000)))
+      throw new Error("Everything did not accept the command");
+  }
+
+  private async exitBundled(): Promise<void> {
+    await this.settle(this.run([...this.instanceArguments(this.bundledInstance), "-exit"]), 10000);
+    // A bundled instance that ignored -exit must not outlive the plugin.
+    const started = this.process;
+    if (started && !(await this.settle(started, 5000))) started.kill();
   }
 
   /** Opens the Everything window of the chosen instance with a search. */
@@ -386,12 +364,12 @@ export class EverythingInstances {
     await this.forward([...this.instanceArguments(target.instance), "-options"]);
   }
 
-  /** Called from the plugin scope; the bundled process is stopped by its own resource. */
+  /** Exits the bundled instance, whether this backend started or adopted it. */
   async dispose(): Promise<void> {
     this.disposed = true;
-    const bundled = this.target?.bundled && !this.process;
+    const bundled = this.target?.bundled || !!this.process;
     this.target = undefined;
-    // An instance this runtime adopted (left from an earlier session) is ours too.
-    if (bundled) await this.exitBundled();
+    await this.starting?.catch(() => undefined);
+    if (bundled || this.process) await this.exitBundled();
   }
 }

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import type { OcrSession, OcrDocument } from "../../../shared/ocr-sessions";
+import type { OcrSession, OcrDocument } from "../../../../../apps/desktop/shared/ocr-sessions";
 
 export function selectionUnits(result: OcrSession, document: OcrDocument) {
   return result.lines.flatMap((line, index) => {

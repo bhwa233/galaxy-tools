@@ -1,10 +1,10 @@
 import { it, expect } from "vitest";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
-import { installDesktopBridge } from "../../test/browser/desktop-bridge";
-import { OcrWorkspace } from "./OcrWorkspace";
-import { prepareHostWindow } from "../windows/hostPreparation";
-import { selectionUnits } from "./OcrImage";
+import { installDesktopBridge } from "@/test/browser/desktop-bridge";
+import { OcrWorkspace } from "../../../../../packages/official/ocr/renderer/workspace/OcrWorkspace";
+import { prepareHostWindow } from "@/features/windows/hostPreparation";
+import { selectionUnits } from "../../../../../packages/official/ocr/renderer/workspace/OcrImage";
 import type { OcrSession, OcrDocument } from "../../../shared/ocr-sessions";
 const box = [
   [0, 0],

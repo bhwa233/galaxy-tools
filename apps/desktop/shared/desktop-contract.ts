@@ -40,7 +40,7 @@ import type {
   TranslationHistory,
   TranslationPreferences,
   TranslationResult,
-} from "../src/features/translation/types.js";
+} from "./translation.js";
 import type {
   UpdateCheckResult,
   UpdateDownloadProgress,

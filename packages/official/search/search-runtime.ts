@@ -2,10 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { JsonValue, PluginActivation } from "@spark233/sdk";
-import { canonical, inside } from "../../persistence.js";
-import type { ManagedPluginRuntime } from "../manager.js";
-import type { PluginResourceScope } from "../resources.js";
+import type { JsonValue, PluginActivation } from "../../sdk/src/index.js";
+import { canonical, inside } from "../../../apps/desktop/electron/persistence.js";
 import {
   EverythingIpcError,
   EverythingProperty,
@@ -14,21 +12,12 @@ import {
 import { CONTENT_EXTENSIONS, EverythingInstances } from "./everything-instance.js";
 
 export interface SearchRuntimeOptions {
-  scope: PluginResourceScope;
   pluginRoot: string;
-  /** The bundled Everything 1.5 executable resolved from the manifest. */
-  descriptor: { path: string; args: string[] };
+  /** The bundled Everything 1.5 executable inside the package. */
+  executable: string;
   dataDir: string;
   cacheDir: string;
-  approveTrust: () => boolean | Promise<boolean>;
-  onOutputBytes?: (stream: "stdout" | "stderr", byteCount: number) => void;
-  privateRoots?: readonly string[] | (() => readonly string[]);
-  subscribePrivateRoots?: (listener: () => Promise<void>) => () => void;
-  getLocale?: () => string;
-  openPath: (filename: string) => Promise<string | void>;
-  revealPath?: (filename: string) => void | Promise<void>;
-  copyPath?: (filename: string) => void | Promise<void>;
-  /** Host-only isolated integration scope. Never sourced from activation input. */
+  /** Isolated integration scope for tests. Never sourced from activation input. */
   fixture?: {
     profileRoot: string;
     bundledInstance: string;
@@ -48,6 +37,22 @@ type CallerState = {
   lastQuery?: Query;
 };
 
+/**
+ * What the host performs for a chosen result. The plugin never opens files
+ * itself; the host checks the path against its private roots first.
+ */
+export type SearchHostAction = { hostAction: "open" | "reveal" | "copy-path"; path: string };
+export interface SearchRuntime {
+  /**
+   * The host adds `locale`, `privateRoots` (host data the results must never
+   * show) and, for launcher queries, `queryOnly` to the parameters.
+   */
+  activate(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
+  /** Forget every selection, cursor and window token. */
+  revoke(): void;
+  dispose(): Promise<void>;
+}
+
 /** Files written by the Pulse-backed versions of this plugin. */
 const LEGACY_DATA = ["search-scope.json", "workspace-history.json"];
 
@@ -65,14 +70,14 @@ export function contentSearchText(query: string, indexed: boolean, profileRoot: 
   return indexed ? matches : `"${profileRoot}\\" ext:${CONTENT_EXTENSIONS.join(";")} ${matches}`;
 }
 
-export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPluginRuntime {
-  const ui = (zh: string, en: string) => (options.getLocale?.().startsWith("en") ? en : zh);
+export function createSearchRuntime(options: SearchRuntimeOptions): SearchRuntime {
+  let locale = "zh-CN";
+  let privateRoots: readonly string[] = [];
+  const ui = (zh: string, en: string) => (locale.startsWith("en") ? en : zh);
   for (const directory of [options.dataDir, options.cacheDir]) {
     if (!path.isAbsolute(directory)) throw new Error("Search data/cache must be absolute");
     fs.mkdirSync(directory, { recursive: true });
   }
-  if (options.descriptor.args.length)
-    throw new Error("Official search entry must use host-controlled arguments");
   // Pulse-era settings and workspace history are no longer read.
   for (const name of LEGACY_DATA) fs.rmSync(path.join(options.dataDir, name), { force: true });
   fs.rmSync(path.join(options.cacheDir, "sessions"), { recursive: true, force: true });
@@ -81,25 +86,19 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
   function excludedRoots(): string[] {
     return [
       ...new Set(
-        [
-          ...(typeof options.privateRoots === "function"
-            ? options.privateRoots()
-            : (options.privateRoots ?? [])),
-          options.dataDir,
-          options.cacheDir,
-        ].flatMap((value) => [path.resolve(value), canonical(value)]),
+        [...privateRoots, options.dataDir, options.cacheDir].flatMap((value) => [
+          path.resolve(value),
+          canonical(value),
+        ]),
       ),
     ];
   }
   const everything = new EverythingInstances({
-    scope: options.scope,
     pluginRoot: options.pluginRoot,
-    executable: options.descriptor.path,
+    executable: options.executable,
     dataDir: options.dataDir,
     profileRoot,
     excludedRoots,
-    approveTrust: options.approveTrust,
-    onOutputBytes: options.onOutputBytes,
     ...(options.fixture
       ? {
           bundledInstance: options.fixture.bundledInstance,
@@ -143,7 +142,7 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
     callers.clear();
   }
   function assertActive(): void {
-    if (disposed || options.scope.state !== "active") throw new Error("Search plugin is disabled");
+    if (disposed) throw new Error("Search plugin is disabled");
   }
   function isExcluded(filename: string, excluded = excludedRoots()): boolean {
     const resolved = path.resolve(filename);
@@ -309,19 +308,27 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
   async function activate(
     activation: PluginActivation,
     signal?: AbortSignal,
-    queryOnly = false,
   ): Promise<JsonValue | undefined> {
     assertActive();
     signal?.throwIfAborted();
     if (!activation.commandId) return;
-    if (queryOnly && !["search", "content"].includes(activation.commandId))
-      throw new Error("Search query cannot perform host actions");
     const parameters =
       activation.parameters &&
       typeof activation.parameters === "object" &&
       !Array.isArray(activation.parameters)
         ? activation.parameters
         : {};
+    if (typeof parameters.locale === "string") locale = parameters.locale;
+    if (Array.isArray(parameters.privateRoots))
+      privateRoots = parameters.privateRoots.filter(
+        (root): root is string => typeof root === "string" && path.isAbsolute(root),
+      );
+    if (parameters.queryOnly === true && !["search", "content"].includes(activation.commandId))
+      throw new Error("Search query cannot perform host actions");
+    if (activation.commandId === "revoke") {
+      revokeAll();
+      return;
+    }
     if (activation.commandId === "workspace") {
       await everything.openWindow("", signal);
       return;
@@ -350,19 +357,10 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
           : undefined;
       if (!filename) throw new Error("Search selection expired");
       if (isExcluded(filename)) throw new Error("Search scope was revoked");
-      if (activation.commandId === "reveal") {
-        if (!options.revealPath) throw new Error("Reveal action is unavailable");
-        await options.revealPath(filename);
-        return;
-      }
-      if (activation.commandId === "copy-path") {
-        if (!options.copyPath) throw new Error("Copy path action is unavailable");
-        await options.copyPath(filename);
-        return;
-      }
-      const error = await options.openPath(filename);
-      if (error) throw new Error(error);
-      return;
+      return {
+        hostAction: activation.commandId as SearchHostAction["hostAction"],
+        path: filename,
+      } satisfies SearchHostAction;
     }
     if (activation.commandId === "next-page") {
       const cursor =
@@ -398,23 +396,13 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
     );
   }
 
-  if (options.subscribePrivateRoots) {
-    const unsubscribe = options.subscribePrivateRoots(async () => revokeAll());
-    options.scope.own("event", { dispose: unsubscribe });
-  }
-  options.scope.own("task", {
-    prepareStop: async () => {
-      revokeAll();
-      return { ok: true };
-    },
+  return {
+    activate,
+    revoke: revokeAll,
     async dispose() {
       disposed = true;
       revokeAll();
       await everything.dispose();
     },
-  });
-  return {
-    activate: (activation) => activate(activation),
-    query: (activation, signal) => activate(activation, signal, true),
   };
 }

@@ -71,11 +71,35 @@ for (const file of runtimeLock.files) {
 }
 const legal = fileURLToPath(new URL("./legal/", import.meta.url));
 fs.mkdirSync(legal, { recursive: true });
-for (const name of [runtimeLock.license.file, "Microsoft-VC-Runtime-LICENSE.txt"])
-  fs.copyFileSync(path.join(runtimeRoot, name), path.join(legal, name));
+// The runtime preparation writes text with CRLF/BOM and JSON in hashtable key
+// order. Stage them in one canonical form so the packaged files (and the
+// release fingerprint) are the same wherever the runtime was prepared.
+const plain = (filename) =>
+  fs
+    .readFileSync(filename, "utf8")
+    .replace(/^\uFEFF/, "")
+    .replaceAll("\r\n", "\n");
+const sorted = (value) =>
+  Array.isArray(value)
+    ? value.map(sorted)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, sorted(value[key])]),
+        )
+      : value;
 fs.copyFileSync(
-  path.join(runtimeRoot, "provenance.json"),
+  path.join(runtimeRoot, runtimeLock.license.file),
+  path.join(legal, runtimeLock.license.file),
+);
+fs.writeFileSync(
+  path.join(legal, "Microsoft-VC-Runtime-LICENSE.txt"),
+  plain(path.join(runtimeRoot, "Microsoft-VC-Runtime-LICENSE.txt")),
+);
+fs.writeFileSync(
   path.join(legal, "Microsoft-VC-Runtime-provenance.json"),
+  `${JSON.stringify(sorted(JSON.parse(plain(path.join(runtimeRoot, "provenance.json")))), null, 2)}\n`,
 );
 fs.writeFileSync(
   path.join(target, "resources.json"),

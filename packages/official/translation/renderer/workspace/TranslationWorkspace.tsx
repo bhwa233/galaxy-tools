@@ -1,19 +1,19 @@
-import { showToast } from "../../components/Toast";
-import { openSettingsWindow } from "../settings/api";
+import { showToast } from "@/components/Toast";
+import { openSettingsWindow } from "@/features/settings/api";
 import { useEffect, useRef, useState } from "react";
-import { translationTarget } from "../../../../../packages/official/translation/language.mjs";
-import { registerHostPreparation } from "../windows/hostPreparation";
-import { WorkspaceTitleBar } from "../windows/WorkspaceTitleBar";
+import { translationTarget } from "../../language.mjs";
+import { registerHostPreparation } from "@/features/windows/hostPreparation";
+import { WorkspaceTitleBar } from "@/features/windows/WorkspaceTitleBar";
 import { useTranslation } from "react-i18next";
 import { BookOpenIcon, HistoryIcon, LanguagesIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { invoke, listen, writeText } from "../../platform/desktop";
+import { invoke, listen, writeText } from "@/platform/desktop";
 import { getTranslationConfiguration, translationAction, watchTranslationChunks } from "./api";
 import { DictionaryPane } from "./DictionaryPane";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { TranslatePane } from "./TranslatePane";
 import { useTranslationHistory } from "./useTranslationHistory";
-import uiConfiguration from "../../../../../packages/official/translation/config/ui.json";
+import uiConfiguration from "../../config/ui.json";
 import type {
   DictionaryEntryResult,
   DictionaryHistory,
@@ -22,8 +22,8 @@ import type {
   TranslationHistoryEntry,
   TranslationPreferences,
   TranslationResult,
-} from "./types";
-import { getErrorMessage } from "../../platform/errors";
+} from "../../../../../apps/desktop/shared/translation";
+import { getErrorMessage } from "@/platform/errors";
 
 export interface TranslationWorkspaceProps {
   initialResult?: unknown;

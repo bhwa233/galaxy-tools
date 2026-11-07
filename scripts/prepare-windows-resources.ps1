@@ -13,19 +13,25 @@ try {
         CMakeExecutable = (Get-Command cmake -ErrorAction Stop).Source
         NinjaExecutable = (Get-Command ninja -ErrorAction Stop).Source
     }
-    $capture = Join-Path $repoRoot 'local-build/spark233/native-capture-p4'
-    & ./scripts/native-capture/prepare.ps1 -OutputRoot $capture -SkipReleases
-    & ./scripts/native-capture/prepare-ocr-deps.ps1 @tools
-    & ./scripts/native-capture/build.ps1 @tools -OutputRoot $capture -WithOcr
-    & ./scripts/native-capture/prepare-vc-runtime.ps1
+    # Independently released plugins (screenshot, OCR, search, applications,
+    # translation, ...) come from npm with their native components and data when
+    # SPARK233_PUBLISHED_PLUGINS is set; only build them from source otherwise.
+    $fromSource = $env:SPARK233_PUBLISHED_PLUGINS -ne '1'
+    if ($fromSource) {
+        $capture = Join-Path $repoRoot 'local-build/spark233/native-capture-p4'
+        & ./scripts/native-capture/prepare.ps1 -OutputRoot $capture -SkipReleases
+        & ./scripts/native-capture/prepare-ocr-deps.ps1 @tools
+        & ./scripts/native-capture/build.ps1 @tools -OutputRoot $capture -WithOcr
+        & ./scripts/native-capture/prepare-vc-runtime.ps1
+    }
     & ./scripts/native-clipboard/build.ps1 @tools -BuildRoot (Join-Path $repoRoot 'local-build/spark233/native-clipboard-p6')
-    & node scripts/native-everything/stage.mjs
-    if ($LASTEXITCODE -ne 0) { throw 'Everything staging failed' }
-    # Independently released plugins come from npm (SPARK233_PUBLISHED_PLUGINS),
-    # native components included; only build them from source otherwise.
-    if ($env:SPARK233_PUBLISHED_PLUGINS -ne '1') { & ./scripts/native-applications/build.ps1 @tools }
-    & $PythonExecutable scripts/dictionary/build.py
-    if ($LASTEXITCODE -ne 0) { throw 'Dictionary preparation failed' }
+    if ($fromSource) {
+        & node scripts/native-everything/stage.mjs
+        if ($LASTEXITCODE -ne 0) { throw 'Everything staging failed' }
+        & ./scripts/native-applications/build.ps1 @tools
+        & $PythonExecutable scripts/dictionary/build.py
+        if ($LASTEXITCODE -ne 0) { throw 'Dictionary preparation failed' }
+    }
     & pnpm.cmd sdk:build
     if ($LASTEXITCODE -ne 0) { throw 'SDK build failed' }
     # Official plugin renderers require the host UI contract produced by Vite.

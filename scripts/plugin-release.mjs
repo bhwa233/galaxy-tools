@@ -103,12 +103,33 @@ if (command === "plan") {
   // Provenance links the package to this repository and workflow run.
   if (process.env.GITHUB_ACTIONS === "true") args.push("--provenance");
   if (options["dry-run"]) args.push("--dry-run");
-  execFileSync(npm, args, {
-    cwd: output,
-    stdio: "inherit",
-    windowsHide: true,
-    shell: process.platform === "win32",
-  });
+  // Trusted publishing (OIDC) needs no token. A package that is not on npm yet
+  // cannot trust the workflow, so its first release uses a temporary token,
+  // passed through a throwaway npm config that is deleted right after.
+  const token = process.env.NPM_TOKEN;
+  const userconfig = token ? path.join(output, ".npmrc-publish") : undefined;
+  if (userconfig) {
+    const host = new URL(config.registry);
+    await fs.writeFile(
+      userconfig,
+      `//${host.host}${host.pathname}:_authToken=${token}
+`,
+      {
+        mode: 0o600,
+      },
+    );
+    args.push("--userconfig", userconfig);
+  }
+  try {
+    execFileSync(npm, args, {
+      cwd: output,
+      stdio: "inherit",
+      windowsHide: true,
+      shell: process.platform === "win32",
+    });
+  } finally {
+    if (userconfig) await fs.rm(userconfig, { force: true });
+  }
   console.log(`${options["dry-run"] ? "Checked" : "Published"} ${entry.name}@${entry.version}`);
 } else {
   console.error(

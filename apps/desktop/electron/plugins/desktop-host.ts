@@ -177,6 +177,14 @@ const checkStateSchema = z.strictObject({ lastChecked: z.number().finite().nonne
 const pluginIdArgs = z.strictObject({ pluginId: z.string().min(1).max(80) });
 const previewIdArgs = z.strictObject({ previewId: z.uuid() });
 const SIX_HOURS = 6 * 60 * 60 * 1000;
+/**
+ * Oldest official plugin version this host can run. An installed copy below it
+ * (e.g. search before its logic moved into the plugin backend) is replaced by
+ * the newer bundled release at startup, like a copy built for another host.
+ */
+const officialMinimumVersions: Readonly<Record<string, string>> = {
+  "spark233.search": "0.3.0",
+};
 const officialBundledIds = new Set([
   "spark233.notes",
   "spark233.screenshot",
@@ -639,7 +647,10 @@ export class DesktopPluginHost {
       const repair =
         !!installed &&
         semver.gt(entry.version, installed.version) &&
-        !this.hostSupports(installed.directory);
+        (!this.hostSupports(installed.directory) ||
+          (Object.hasOwn(officialMinimumVersions, entry.pluginId) &&
+            semver.lt(installed.version, officialMinimumVersions[entry.pluginId]!) &&
+            semver.gte(entry.version, officialMinimumVersions[entry.pluginId]!)));
       if (consumed.includes(entry.pluginId) && !development && !repair) continue;
       try {
         if (!installed || repair || (development && installed.version !== entry.version)) {

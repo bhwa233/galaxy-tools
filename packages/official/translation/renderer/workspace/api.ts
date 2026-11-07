@@ -1,8 +1,11 @@
-import { invoke, listen } from "../../platform/desktop";
-import type { TranslationChunk, TranslationConfiguration } from "./types";
+import { invoke, listen } from "@/platform/desktop";
+import type {
+  TranslationChunk,
+  TranslationConfiguration,
+} from "../../../../../apps/desktop/shared/translation";
 
 export function translationAction(
-  parameters: import("../../../shared/desktop-contract").Commands["translation_action"]["args"],
+  parameters: import("../../../../../apps/desktop/shared/desktop-contract").Commands["translation_action"]["args"],
 ): Promise<unknown> {
   return invoke("translation_action", parameters);
 }

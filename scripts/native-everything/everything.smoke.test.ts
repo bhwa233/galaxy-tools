@@ -13,12 +13,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { PluginResourceScope } from "../../apps/desktop/electron/plugins/resources.js";
 import {
   EverythingClient,
   everythingPipeName,
-} from "../../apps/desktop/electron/plugins/official/everything-ipc.js";
-import { createSearchRuntime } from "../../apps/desktop/electron/plugins/official/search.js";
+} from "../../packages/official/search/everything-ipc.js";
+import { createSearchRuntime } from "../../packages/official/search/search-runtime.js";
 
 const project = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const smoke = path.join(project, "local-build/everything-smoke");
@@ -44,25 +43,25 @@ it("searches names and content through the bundled Everything", { timeout: 120_0
     `persimmon-7731\n${"x".repeat(5 * 1024 * 1024)}\n`,
   );
   const dataDir = path.join(smoke, "data", "plugin");
-  const scope = new PluginResourceScope({
-    pluginId: "spark233.search",
-    version: "0.2.0",
-    instanceId: "smoke",
-  });
   const runtime = createSearchRuntime({
-    scope,
     pluginRoot,
-    descriptor: { path: path.join(pluginRoot, "native", "Everything.exe"), args: [] },
+    executable: path.join(pluginRoot, "native", "Everything.exe"),
     dataDir,
     cacheDir: path.join(smoke, "data", "cache"),
-    approveTrust: () => true,
-    privateRoots: () => [path.join(fixture, "private-root")],
-    openPath: async () => undefined,
     fixture: { profileRoot: fixture, bundledInstance: instance, userInstances: [] },
   });
   const query = async (commandId: string, text: string): Promise<Page> =>
-    (await runtime.query!(
-      { commandId, parameters: { query: text, callerId: "smoke", limit: 20 } },
+    (await runtime.activate(
+      {
+        commandId,
+        parameters: {
+          query: text,
+          callerId: "smoke",
+          limit: 20,
+          privateRoots: [path.join(fixture, "private-root")],
+          queryOnly: true,
+        },
+      },
       new AbortController().signal,
     )) as Page;
   const files = (page: Page) =>
@@ -88,6 +87,14 @@ it("searches names and content through the bundled Everything", { timeout: 120_0
     log("first result after start (ms)", Date.now() - started);
     expect(files(names)).toEqual([path.join(fixture, "notes", "alpha-notes.txt")]);
     expect(names.items.at(-1)?.commandId).toBe("open-everything");
+    // Selecting a result returns the action for the host instead of opening it.
+    const open = names.items.find((item) => item.commandId === "open") as
+      | { parameters: Record<string, string> }
+      | undefined;
+    expect(await runtime.activate({ commandId: "open", parameters: open!.parameters })).toEqual({
+      hostAction: "open",
+      path: path.join(fixture, "notes", "alpha-notes.txt"),
+    });
     const chinese = await until("search", "设计", (page) => files(page).length > 0);
     expect(files(chinese)).toEqual([path.join(fixture, "notes", "设计记录.md")]);
     const zebra = await until("content", "zebra-orchid-4471", (page) => files(page).length > 0);
@@ -123,7 +130,7 @@ it("searches names and content through the bundled Everything", { timeout: 120_0
     );
     log("Everything processes after opening the window", windows.trim().split(/\r?\n/));
   } finally {
-    await scope.stop("quit");
+    await runtime.dispose();
   }
   await new Promise((resolve) => setTimeout(resolve, 1000));
   const pipes = fs.readdirSync("\\\\.\\pipe\\").filter((name) => name.includes(instance));

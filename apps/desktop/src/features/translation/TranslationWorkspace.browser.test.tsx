@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import { render } from "vitest-browser-react";
-import { installDesktopBridge } from "../../test/browser/desktop-bridge";
-import { TranslationWorkspace } from "./TranslationWorkspace";
-import { ToastContainer } from "../../components/Toast";
-import type { TranslationHistoryEntry } from "./types";
+import { installDesktopBridge } from "@/test/browser/desktop-bridge";
+import { TranslationWorkspace } from "../../../../../packages/official/translation/renderer/workspace/TranslationWorkspace";
+import { ToastContainer } from "@/components/Toast";
+import type { TranslationHistoryEntry } from "../../../shared/translation";
 
 const entry: TranslationHistoryEntry = {
   id: "history-1",

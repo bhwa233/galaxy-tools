@@ -572,12 +572,15 @@ async function packageFingerprint(packageRoot, metadata) {
   const nativeDirs = Object.values(metadata.spark233.native ?? {}).map(
     ({ path: entry }) => `${path.posix.dirname(entry.replaceAll("\\", "/"))}/`,
   );
+  // Build-generated data (e.g. the offline dictionary) is covered by its inputs.
+  const generated = new Set(releaseConfig.independent[metadata.spark233.id]?.generated ?? []);
   const lines = [];
   for await (const name of fs.glob("**/*", { cwd: packageRoot })) {
     const relative = name.replaceAll("\\", "/");
     const filename = path.join(packageRoot, name);
     if (!(await fs.stat(filename)).isFile()) continue;
     if (nativeDirs.some((directory) => relative.startsWith(directory))) continue;
+    if (generated.has(relative)) continue;
     lines.push(`file ${relative} ${sha256(await fs.readFile(filename))}`);
   }
   const inputs = releaseConfig.independent[metadata.spark233.id]?.nativeInputs ?? [];
@@ -706,6 +709,8 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
     if (metadata.spark233.id === "spark233.traffic")
       run(process.execPath, [path.join(source, "build.mjs")]);
     if (metadata.spark233.id === "spark233.quicklinks")
+      run(process.execPath, [path.join(source, "build.mjs")]);
+    if (metadata.spark233.id === "spark233.search")
       run(process.execPath, [path.join(source, "build.mjs")]);
   }
   const temporaryRoot = await fs.realpath(os.tmpdir());

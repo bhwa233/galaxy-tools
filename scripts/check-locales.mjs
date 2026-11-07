@@ -59,6 +59,11 @@ function scan(directory) {
   }
 }
 scan(source);
+// Official plugin renderers use the same host locale resources.
+for (const plugin of fs.readdirSync(path.join(root, "packages/official"))) {
+  const renderer = path.join(root, "packages/official", plugin, "renderer");
+  if (fs.existsSync(renderer)) scan(renderer);
+}
 if (errors.length) {
   console.error([...new Set(errors)].join("\n"));
   process.exitCode = 1;

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { TranslationResult } from "./types";
+import type { TranslationResult } from "../../../../../apps/desktop/shared/translation";
 
 export interface TranslatePaneProps {
   className?: string;

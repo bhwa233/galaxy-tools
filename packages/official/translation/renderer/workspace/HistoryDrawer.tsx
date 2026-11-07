@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { HistoryIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { TranslationHistoryEntry } from "./types";
+import type { TranslationHistoryEntry } from "../../../../../apps/desktop/shared/translation";
 
 export interface HistoryDrawerProps {
   className?: string;
