@@ -927,17 +927,19 @@ export function useNoteSession({
       setDeleteConfirm(false);
       try {
         await deleteNote(noteId);
+        const deletedCurrent = noteId === selectedIdRef.current;
+        // The deleted note's draft must not be saved on the way out: switching
+        // documents saves first, and saving a deleted note fails into "error".
+        if (deletedCurrent) clearCurrentNote();
         const remaining = await refreshNotes();
-        if (noteId === selectedId && remaining[0]) {
+        if (deletedCurrent && remaining[0] && !selectedIdRef.current) {
           await loadNote(remaining[0].id);
-        } else if (noteId === selectedId) {
-          clearCurrentNote();
         }
       } catch (error) {
         showToast(getErrorMessage(error));
       }
     },
-    [selectedId, setDeleteConfirm, refreshNotes, loadNote, clearCurrentNote],
+    [selectedId, selectedIdRef, setDeleteConfirm, refreshNotes, loadNote, clearCurrentNote],
   );
 
   const handleOpenNoteMenu = useCallback(
@@ -1027,9 +1029,18 @@ export function useNoteSession({
       return;
     }
 
-    setNoteMenuClosing(true);
-    void handleDeleteNote(note.id);
+    if (action === "delete") {
+      // Deletion has no undo, so the menu asks once like the editor and category menus.
+      setNoteMenuMode("confirmDelete");
+      return;
+    }
   };
+
+  const confirmMenuDelete = useCallback(() => {
+    const note = noteMenuTarget;
+    setNoteMenuClosing(true);
+    if (note) void handleDeleteNote(note.id);
+  }, [noteMenuTarget, setNoteMenuClosing, handleDeleteNote]);
 
   const handleMoveNote = useCallback(
     async (noteId: string, targetCategory: string) => {
@@ -1442,6 +1453,7 @@ export function useNoteSession({
     },
     noteContextMenuItems,
     handleNoteMenuAction,
+    confirmMenuDelete,
     setNoteMenuMode,
     reminderItems,
     setNoteMenuClosing,

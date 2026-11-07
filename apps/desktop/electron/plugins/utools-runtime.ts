@@ -192,6 +192,8 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
         { windowsHide: true, stdio: ["ignore", "pipe", "pipe", "ipc"], env },
       );
       const running = child;
+      // Exits before init completes are a failed start (retried on next use), not a crash.
+      let initialized = false;
       child.stdout?.on("data", () => undefined);
       child.stderr?.on("data", (data) => options.onDiagnostic?.(String(data).slice(0, 2000)));
       exited = new Promise((resolve) => running.once("exit", () => resolve()));
@@ -250,7 +252,7 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
           pending.reject(error);
         }
         requests.clear();
-        if (!expectedExit) options.onCrash(error);
+        if (!expectedExit && initialized) options.onCrash(error);
       });
       try {
         await ready;
@@ -272,6 +274,7 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
         });
         if (result?.ready !== true || result.pid !== running.pid)
           throw new Error("uTools 运行器 PID 握手不匹配");
+        initialized = true;
       } catch (error) {
         expectedExit = true;
         running.kill();
@@ -347,14 +350,24 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
       selections.clear();
       if (!child) return;
       expectedExit = true;
-      if (child.connected) await rpc("stop", undefined, 10000);
-      await Promise.race([
-        exited,
-        new Promise((_, reject) => {
-          const timer = setTimeout(() => reject(new Error("uTools 进程尚未退出")), 10000);
-          timer.unref();
-        }),
-      ]);
+      const exitedWithin = (ms: number) =>
+        Promise.race([
+          (exited ?? Promise.resolve()).then(() => true),
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), ms).unref()),
+        ]);
+      let graceful = false;
+      try {
+        if (child.connected) await rpc("stop", undefined, 10000);
+        graceful = await exitedWithin(10000);
+      } catch {
+        graceful = false;
+      }
+      // A busy or hung runner must not block uninstall, update or disable:
+      // after the graceful window it is terminated like a forced quit.
+      if (!graceful) {
+        child?.kill();
+        if (!(await exitedWithin(5000))) throw new Error("uTools 进程尚未退出");
+      }
     },
     forceTerminate: async () => {
       stopped = true;

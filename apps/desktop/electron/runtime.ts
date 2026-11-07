@@ -1241,7 +1241,20 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
       const apply = updateInstallApply;
       updateInstallApply = undefined;
       updateInstallCommitted = true;
-      apply();
+      // Everything is already torn down. If the installer cannot start (missing
+      // or locked file), relaunch instead of leaving a running shell with no plugins.
+      const relaunch = () => {
+        app.relaunch();
+        app.exit(0);
+      };
+      try {
+        apply();
+      } catch (error) {
+        console.error("update-install-apply", error);
+        relaunch();
+        return;
+      }
+      setTimeout(relaunch, 8000).unref();
       return;
     }
     app.quit();
@@ -2112,7 +2125,16 @@ export function startDesktopHost(): void {
     })
     .catch((error) => {
       completeLayerStartup(error instanceof Error ? error.message : String(error));
-      reportError(error);
+      diagnostics?.record({
+        kind: "host",
+        code: "failed",
+        level: "error",
+        errorCode: diagnosticErrorCode(error),
+      });
+      console.error(error);
+      // showErrorBox blocks until dismissed, so the user learns why the app did
+      // not start instead of it vanishing on every launch.
+      dialog.showErrorBox("spark233", error instanceof Error ? error.message : String(error));
       app.exit(1);
     });
 }

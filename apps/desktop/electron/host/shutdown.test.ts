@@ -60,3 +60,27 @@ test("restores interaction before waiting for the failed-save decision", async (
     await quitting;
   }
 });
+
+test("keeps the fence up after a committed shutdown and does not run it twice", async () => {
+  const shutdownPlugins = vi.fn();
+  const onCommit = vi.fn();
+  const coordinator = new ShutdownCoordinator({
+    isBlocked: () => false,
+    awaitWrites: () => {},
+    awaitReleases: () => {},
+    windows: () => ["saved"],
+    prepare: () => true,
+    remember: () => {},
+    persist: () => {},
+    shutdownPlugins,
+    onCommit,
+    onError: vi.fn(),
+  });
+  await coordinator.request();
+  // app.quit() is asynchronous; until the process exits nothing may reach the
+  // plugins that were just shut down.
+  expect(coordinator.isQuitting).toBe(true);
+  await coordinator.request();
+  expect(shutdownPlugins).toHaveBeenCalledOnce();
+  expect(onCommit).toHaveBeenCalledOnce();
+});

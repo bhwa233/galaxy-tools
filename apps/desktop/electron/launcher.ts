@@ -1224,11 +1224,14 @@ export class LauncherController {
                     value.pluginId === entry.pluginId && value.commandId === entry.command.id,
                 )
               : undefined;
+            const preferred =
+              textInput && sentenceInput && !!entry.command.launcher?.preferSentence;
             return {
               ...entry,
+              fallback: !contextInput && !preferred && !score && textInput,
               score: contextInput
                 ? Math.max(110, score)
-                : textInput && sentenceInput && entry.command.launcher?.preferSentence
+                : preferred
                   ? Math.max(90, score)
                   : score || (textInput ? 10 : 0),
               textInput,
@@ -1287,11 +1290,17 @@ export class LauncherController {
                   launcherTargetKey(this.commandTarget(entry.pluginId, entry.command.id)!),
                 )),
           )
-          .map(({ pluginId, command, textInput, contextInput, commandContext, usage }) => {
-            const key = JSON.stringify([pluginId, command.id]);
-            let item = commandItems.get(key);
-            if (!item) {
-              item = {
+          .map(
+            ({ pluginId, command, textInput, contextInput, commandContext, usage, fallback }) => {
+              const key = JSON.stringify([pluginId, command.id]);
+              const cached = commandItems.get(key);
+              if (cached) {
+                // Pinyin scores arrive later and can turn a fallback into a real match.
+                if (fallback) cached.fallback = true;
+                else delete cached.fallback;
+                return cached;
+              }
+              const item: LauncherItem = {
                 ...this.item(
                   session,
                   {
@@ -1325,11 +1334,12 @@ export class LauncherController {
                   "command",
                 ),
                 ...(usage ? { usage: { count: usage.count, lastUsedAt: usage.lastUsedAt } } : {}),
+                ...(fallback ? { fallback: true } : {}),
               };
               commandItems.set(key, item);
-            }
-            return item;
-          })
+              return item;
+            },
+          )
           .filter((item) => !pinnedKeys.has(item.preference?.key ?? ""))
           .slice(0, 40);
         refreshPins();

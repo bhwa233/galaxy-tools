@@ -41,6 +41,8 @@ export interface LauncherItem {
   preference?: LauncherPreferenceEntry;
   unavailable?: boolean;
   learned?: boolean;
+  /** Listed only because it accepts any text, not because the query matched it. */
+  fallback?: boolean;
 }
 export type LauncherLearningMutation =
   | { enabled: boolean; clear?: never }

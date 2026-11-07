@@ -21,6 +21,7 @@ export interface ShutdownCoordinatorOptions<Window> {
 export class ShutdownCoordinator<Window> {
   private pending?: Promise<void>;
   private quitting = false;
+  private committed = false;
 
   constructor(private readonly options: ShutdownCoordinatorOptions<Window>) {}
 
@@ -30,6 +31,7 @@ export class ShutdownCoordinator<Window> {
 
   request(): Promise<void> {
     if (this.pending) return this.pending;
+    if (this.committed) return Promise.resolve();
     const operation = this.run();
     this.pending = operation;
     void operation
@@ -82,6 +84,9 @@ export class ShutdownCoordinator<Window> {
       this.assertNotBlocked();
       await this.options.shutdownPlugins();
       await this.options.onCommit();
+      this.committed = true;
+      // Committed: plugins are gone and the process is exiting. Keep the fence up
+      // so shortcuts, tray and IPC writes cannot reach torn-down services.
     } catch (error) {
       // Saving has failed and automatic shutdown has stopped. A decision dialog
       // may remain open, so it must not keep ordinary interaction fenced.
@@ -91,8 +96,6 @@ export class ShutdownCoordinator<Window> {
       } catch (reportError) {
         console.error("shutdown-error-report", reportError);
       }
-    } finally {
-      this.quitting = false;
     }
   }
 }

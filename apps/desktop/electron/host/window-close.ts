@@ -42,7 +42,15 @@ export function createWindowClose(
     // A dead renderer cannot acknowledge saving. Its plugin has already been
     // marked failed; preserve the last durable state and let live owners save.
     if (ctx.crashedWindows.has(win.id)) return true;
-    if (!ctx.ready.has(win.id)) return false;
+    if (!ctx.ready.has(win.id)) {
+      // Give a loading renderer a moment to report ready. One that never does
+      // (failed load, preloaded launcher) has no editor to save and must not
+      // block quitting the whole application.
+      const deadline = Date.now() + 3000;
+      while (!ctx.ready.has(win.id) && Date.now() < deadline && !win.isDestroyed())
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      if (win.isDestroyed() || !ctx.ready.has(win.id)) return true;
+    }
     const requestId = randomUUID();
     return new Promise((resolve) => {
       const timer = setTimeout(

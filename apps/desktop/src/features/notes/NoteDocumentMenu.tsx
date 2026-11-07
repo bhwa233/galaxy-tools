@@ -15,6 +15,7 @@ type Props = Pick<
   | "noteMenuMode"
   | "noteContextMenuItems"
   | "handleNoteMenuAction"
+  | "confirmMenuDelete"
   | "setNoteMenuMode"
   | "t"
   | "reminderItems"
@@ -31,6 +32,7 @@ export const NoteDocumentMenu = memo(function NoteDocumentMenu({
   noteMenuMode,
   noteContextMenuItems,
   handleNoteMenuAction,
+  confirmMenuDelete,
   setNoteMenuMode,
   t,
   reminderItems,
@@ -70,6 +72,29 @@ export const NoteDocumentMenu = memo(function NoteDocumentMenu({
                 <span>{item.label}</span>
               </Button>
             ))}
+          </div>
+        ) : noteMenuMode === "confirmDelete" ? (
+          <div key="confirm-delete" className="animate-menu-slide-left">
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border">
+              {t("main.editor.confirmDelete", { defaultValue: "确认删除？" })}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              data-note-action="confirm-delete"
+              onClick={confirmMenuDelete}
+              className="w-full justify-start px-2 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer"
+            >
+              {t("common.delete", { defaultValue: "删除" })}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setNoteMenuMode("main")}
+              className="w-full justify-start px-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
+            >
+              {t("common.cancel", { defaultValue: "取消" })}
+            </Button>
           </div>
         ) : noteMenuMode === "reminder" ? (
           <div key="reminder" className="animate-menu-slide-left">

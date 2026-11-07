@@ -96,6 +96,8 @@ export function Launcher() {
   const [handoffRevision, setHandoffRevision] = useState(0);
   const [result, setResult] = useState<LauncherQueryResult>();
   const [selected, setSelected] = useState("");
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const [loading, setLoading] = useState(false);
   const [progressCommands, setProgressCommands] = useState<
     Array<{ key: string; command: LauncherCommand }>
@@ -153,6 +155,17 @@ export function Launcher() {
   const inputRevision = useRef(0);
   // A late UIA patch must never overwrite text the user already typed.
   const userEdited = useRef(false);
+  // Only a selection the user moved to survives later revisions; otherwise the
+  // highlight follows the best visible result as slower providers arrive.
+  const userNavigated = useRef(false);
+  // Query generation whose first response has been accepted.
+  const answeredGeneration = useRef(-1);
+  // Enter pressed before the current query could answer runs once it does.
+  const pendingEnter = useRef<number | undefined>(undefined);
+  const visualOrder = useRef<(result: LauncherQueryResult) => LauncherItem[]>(
+    (result) => result.items,
+  );
+  const runSelected = useRef<(item: LauncherItem) => void>(() => {});
 
   const focusInput = useCallback(() => {
     if (panelVisibleRef.current) requestAnimationFrame(() => input.current?.focus());
@@ -402,6 +415,7 @@ export function Launcher() {
     let revision = -1;
     let live = true;
     let dispatched = false;
+    userNavigated.current = false;
     const accept = (next: LauncherQueryResult) => {
       if (
         !live ||
@@ -415,16 +429,28 @@ export function Launcher() {
       if (nextRevision <= revision) return;
       requestId = next.requestId;
       revision = nextRevision;
+      answeredGeneration.current = generation;
+      const ordered = visualOrder.current(next).filter((item) => !item.unavailable);
+      const primary = ordered.find((item) => !item.fallback) ?? ordered[0];
       setResult(next);
       setQueryError(undefined);
-      setSelected((current) =>
-        current && next.items.some((item) => itemKey(item) === current)
-          ? current
-          : next.items[0]
-            ? itemKey(next.items[0])
-            : "",
-      );
+      const current = selectedRef.current;
+      const kept =
+        userNavigated.current && current
+          ? next.items.find((item) => itemKey(item) === current)
+          : undefined;
+      const target = kept ?? primary;
+      setSelected(target ? itemKey(target) : "");
       setLoading(false);
+      // A queued Enter waits until a real match exists or every provider finished,
+      // so it never runs a fallback that a slower application result would replace.
+      if (
+        pendingEnter.current === generation &&
+        (!next.pending || !!kept || (primary && !primary.fallback))
+      ) {
+        pendingEnter.current = undefined;
+        if (target) runSelected.current(target);
+      }
     };
     // Subscribe before dispatch. A fast provider event may precede the initial
     // IPC response; revision checks prevent that response rolling the UI back.
@@ -622,6 +648,32 @@ export function Launcher() {
       escape();
       return;
     }
+    if (
+      event.key === "Enter" &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      event.target === input.current &&
+      panelVisible &&
+      state?.pluginsReady
+    ) {
+      const generation = queryGeneration.current;
+      const current = result?.items.find((item) => itemKey(item) === selected);
+      const awaiting =
+        answeredGeneration.current !== generation ||
+        (!userNavigated.current && !!result?.pending && (!current || !!current.fallback));
+      if (awaiting) {
+        event.preventDefault();
+        event.stopPropagation();
+        pendingEnter.current = generation;
+        return;
+      }
+    }
+    if (
+      ["ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key) ||
+      ((event.key === "ArrowLeft" || event.key === "ArrowRight") && event.target !== input.current)
+    )
+      userNavigated.current = true;
     if (event.key === "Backspace" && !query && mode && event.target === input.current) {
       event.preventDefault();
       event.stopPropagation();
@@ -764,6 +816,14 @@ export function Launcher() {
       item.commandId === pluginEntries.get(item.pluginId) &&
       !["action", "keyword-only", "hidden"].includes(findCommand(item)?.launcher?.role ?? ""));
   const gridItems = result?.items.filter(isGridEntry) ?? [];
+  // Mirrors the rendered order: the application grid first, then each group's list rows.
+  visualOrder.current = (next) => [
+    ...next.items.filter(isGridEntry),
+    ...(next.groups ?? [{ items: next.items }]).flatMap((group) =>
+      group.items.filter((item) => !isGridEntry(item)),
+    ),
+  ];
+  runSelected.current = (item) => void selectItem(item);
   const renderItem = (item: LauncherItem, grid = false) => {
     const command = findCommand(item);
     const key = itemKey(item);

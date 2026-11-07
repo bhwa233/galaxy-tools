@@ -165,6 +165,9 @@ export function SettingsWindow() {
   const [migrating, setMigrating] = useState(false);
   const [retry, setRetry] = useState(0);
   const hostPending = useRef<AppConfigPatch>({});
+  // Keys the host refused. They are not resubmitted with later edits and do not
+  // block navigation or closing; only an explicit retry submits them again.
+  const rejected = useRef<AppConfigPatch>({});
   const writes = useRef<Promise<unknown>>(Promise.resolve());
   const mounted = useRef(true);
   const text = (value: unknown) =>
@@ -224,6 +227,8 @@ export function SettingsWindow() {
     }
   };
   const change = (patch: AppConfigPatch) => {
+    // A fresh edit of a refused key supersedes the earlier refused value.
+    for (const key of Object.keys(patch) as (keyof AppConfigPatch)[]) delete rejected.current[key];
     hostPending.current = {
       ...hostPending.current,
       ...patch,
@@ -253,19 +258,21 @@ export function SettingsWindow() {
     writes.current = operation;
     void operation
       .catch(async (value) => {
-        if (
-          submitted.desktopLayer &&
-          JSON.stringify(hostPending.current.desktopLayer) ===
-            JSON.stringify(submitted.desktopLayer)
-        ) {
-          delete hostPending.current.desktopLayer;
-          if (mounted.current) setHasPending(Object.keys(hostPending.current).length > 0);
-          try {
-            const current = await getConfig();
-            if (mounted.current) setConfig(withPendingConfig(current, hostPending.current));
-          } catch {
-            /* Preserve the visible save error if the refresh also fails. */
+        // Roll back every refused key the user has not edited again since, so one
+        // rejected setting cannot keep failing every later save.
+        const refused = rejected.current as Record<string, unknown>;
+        const pending = hostPending.current as Record<string, unknown>;
+        for (const [key, submittedValue] of Object.entries(submitted))
+          if (JSON.stringify(pending[key]) === JSON.stringify(submittedValue)) {
+            refused[key] = submittedValue;
+            delete pending[key];
           }
+        if (mounted.current) setHasPending(Object.keys(hostPending.current).length > 0);
+        try {
+          const current = await getConfig();
+          if (mounted.current) setConfig(withPendingConfig(current, hostPending.current));
+        } catch {
+          /* Preserve the visible save error if the refresh also fails. */
         }
         if (mounted.current) setError(text(value));
       })
@@ -378,7 +385,12 @@ export function SettingsWindow() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => (config ? change({}) : setRetry((value) => value + 1))}
+                    onClick={() => {
+                      if (!config) return setRetry((value) => value + 1);
+                      const retried = rejected.current;
+                      rejected.current = {};
+                      change(retried);
+                    }}
                   >
                     {t("launcher.retry")}
                   </Button>

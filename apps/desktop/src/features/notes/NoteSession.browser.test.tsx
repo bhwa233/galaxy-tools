@@ -115,3 +115,61 @@ it("keeps the active draft on save failure and rejects a stale document load", a
     desktop.restore();
   }
 });
+
+// Regression: deleting the open note with unsaved edits saved the deleted note
+// on the way to the next one, failed, and left the notes window stuck in "error".
+it("discards the deleted note's draft and opens the next note", async () => {
+  const base: Note = {
+    id: "doomed",
+    title: "待删除",
+    content: "original",
+    category: "",
+    fileName: "doomed.md",
+    createdAt: "2026-10-28",
+    updatedAt: "2026-10-28",
+    wordCount: 8,
+  };
+  let notes = [base, { ...base, id: "next", title: "下一篇", content: "next content" }];
+  const desktop = installDesktopBridge({
+    config_get: () => ({
+      defaultViewMode: "edit",
+      noteAutoSave: false,
+      externalFileAutoSave: false,
+    }),
+    notes_list: () => notes.map((note) => ({ ...note, preview: note.content })),
+    categories_list: () => [],
+    note_window_states: () => ({ version: 0, notes: [] }),
+    reminders_list: () => [],
+    images_get_base_dir: () => "isolated/images",
+    take_startup_file: () => null,
+    update_status: () => ({ status: "idle", currentVersion: "1.2.0" }),
+    window_control: () => false,
+    notes_get: (args) => notes.find((note) => note.id === (args as { id: string }).id),
+    notes_update: (args) => {
+      const { id } = args as { id: string };
+      const note = notes.find((entry) => entry.id === id);
+      if (!note) throw new Error("找不到便签");
+      return note;
+    },
+    notes_delete: (args) => {
+      notes = notes.filter((note) => note.id !== (args as { id: string }).id);
+    },
+  });
+  const view = await render(<MainWindow />);
+  try {
+    const editor = page.getByPlaceholder("开始写作……");
+    await expect.element(editor).toHaveValue("original");
+    await editor.fill("unsaved draft");
+    await page.getByTitle("删除便签").click();
+    await page.getByRole("button", { name: "删除", exact: true }).click();
+    await expect.element(editor).toHaveValue("next content");
+    expect(
+      desktop.calls.some(
+        (call) => call.command === "notes_update" && (call.args as { id: string }).id === "doomed",
+      ),
+    ).toBe(false);
+  } finally {
+    await view.unmount();
+    desktop.restore();
+  }
+});

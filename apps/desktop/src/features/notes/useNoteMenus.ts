@@ -5,7 +5,9 @@ import { CategoryMenuState, NoteMenuState } from "./notePresentation";
 export function useNoteMenus(categoryCount: number) {
   const [noteMenu, setNoteMenu] = useState<NoteMenuState | null>(null);
   const [noteMenuClosing, setNoteMenuClosing] = useState(false);
-  const [noteMenuMode, setNoteMenuMode] = useState<"main" | "move" | "reminder">("main");
+  const [noteMenuMode, setNoteMenuMode] = useState<"main" | "move" | "reminder" | "confirmDelete">(
+    "main",
+  );
   const [categoryMenu, setCategoryMenu] = useState<CategoryMenuState | null>(null);
   const [categoryMenuClosing, setCategoryMenuClosing] = useState(false);
   const [categoryMenuConfirmDelete, setCategoryMenuConfirmDelete] = useState(false);

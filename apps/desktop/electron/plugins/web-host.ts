@@ -641,8 +641,11 @@ class WebRuntime implements WebPluginController {
       const finish = () => {
         clearTimeout(timer);
         this.readyListeners.delete(finish);
-        if (this.accepts(window) && this.connected) resolve();
-        else reject(new Error("Plugin SDK did not complete its startup handshake"));
+        if (this.accepts(window) && this.connected) return resolve();
+        // A page that never connected must not linger: it would keep its session
+        // alive and the next activation should start from a fresh load.
+        if (this.currentWindow === window && !this.connected) this.destroyWindow();
+        reject(new Error("Plugin SDK did not complete its startup handshake"));
       };
       const timer = setTimeout(finish, this.options.timeoutMs ?? 10_000);
       this.readyListeners.add(finish);
@@ -763,12 +766,12 @@ class WebRuntime implements WebPluginController {
           ? ((this.saveApproved = true), { ok: true })
           : { ok: false, reason: "Plugin renderer exited before save confirmation" },
       );
-    if (!this.connected)
-      return Promise.resolve(
-        reason === "crash"
-          ? ((this.saveApproved = true), { ok: true })
-          : { ok: false, reason: "Plugin SDK is not ready to confirm saving" },
-      );
+    if (!this.connected) {
+      // The page never completed context.get, so it never received an activation
+      // and cannot hold SDK state to save. Refusing here made the plugin unstoppable.
+      this.saveApproved = true;
+      return Promise.resolve({ ok: true });
+    }
     const requestId = randomUUID();
     let resolve!: (decision: StopDecision) => void;
     const promise = new Promise<StopDecision>((finish) => {

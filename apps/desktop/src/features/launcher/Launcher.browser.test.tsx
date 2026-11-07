@@ -581,3 +581,74 @@ it("keeps incremental results after execution and reaches the end of a scrolling
     desktop.restore();
   }
 });
+
+// Typing an application name used to leave a text-accepting fallback command
+// selected, so Enter created a note instead of opening the application.
+it("runs the application that arrives after a fallback instead of the fallback", async () => {
+  const fallback: LauncherItem = {
+    id: "fallback-note",
+    pluginId: "fixture.notes",
+    commandId: "new",
+    kind: "command",
+    title: "新建便签",
+    fallback: true,
+  };
+  const application: LauncherItem = {
+    id: "chrome",
+    pluginId: "fixture.applications",
+    commandId: "open",
+    kind: "application",
+    title: "Chrome",
+  };
+  let sessionId = "";
+  const desktop = installDesktopBridge({
+    launcher_state: () => ({ firstRun: false, pluginsReady: true, commands: [] }),
+    launcher_take_workspace: () => undefined,
+    launcher_cancel_query: () => undefined,
+    launcher_query: (args) => {
+      sessionId = (args as { sessionId: string }).sessionId;
+      return {
+        sessionId,
+        requestId: "typed",
+        revision: 0,
+        pending: true,
+        items: [fallback],
+        groups: [{ id: "commands", title: "操作", status: "ready", items: [fallback] }],
+      };
+    },
+    launcher_execute: () => undefined,
+  });
+  const view = await render(<Launcher />);
+  try {
+    const search = page.getByRole("combobox", { name: "搜索应用、插件与操作" });
+    await search.fill("chrome");
+    await expect
+      .element(page.getByRole("option", { name: "新建便签", exact: false }))
+      .toBeVisible();
+    await search.click();
+    const typedSession = sessionId;
+    await userEvent.keyboard("{Enter}");
+    expect(desktop.calls.some((call) => call.command === "launcher_execute")).toBe(false);
+    desktop.emit("launcher-query-updated", {
+      sessionId: typedSession,
+      requestId: "typed",
+      revision: 1,
+      pending: false,
+      items: [fallback, application],
+      groups: [
+        { id: "commands", title: "操作", status: "ready", items: [fallback] },
+        { id: "apps", title: "应用", status: "ready", items: [application] },
+      ],
+    });
+    await expect
+      .poll(() =>
+        desktop.calls
+          .filter((call) => call.command === "launcher_execute")
+          .map((call) => (call.args as { id: string }).id),
+      )
+      .toEqual(["chrome"]);
+  } finally {
+    await view.unmount();
+    desktop.restore();
+  }
+});
