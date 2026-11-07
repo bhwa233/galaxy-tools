@@ -24,6 +24,7 @@ export function createWindowCommands(
     | "remember"
     | "publishNoteStates"
     | "workspaceRequests"
+    | "windowModes"
   >,
 ) {
   async function run({ win, command, args, layout }: CommandInvocation): Promise<unknown> {
@@ -87,7 +88,26 @@ export function createWindowCommands(
           case "hide":
             await ctx.hideAndRelease(win);
             return;
+          case "modeState": {
+            const modes = ctx.windowModes.get(win.id);
+            return modes
+              ? { mode: modes.mode, desktopAvailable: modes.desktopAvailable }
+              : { mode: layout.topmost ? "topmost" : "normal", desktopAvailable: false };
+          }
+          case "mode": {
+            const modes = ctx.windowModes.get(win.id);
+            if (!modes) throw new AppError("invalidCommand", "此窗口不支持窗口模式");
+            if (args.value !== "normal" && args.value !== "topmost" && args.value !== "desktop")
+              throw new AppError("invalidPayload", "窗口模式不合法");
+            await modes.setMode(args.value);
+            return;
+          }
           case "close":
+            // On the desktop, close means "remove from desktop"; the page stays.
+            if (ctx.windowModes.get(win.id)?.mode === "desktop") {
+              await ctx.windowModes.get(win.id)!.removeFromDesktop();
+              return;
+            }
             if (
               layout.label !== "launcher" &&
               ctx.isHostView(layout) &&

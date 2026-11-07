@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { screen, type BrowserWindow } from "electron";
+import type { WindowMode } from "../../shared/window-mode.js";
 import type { LayerCard, LayerInstanceSummary } from "../../shared/layer-contract.js";
 import type { ExternalLayerPresentation } from "../../shared/utools-desktop.js";
 import type { Rect } from "../../src/features/capsules/types.js";
@@ -289,5 +291,148 @@ export class PluginWindowDesktopHost {
       this.register(session);
     }
     await this.sync();
+  }
+}
+
+/**
+ * Window mode of one plugin window (Web shell or official workspace): normal,
+ * always on top, or kept on the desktop through PluginWindowDesktopHost. It
+ * applies the desktop layer's projection to the existing window and restores
+ * the ordinary window when it leaves the desktop; the page is never reloaded.
+ */
+export class WindowModeController {
+  mode: WindowMode = "normal";
+  private link?: ReturnType<PluginWindowDesktopHost["attach"]>;
+  private presented?: Exclude<PluginWindowPresentation, null>;
+  private ordinaryBounds?: Electron.Rectangle;
+  private ordinaryMaximized = false;
+  private disposed = false;
+
+  constructor(
+    private readonly o: {
+      window: BrowserWindow;
+      desktop?: PluginWindowDesktopHost;
+      pluginId: string;
+      profile: string;
+      title: () => string;
+      /** Whether the ordinary window shows in the taskbar. */
+      taskbar: () => boolean;
+      /** Applies "always on top" the owner's way (host windows persist it). */
+      setTopmost?: (value: boolean) => void;
+      onChange: () => void;
+    },
+  ) {
+    const { window } = o;
+    if (o.desktop)
+      this.link = o.desktop.attach({
+        pluginId: o.pluginId,
+        profile: o.profile,
+        title: o.title,
+        present: (value) => this.present(value),
+      });
+    window.on("moved", () => this.report());
+    window.on("resized", () => this.report());
+    window.on("focus", () => this.link?.focus(true));
+    window.on("blur", () => this.link?.focus(false));
+    window.once("closed", () => this.dispose());
+  }
+  get desktopAvailable(): boolean {
+    return !!this.link;
+  }
+  /** Whether the layer will present this window (so callers should not show it). */
+  get onDesktop(): boolean {
+    return this.mode === "desktop" || !!this.o.desktop?.pinned(this.o.pluginId, this.o.profile);
+  }
+  private topmost(value: boolean): void {
+    if (this.o.setTopmost) this.o.setTopmost(value);
+    else this.o.window.setAlwaysOnTop(value);
+  }
+  private present(value: PluginWindowPresentation): void {
+    const window = this.o.window;
+    if (this.disposed || window.isDestroyed()) return;
+    if (!value) {
+      const wasDesktop = !!this.presented;
+      this.presented = undefined;
+      if (this.mode === "desktop") this.mode = "normal";
+      window.setSkipTaskbar(!this.o.taskbar());
+      window.setFocusable(true);
+      window.setIgnoreMouseEvents(false);
+      window.setAlwaysOnTop(false);
+      if (wasDesktop && this.ordinaryBounds) {
+        const area = screen.getDisplayMatching(this.ordinaryBounds).workArea;
+        const width = Math.min(this.ordinaryBounds.width, area.width);
+        const height = Math.min(this.ordinaryBounds.height, area.height);
+        window.setBounds({
+          x: Math.max(area.x, Math.min(this.ordinaryBounds.x, area.x + area.width - width)),
+          y: Math.max(area.y, Math.min(this.ordinaryBounds.y, area.y + area.height - height)),
+          width,
+          height,
+        });
+        if (this.ordinaryMaximized) window.maximize();
+      }
+      this.o.onChange();
+      return;
+    }
+    if (!this.presented) {
+      this.ordinaryBounds = window.getBounds();
+      this.ordinaryMaximized = window.isMaximized();
+    }
+    if (window.isMaximized()) window.unmaximize();
+    this.presented = value;
+    this.mode = "desktop";
+    window.setSkipTaskbar(true);
+    window.setFocusable(value.mode === "overlay" || value.card.inputMode === "interactive");
+    window.setIgnoreMouseEvents(value.mode === "desktop" && value.card.inputMode === "passive", {
+      forward: true,
+    });
+    window.setAlwaysOnTop(
+      value.mode === "overlay" || value.card.group === "top",
+      process.platform === "win32" ? "pop-up-menu" : "floating",
+    );
+    const b = value.card.bounds;
+    window.setBounds({
+      x: Math.round(b.x),
+      y: Math.round(b.y),
+      width: Math.round(b.width),
+      height: Math.round(b.height),
+    });
+    if (value.visible) {
+      if (!window.isVisible()) window.showInactive();
+      if (value.mode === "overlay") window.moveTop();
+    } else window.hide();
+    this.o.onChange();
+  }
+  async setMode(next: WindowMode): Promise<void> {
+    const window = this.o.window;
+    if (this.disposed || window.isDestroyed() || next === this.mode) return;
+    if (this.mode === "desktop") await this.link?.unpin();
+    if (next === "desktop") {
+      if (!this.link) throw new AppError("layer.disabled", "桌面卡片不可用");
+      this.topmost(false);
+      await this.link.pin(window.getBounds());
+      return;
+    }
+    this.mode = next;
+    this.topmost(next === "topmost");
+    this.o.onChange();
+  }
+  /** "Close" on the desktop: leave the desktop and hide; the page stays alive. */
+  async removeFromDesktop(): Promise<void> {
+    await this.setMode("normal");
+    if (!this.o.window.isDestroyed()) this.o.window.hide();
+  }
+  /** A card the user moved or resized natively reports its new geometry. */
+  private report(): void {
+    const p = this.presented?.card.bounds;
+    if (!p || !this.link || this.o.window.isDestroyed()) return;
+    const b = this.o.window.getBounds();
+    if (b.x === p.x && b.y === p.y && b.width === p.width && b.height === p.height) return;
+    void this.link.bounds(b).catch((error) => console.error("plugin-window-bounds", error));
+  }
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.link?.dispose();
+    this.link = undefined;
   }
 }

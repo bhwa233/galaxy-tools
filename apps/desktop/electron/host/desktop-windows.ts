@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { shouldHideLauncher } from "../host/launcher-presentation.js";
+import { WindowModeController } from "../plugins/window-desktop.js";
 import { createHostWindow } from "../host/windows.js";
 import { AppError, confined, readJson } from "../persistence.js";
 import type { PluginResourceScope } from "../plugins/resources.js";
@@ -23,6 +24,8 @@ export function createDesktopWindows(
     | "scheduleLayout"
     | "launcherPresentationGuard"
     | "windowPresentations"
+    | "windowModes"
+    | "windowDesktop"
     | "ready"
     | "here"
     | "configDir"
@@ -420,6 +423,39 @@ export function createDesktopWindows(
     }
     ctx.windows.set(layout.label, win);
     ctx.windowPresentations.set(win, presentation);
+    // Plugin workspaces and the notes main window get the status bar's window
+    // modes; notes papers and capsules keep their own desktop presentation.
+    const modePlugin =
+      layout.pluginId ?? (layout.view === "main" ? ctx.notesScope?.owner.pluginId : undefined);
+    if (modePlugin && layout.windowProfile && !layout.compact) {
+      const modes = new WindowModeController({
+        window: win,
+        desktop: ctx.windowDesktop,
+        pluginId: modePlugin,
+        profile: layout.windowProfile,
+        title: () => win.getTitle(),
+        taskbar: () =>
+          presentationConfig?.window?.taskbar !== undefined
+            ? presentationConfig.window.taskbar
+            : isHostView(layout),
+        setTopmost: (value) => {
+          layout.topmost = value;
+          ctx.applyNoteTopmost(win, layout);
+          remember(win);
+        },
+        onChange: () => {
+          if (!win.isDestroyed())
+            ctx.emit(
+              "window-mode-changed",
+              { mode: modes.mode, desktopAvailable: modes.desktopAvailable },
+              win,
+            );
+        },
+      });
+      if (layout.topmost) modes.mode = "topmost";
+      ctx.windowModes.set(win.id, modes);
+      win.once("closed", () => ctx.windowModes.delete(win.id));
+    }
     const launcherContentsId = win.webContents.id;
     let initialNavigation = true;
     win.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {

@@ -54,7 +54,7 @@ import { DEFAULT_DESKTOP_LAYER_PREFERENCES } from "../shared/config-schema.js";
 import { NotesLayerCoordinator, parseNotesLayout } from "./notes-layer.js";
 import { WidgetHost, widgetScheme } from "./plugins/widget-host.js";
 import { UToolsDesktopHost } from "./plugins/utools-desktop.js";
-import { PluginWindowDesktopHost } from "./plugins/window-desktop.js";
+import { PluginWindowDesktopHost, WindowModeController } from "./plugins/window-desktop.js";
 import { parseCliArgs, type CliCommand } from "./cli-args.js";
 import { HostConfigStore, persistedConfigSchema } from "./host-config.js";
 import { ShortcutManager } from "./host/shortcuts.js";
@@ -221,6 +221,7 @@ export interface RuntimeContext {
   readonly updateService: typeof updateService;
   readonly ui: typeof ui;
   readonly windowPresentations: typeof windowPresentations;
+  readonly windowModes: typeof windowModes;
   readonly windows: typeof windows;
   readonly workspaceRequests: typeof workspaceRequests;
   readonly enqueueMutation: typeof enqueueMutation;
@@ -766,6 +767,9 @@ const runtimeContext: RuntimeContext = {
   get ui(): typeof ui {
     return ui;
   },
+  get windowModes(): typeof windowModes {
+    return windowModes;
+  },
   get windowPresentations(): typeof windowPresentations {
     return windowPresentations;
   },
@@ -1026,6 +1030,8 @@ const launcherExecutions = new AsyncLocalStorage<{
   query?: { sessionId: string; requestId: string };
 }>();
 const windowPresentations = new WeakMap<BrowserWindow, () => boolean>();
+/** Window mode (normal / topmost / desktop) of host-rendered plugin windows. */
+const windowModes = new Map<number, WindowModeController>();
 const launcherCallers = new Map<number, string>();
 const launcherHides = new Map<number, { caller: string; sessionId: string; requestId: string }>();
 let notesActive = false;

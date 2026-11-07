@@ -1,8 +1,14 @@
 import { memo } from "react";
-import { CircleArrowUp, Copy, Info, Minus, Settings, Square, StickyNote, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { CircleArrowUp, Info, Settings, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { NoteSession } from "./useNoteSession";
 import { usePluginWindow } from "../windows/PluginWindowContext";
+import { StatusBar } from "../windows/StatusBar";
+import { useWindowMode } from "../windows/useWindowMode";
+import { closeCurrentWindow } from "../windows/controls";
+import { showToast } from "../../components/Toast";
+import { getErrorMessage } from "../../platform/errors";
 
 type Props = Pick<
   NoteSession,
@@ -21,8 +27,8 @@ type Props = Pick<
   | "isMaximized"
   | "handleClose"
 >;
+/** The notes manager on the shared host status bar, with its own actions. */
 export const NoteTitleBar = memo(function NoteTitleBar({
-  isMacOS,
   handleTitleBarMouseDown,
   t,
   handleOpenNotepad,
@@ -38,83 +44,60 @@ export const NoteTitleBar = memo(function NoteTitleBar({
   handleClose,
 }: Props) {
   const windowInfo = usePluginWindow();
+  const windowMode = useWindowMode();
+  const { i18n } = useTranslation();
+  const report = (error: unknown) => showToast(getErrorMessage(error));
   return (
-    <header
-      className={`electron-title-drag relative z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background pr-3 select-none ${isMacOS ? "pl-20" : "pl-4"}`}
+    <StatusBar
+      title={windowInfo?.title ?? t("main.window.manager")}
+      locale={i18n.resolvedLanguage ?? "zh-CN"}
+      mode={windowMode.mode}
+      onModeChange={
+        windowMode.onModeChange && ((next) => void windowMode.onModeChange!(next).catch(report))
+      }
+      maximized={isMaximized}
       onMouseDown={handleTitleBarMouseDown}
+      onMinimize={handleMinimize}
+      onToggleMaximize={handleMaximize}
+      // On the desktop "close" only removes the card from the desktop.
+      onClose={
+        windowMode.mode === "desktop" ? () => void closeCurrentWindow().catch(report) : handleClose
+      }
     >
-      <h1 className="truncate text-sm font-semibold">
-        {windowInfo?.title ?? t("main.window.manager")}
-      </h1>
-      <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => void handleOpenNotepad()}
-          title={t("main.window.quickNotepad")}
-          aria-label={t("main.window.quickNotepad")}
-        >
-          <StickyNote />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => void handleOpenSettings()}
-          title={t("main.window.settings")}
-          aria-label={t("main.window.settings")}
-        >
-          <Settings />
-        </Button>
-        <Button
-          variant="ghost"
-          size={aboutButtonExpanded ? "sm" : "icon-sm"}
-          onClick={handleOpenAbout}
-          title={aboutButtonTitle}
-          aria-label={aboutButtonTitle}
-        >
-          {aboutUpdateReminder.hasPendingUpdate ? (
-            <CircleArrowUp data-testid="main-about-update-icon" className="text-primary" />
-          ) : (
-            <Info data-testid="main-about-info-icon" />
-          )}
-          {aboutUpdateReminder.hasPendingUpdate && aboutButtonExpanded && (
-            <span data-testid="main-about-update-label">{aboutButtonLabel}</span>
-          )}
-        </Button>
-        {!isMacOS && (
-          <>
-            <div className="mx-1 h-4 w-px bg-border" />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={handleMinimize}
-              title={t("main.window.minimize")}
-              aria-label={t("main.window.minimize")}
-            >
-              <Minus />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={handleMaximize}
-              title={t(isMaximized ? "main.window.restore" : "main.window.maximize")}
-              aria-label={t(isMaximized ? "main.window.restore" : "main.window.maximize")}
-            >
-              {isMaximized ? <Copy /> : <Square />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="hover:bg-destructive/10 hover:text-destructive"
-              onClick={handleClose}
-              title={t("main.window.close")}
-              aria-label={t("main.window.close")}
-            >
-              <X />
-            </Button>
-          </>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => void handleOpenNotepad()}
+        title={t("main.window.quickNotepad")}
+        aria-label={t("main.window.quickNotepad")}
+      >
+        <StickyNote />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => void handleOpenSettings()}
+        title={t("main.window.settings")}
+        aria-label={t("main.window.settings")}
+      >
+        <Settings />
+      </Button>
+      <Button
+        variant="ghost"
+        size={aboutButtonExpanded ? "sm" : "icon-sm"}
+        onClick={handleOpenAbout}
+        title={aboutButtonTitle}
+        aria-label={aboutButtonTitle}
+      >
+        {aboutUpdateReminder.hasPendingUpdate ? (
+          <CircleArrowUp data-testid="main-about-update-icon" className="text-primary" />
+        ) : (
+          <Info data-testid="main-about-info-icon" />
         )}
-      </div>
-    </header>
+        {aboutUpdateReminder.hasPendingUpdate && aboutButtonExpanded && (
+          <span data-testid="main-about-update-label">{aboutButtonLabel}</span>
+        )}
+      </Button>
+    </StatusBar>
   );
 });

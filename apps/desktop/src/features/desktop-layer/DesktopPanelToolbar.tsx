@@ -19,13 +19,15 @@ export function DesktopPanelToolbar({
   locale: string;
 } & HTMLAttributes<HTMLElement>) {
   const zh = locale.startsWith("zh");
+  // Same wording as the status bar's mode menu: a desktop card is either kept
+  // on the desktop or kept on the desktop and always on top.
   const pinLabel = pinned
     ? zh
-      ? "取消置顶"
-      : "Unpin"
+      ? "取消置顶（保留在桌面）"
+      : "Not on top (stay on desktop)"
     : zh
-      ? "退出后保持置顶"
-      : "Keep on top after closing";
+      ? "置顶"
+      : "Always on top";
   const hideLabel = zh ? "收起面板" : "Hide panel";
   return (
     <header {...props} className="desktop-overlay-panel-header">

@@ -35,7 +35,7 @@ import { bindDevToolsShortcut } from "../host/windows.js";
 import { PluginResourceScope, type StopDecision } from "./resources.js";
 import { PendingRequests } from "./pending-requests.js";
 import { PACKAGE_MIME, resolvePackageFile } from "./package-files.js";
-import type { PluginWindowDesktopHost, PluginWindowPresentation } from "./window-desktop.js";
+import { WindowModeController, type PluginWindowDesktopHost } from "./window-desktop.js";
 import type { WindowMode } from "../../shared/window-mode.js";
 
 const SCHEME = "spark233-plugin";
@@ -156,11 +156,10 @@ class WebRuntime implements WebPluginController {
   private currentView?: WebContentsView;
   private currentSession?: Session;
   /** Window mode chosen in the status bar (normal / always on top / desktop). */
-  private mode: WindowMode = "normal";
-  private desktopLink?: ReturnType<PluginWindowDesktopHost["attach"]>;
-  private desktopPresentation?: Exclude<PluginWindowPresentation, null>;
-  private ordinaryBounds?: Electron.Rectangle;
-  private ordinaryMaximized = false;
+  private modes?: WindowModeController;
+  private get mode(): WindowMode {
+    return this.modes?.mode ?? "normal";
+  }
   private opening?: Promise<BrowserWindow>;
   private disposed = false;
   private crashed = false;
@@ -264,7 +263,7 @@ class WebRuntime implements WebPluginController {
         Menu.buildFromTemplate([
           item("normal", "普通窗口", "Normal window"),
           item("topmost", "置顶", "Always on top"),
-          ...(this.desktopLink ? [item("desktop", "常驻桌面", "Keep on desktop")] : []),
+          ...(this.modes?.desktopAvailable ? [item("desktop", "常驻桌面", "Keep on desktop")] : []),
         ]).popup({ window, ...anchor });
         return undefined;
       }
@@ -288,8 +287,7 @@ class WebRuntime implements WebPluginController {
       case "close":
         // On the desktop, close means "remove from desktop"; the page stays alive.
         if (this.mode === "desktop") {
-          await this.setMode("normal");
-          window.hide();
+          await this.modes?.removeFromDesktop();
           return undefined;
         }
         window.close();
@@ -371,76 +369,8 @@ class WebRuntime implements WebPluginController {
   private profile(): string {
     return this.options.windowProfile ?? "main";
   }
-  /** Applies the desktop layer's projection, or returns to an ordinary window. */
-  private presentDesktop(value: PluginWindowPresentation): void {
-    const window = this.currentWindow;
-    if (!window || window.isDestroyed()) return;
-    if (!value) {
-      const wasDesktop = !!this.desktopPresentation;
-      this.desktopPresentation = undefined;
-      if (this.mode === "desktop") this.mode = "normal";
-      window.setSkipTaskbar(this.presentation().window?.taskbar === false);
-      window.setFocusable(true);
-      window.setIgnoreMouseEvents(false);
-      window.setAlwaysOnTop(false);
-      if (wasDesktop && this.ordinaryBounds) {
-        const area = screen.getDisplayMatching(this.ordinaryBounds).workArea;
-        const width = Math.min(this.ordinaryBounds.width, area.width);
-        const height = Math.min(this.ordinaryBounds.height, area.height);
-        window.setBounds({
-          x: Math.max(area.x, Math.min(this.ordinaryBounds.x, area.x + area.width - width)),
-          y: Math.max(area.y, Math.min(this.ordinaryBounds.y, area.y + area.height - height)),
-          width,
-          height,
-        });
-        if (this.ordinaryMaximized) window.maximize();
-      }
-      this.publishShell();
-      return;
-    }
-    if (!this.desktopPresentation) {
-      this.ordinaryBounds = window.getBounds();
-      this.ordinaryMaximized = window.isMaximized();
-    }
-    if (window.isMaximized()) window.unmaximize();
-    this.desktopPresentation = value;
-    this.mode = "desktop";
-    window.setSkipTaskbar(true);
-    window.setFocusable(value.mode === "overlay" || value.card.inputMode === "interactive");
-    window.setIgnoreMouseEvents(value.mode === "desktop" && value.card.inputMode === "passive", {
-      forward: true,
-    });
-    window.setAlwaysOnTop(
-      value.mode === "overlay" || value.card.group === "top",
-      process.platform === "win32" ? "pop-up-menu" : "floating",
-    );
-    const b = value.card.bounds;
-    window.setBounds({
-      x: Math.round(b.x),
-      y: Math.round(b.y),
-      width: Math.round(b.width),
-      height: Math.round(b.height),
-    });
-    if (value.visible) {
-      if (!window.isVisible()) window.showInactive();
-      if (value.mode === "overlay") window.moveTop();
-    } else window.hide();
-    this.publishShell();
-  }
-  /** Status bar mode menu. Desktop mode is entered through the desktop layer. */
   private async setMode(next: WindowMode): Promise<void> {
-    const window = this.currentWindow;
-    if (!window || window.isDestroyed() || next === this.mode) return;
-    if (this.mode === "desktop") await this.desktopLink?.unpin();
-    if (next === "desktop") {
-      if (!this.desktopLink) throw new Error("Desktop cards are unavailable");
-      window.setAlwaysOnTop(false);
-      await this.desktopLink.pin(window.getBounds());
-      return;
-    }
-    this.mode = next;
-    window.setAlwaysOnTop(next === "topmost");
-    this.publishShell();
+    await this.modes?.setMode(next);
   }
   /** Reloading drops unsaved page state, so it goes through save first. */
   private async reloadPage(): Promise<void> {
@@ -449,15 +379,6 @@ class WebRuntime implements WebPluginController {
     this.saveApproved = false;
     this.connected = false;
     this.page()?.reload();
-  }
-  /** A card the user moved or resized natively reports its new geometry. */
-  private reportDesktopBounds(window: BrowserWindow): void {
-    const presented = this.desktopPresentation;
-    if (!presented || !this.desktopLink || window.isDestroyed()) return;
-    const b = window.getBounds();
-    const p = presented.card.bounds;
-    if (b.x === p.x && b.y === p.y && b.width === p.width && b.height === p.height) return;
-    void this.desktopLink.bounds(b).catch((error) => console.error("plugin-window-bounds", error));
   }
   private publishShell(): void {
     const window = this.currentWindow;
@@ -817,21 +738,17 @@ class WebRuntime implements WebPluginController {
       for (const change of ["maximize", "unmaximize", "enter-full-screen", "leave-full-screen"])
         window.on(change as "maximize", () => this.publishShell());
       window.on("resize", () => this.layout());
-      window.on("moved", () => this.reportDesktopBounds(window));
-      window.on("resized", () => this.reportDesktopBounds(window));
-      window.on("blur", () => this.desktopLink?.focus(false));
-      if (this.options.desktop)
-        this.desktopLink = this.options.desktop.attach({
-          pluginId: this.owner.pluginId,
-          profile: this.profile(),
-          title: () => this.shellState().title,
-          present: (value) => {
-            if (this.currentWindow === window) this.presentDesktop(value);
-          },
-        });
+      this.modes = new WindowModeController({
+        window,
+        desktop: this.options.desktop,
+        pluginId: this.owner.pluginId,
+        profile: this.profile(),
+        title: () => this.shellState().title,
+        taskbar: () => this.presentation().window?.taskbar !== false,
+        onChange: () => this.publishShell(),
+      });
       // Keyboard input belongs to the plugin page, not the status bar.
       window.on("focus", () => {
-        this.desktopLink?.focus(true);
         if (this.currentView === view && !page.isDestroyed()) page.focus();
       });
       this.layout();
@@ -858,8 +775,8 @@ class WebRuntime implements WebPluginController {
         event.preventDefault();
         // Closing a desktop card (e.g. Alt+F4) removes it from the desktop only.
         if (this.mode === "desktop") {
-          void this.setMode("normal")
-            .then(() => window.hide())
+          void this.modes
+            ?.removeFromDesktop()
             .catch((error) => console.error("plugin-window-unpin", error));
           return;
         }
@@ -927,9 +844,7 @@ class WebRuntime implements WebPluginController {
         activation: this.activation,
       });
     // A desktop card is shown by the layer's presentation; focusing raises it.
-    const onDesktop =
-      this.mode === "desktop" ||
-      !!this.options.desktop?.pinned(this.owner.pluginId, this.profile());
+    const onDesktop = !!this.modes?.onDesktop;
     if (this.options.show !== false) {
       if (!onDesktop || window.isVisible()) window.show();
       window.focus();
@@ -1044,10 +959,8 @@ class WebRuntime implements WebPluginController {
     const window = this.currentWindow;
     const view = this.currentView;
     const ownSession = this.currentSession;
-    this.desktopLink?.dispose();
-    this.desktopLink = undefined;
-    this.desktopPresentation = undefined;
-    this.mode = "normal";
+    this.modes?.dispose();
+    this.modes = undefined;
     this.currentWindow = undefined;
     this.currentView = undefined;
     this.currentSession = undefined;

@@ -1,7 +1,8 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
-import { Button, Input, WindowTitleBar } from "@spark233/ui/components";
-import { GripHorizontal, Pin, Puzzle, SlidersHorizontal } from "lucide-react";
+import { Button, Input } from "@spark233/ui/components";
+import { StatusBar } from "../windows/StatusBar";
+import { GripHorizontal, Puzzle, SlidersHorizontal } from "lucide-react";
 import { DesktopPanelToolbar } from "../desktop-layer/DesktopPanelToolbar";
 import type { UToolsDesktopPresentation } from "../../../shared/utools-desktop";
 import "../../App.css";
@@ -19,6 +20,7 @@ interface ShellState {
   error?: string;
   desktopAvailable?: boolean;
   desktop?: UToolsDesktopPresentation | null;
+  mode?: "normal" | "topmost";
 }
 declare global {
   interface Window {
@@ -147,27 +149,19 @@ export function Shell() {
           </Button>
         </DesktopPanelToolbar>
       ) : (
-        <WindowTitleBar
+        <StatusBar
           title={state.title}
-          isMaximized={state.maximized}
-          labels={{ minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" }}
+          locale="zh-CN"
+          mode={state.mode ?? "normal"}
+          maximized={state.maximized}
+          nativeMenus={{
+            mode: (anchor) => action("mode-menu", anchor),
+            more: (anchor) => action("more-menu", anchor),
+          }}
           onMinimize={() => action("minimize")}
           onToggleMaximize={() => action("maximize")}
           onClose={() => action("hide")}
-        >
-          {state.desktopAvailable && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              title="固定到桌面"
-              aria-label="固定到桌面"
-              onClick={() => action("pin")}
-            >
-              <Pin />
-            </Button>
-          )}
-        </WindowTitleBar>
+        />
       )}
       <div className={desktop ? "utools-desktop-content" : "contents"}>
         {state.subInput && (

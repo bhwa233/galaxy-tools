@@ -1,8 +1,9 @@
 import { useEffect, useEffectEvent, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { WindowTitleBar } from "@spark233/ui/components";
 import { getCurrentWindow } from "../../platform/desktop";
+import { useWindowMode } from "./useWindowMode";
 import { usePluginWindow } from "./PluginWindowContext";
+import { StatusBar, type RunState } from "./StatusBar";
 import {
   closeCurrentWindow,
   isCurrentWindowMaximized,
@@ -13,23 +14,28 @@ import {
 
 interface Props {
   title: string;
+  /** Short context shown next to the title, e.g. the current entry. */
+  subtitle?: string;
+  runState?: RunState;
   children?: ReactNode;
   onClose?: () => void | Promise<void>;
   onError: (error: unknown) => void;
 }
 
-/** Reuse the notes title bar's appearance and existing window bridge. Each
- * workspace supplies its own actions and retains its existing close policy. */
+/** The host status bar of a trusted workspace window. Each workspace supplies
+ * its own actions and keeps its close policy; window modes come from the host. */
 export function WorkspaceTitleBar({
   title,
+  subtitle,
+  runState,
   children,
   onClose = closeCurrentWindow,
   onError,
 }: Props) {
-  const { t } = useTranslation();
+  const { i18n } = useTranslation();
   const windowInfo = usePluginWindow();
   const [isMaximized, setIsMaximized] = useState(false);
-  const isMacOS = /Mac|iPhone|iPad/.test(navigator.platform) || navigator.userAgent.includes("Mac");
+  const windowMode = useWindowMode();
   const reportStateError = useEffectEvent(onError);
 
   useEffect(() => {
@@ -58,8 +64,10 @@ export function WorkspaceTitleBar({
   // One Esc policy for every workspace window: close through the workspace's own
   // close path (saving/cancel confirmations included), unless something more
   // local owns the key: an open dialog or menu, IME composition, or a text field
-  // that still holds text.
-  const closeOnEscape = useEffectEvent(() => void perform(onClose));
+  // that still holds text. A desktop card is not closed by Esc.
+  const closeOnEscape = useEffectEvent(() => {
+    if (windowMode.mode !== "desktop") void perform(onClose);
+  });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
@@ -98,25 +106,27 @@ export function WorkspaceTitleBar({
       return;
     void perform(event.detail === 2 ? toggleMaximizeCurrentWindow : startCurrentWindowDrag);
   };
+  const onDesktop = windowMode.mode === "desktop";
 
   return (
-    <WindowTitleBar
+    <StatusBar
       title={windowInfo?.title ?? title}
-      isMacOS={isMacOS}
-      isMaximized={isMaximized}
+      subtitle={subtitle}
+      runState={runState}
+      locale={i18n.resolvedLanguage ?? "zh-CN"}
+      mode={windowMode.mode}
+      onModeChange={
+        windowMode.onModeChange && ((next) => void perform(() => windowMode.onModeChange!(next)))
+      }
+      maximized={isMaximized}
       maximizable={windowInfo?.maximizable !== false}
-      labels={{
-        minimize: t("main.window.minimize"),
-        maximize: t("main.window.maximize"),
-        restore: t("main.window.restore"),
-        close: t("main.window.close"),
-      }}
       onMouseDown={onMouseDown}
       onMinimize={() => void perform(minimizeCurrentWindow)}
       onToggleMaximize={() => void perform(toggleMaximizeCurrentWindow)}
-      onClose={() => void perform(onClose)}
+      // On the desktop "close" only removes the card; nothing is saved or stopped.
+      onClose={() => void perform(onDesktop ? closeCurrentWindow : onClose)}
     >
       {children}
-    </WindowTitleBar>
+    </StatusBar>
   );
 }

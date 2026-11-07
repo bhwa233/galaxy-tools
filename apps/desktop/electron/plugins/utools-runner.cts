@@ -408,6 +408,62 @@ export async function startUToolsRunner(): Promise<void> {
       if (committed && value === committed.revision) committed.finish();
       return;
     }
+    if (operation === "mode-menu" || operation === "more-menu") {
+      // The plugin view sits above DOM popups of the shell page; use native menus.
+      const anchor =
+        value && Number.isSafeInteger(value.x) && Number.isSafeInteger(value.y)
+          ? { x: value.x, y: value.y }
+          : {};
+      const report = (error: unknown) => update({ error: String(error) });
+      const template: import("electron").MenuItemConstructorOptions[] =
+        operation === "mode-menu"
+          ? [
+              {
+                label: "普通窗口",
+                type: "radio",
+                checked: !window.isAlwaysOnTop(),
+                click: () => {
+                  window!.setAlwaysOnTop(false);
+                  update({ mode: "normal" });
+                },
+              },
+              {
+                label: "置顶",
+                type: "radio",
+                checked: window.isAlwaysOnTop(),
+                click: () => {
+                  window!.setAlwaysOnTop(true);
+                  update({ mode: "topmost" });
+                },
+              },
+              ...(state.desktopAvailable
+                ? [
+                    {
+                      label: "常驻桌面",
+                      type: "radio" as const,
+                      checked: false,
+                      enabled: !!entered && !!state.featureCode,
+                      click: () => {
+                        const b = window!.getBounds();
+                        void hostRequest({
+                          type: "pin",
+                          featureCode: state.featureCode,
+                          bounds: {
+                            x: b.x,
+                            y: b.y + 48,
+                            width: b.width,
+                            height: Math.max(160, b.height - 48),
+                          },
+                        }).catch(report);
+                      },
+                    },
+                  ]
+                : []),
+            ]
+          : [{ label: "重新加载", click: () => view?.webContents.reload() }];
+      Menu.buildFromTemplate(template).popup({ window, ...anchor });
+      return;
+    }
     if (operation === "pin") {
       if (!entered || !state.featureCode) throw new Error("请先打开一个插件功能");
       const b = window.getBounds();

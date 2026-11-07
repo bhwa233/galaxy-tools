@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  LayoutGrid,
-  Plus,
-  RefreshCw,
-  SlidersHorizontal,
-  Trash2,
-  TriangleAlert,
-} from "lucide-react";
+import { LayoutGrid, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import type { LayerInstanceSummary, LayerTemplateSummary } from "../../../shared/layer-contract";
 import { invoke, listen } from "../../platform/desktop";
 import { Button } from "../../components/ui/button";
@@ -126,16 +119,6 @@ export function DesktopWidgetManager({
           >
             <LayoutGrid data-icon="inline-start" />
             {t("desktopOverlay.open")}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!enabled || !!busy || !instances.length}
-            onClick={() => void perform("edit", () => invoke("layer_edit", {}))}
-          >
-            <SlidersHorizontal data-icon="inline-start" />
-            {text("编辑桌面", "Arrange")}
           </Button>
           <Button
             type="button"
