@@ -168,22 +168,46 @@ export function Launcher() {
   const focusInput = useCallback(() => {
     if (panelVisibleRef.current) requestAnimationFrame(() => input.current?.focus());
   }, []);
+  /**
+   * The single way the current query is replaced (handoff, mode switch, return,
+   * close). Every copy used to clear a slightly different subset of state.
+   * `mode: "keep"` leaves the mode and its directory filter untouched.
+   */
+  const resetQuery = useCallback(
+    (
+      next: {
+        text?: string;
+        mode?: { key: string; title: string } | "keep";
+        handoff?: boolean;
+        focus?: boolean;
+      } = {},
+    ) => {
+      queryGeneration.current++;
+      actionGeneration.current++;
+      // Even unchanged text must restart the query a handoff invalidated.
+      if (next.handoff) setHandoffRevision((revision) => revision + 1);
+      if (next.mode !== "keep") {
+        setMode(next.mode);
+        setDirectory(undefined);
+      }
+      setQuery(next.text ?? "");
+      setResult(undefined);
+      setSelected("");
+      setError(undefined);
+      setQueryError(undefined);
+      setActionItem(undefined);
+      if (next.focus !== false) focusInput();
+    },
+    [focusInput, setActionItem],
+  );
   // Nothing survives a close: the next open always starts from home. Running on
   // the pre-hide event lets the renderer paint the home frame while the window
   // is still mapped, so the first frame after show is never the stale one.
   const resetHome = useEffectEvent(() => {
-    queryGeneration.current++;
     userEdited.current = false;
-    setQuery("");
-    setMode(undefined);
-    setDirectory(undefined);
-    setError(undefined);
-    setQueryError(undefined);
+    resetQuery({ focus: false });
     setStateError(undefined);
-    setResult(undefined);
-    setSelected("");
     setLoading(false);
-    setActionItem(undefined);
   });
   const acceptWorkspace = useEffectEvent((value: { kind: string; result?: unknown }) => {
     if (
@@ -198,19 +222,7 @@ export function Launcher() {
       if (value.result.revision <= inputRevision.current) return;
       inputRevision.current = value.result.revision;
       userEdited.current = false;
-      queryGeneration.current++;
-      // Even unchanged text replaces the query invalidated by this handoff.
-      setHandoffRevision((revision) => revision + 1);
-      actionGeneration.current++;
-      setMode(undefined);
-      setDirectory(undefined);
-      setQuery(value.result.text);
-      setResult(undefined);
-      setSelected("");
-      setError(undefined);
-      setQueryError(undefined);
-      setActionItem(undefined);
-      focusInput();
+      resetQuery({ text: value.result.text, handoff: true });
       return;
     }
     if (
@@ -222,17 +234,7 @@ export function Launcher() {
       "title" in value.result &&
       typeof value.result.title === "string"
     ) {
-      queryGeneration.current++;
-      setHandoffRevision((revision) => revision + 1);
-      setMode({ key: value.result.key, title: value.result.title });
-      setDirectory(undefined);
-      setQuery("");
-      setResult(undefined);
-      setSelected("");
-      setError(undefined);
-      setQueryError(undefined);
-      setActionItem(undefined);
-      focusInput();
+      resetQuery({ mode: { key: value.result.key, title: value.result.title }, handoff: true });
     }
   });
   const refreshState = useCallback(async () => {
@@ -292,15 +294,7 @@ export function Launcher() {
         if (payload.revision < inputRevision.current) return;
         if (userEdited.current) return;
         inputRevision.current = payload.revision;
-        queryGeneration.current++;
-        setHandoffRevision((revision) => revision + 1);
-        setQuery(payload.text);
-        setResult(undefined);
-        setSelected("");
-        setError(undefined);
-        setQueryError(undefined);
-        setActionItem(undefined);
-        focusInput();
+        resetQuery({ text: payload.text, mode: "keep", handoff: true });
       }),
       listen("launcher-reset", () => {
         resetHome();
@@ -487,25 +481,11 @@ export function Launcher() {
     panelVisible,
   ]);
 
-  const returnFromMode = () => {
-    queryGeneration.current++;
-    setMode(undefined);
-    setDirectory(undefined);
-    setQuery("");
-    setResult(undefined);
-    setSelected("");
-    setError(undefined);
-    setQueryError(undefined);
-    focusInput();
-  };
+  const returnFromMode = () => resetQuery();
   const escape = () => {
     if (mode) returnFromMode();
-    else if (query) {
-      setQuery("");
-      setError(undefined);
-      setQueryError(undefined);
-      focusInput();
-    } else void hideLauncher().catch((value: unknown) => setError(message(value)));
+    else if (query) resetQuery({ mode: "keep" });
+    else void hideLauncher().catch((value: unknown) => setError(message(value)));
   };
   useEffect(() => {
     const onEscape = (event: globalThis.KeyboardEvent) => {
@@ -535,15 +515,7 @@ export function Launcher() {
   const enterMode = (command: LauncherCommand, remainder = "") => {
     if (!command.mode || !command.enabled) return;
     void recordLauncherMode(command.mode).catch((value) => setError(message(value)));
-    queryGeneration.current++;
-    setMode({ key: command.mode, title: command.title });
-    setDirectory(undefined);
-    setQuery(remainder);
-    setResult(undefined);
-    setSelected("");
-    setError(undefined);
-    setQueryError(undefined);
-    focusInput();
+    resetQuery({ mode: { key: command.mode, title: command.title }, text: remainder });
   };
   const selectItem = async (item: LauncherItem) => {
     if (composition.current || !state?.pluginsReady || item.unavailable) return;
