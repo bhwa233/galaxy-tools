@@ -83,7 +83,16 @@ export function createTranslator(lifetime) {
           await handle.sync();
           await handle.close();
           handle = undefined;
-          await fs.rename(temporary, file);
+          // Defender or the indexer can briefly hold the target on Windows.
+          for (let attempt = 0; ; attempt++) {
+            try {
+              await fs.rename(temporary, file);
+              break;
+            } catch (error) {
+              if (attempt >= 4 || !["EPERM", "EBUSY", "EACCES"].includes(error?.code)) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** attempt));
+            }
+          }
         } finally {
           await handle?.close();
           await fs.rm(temporary, { force: true });
