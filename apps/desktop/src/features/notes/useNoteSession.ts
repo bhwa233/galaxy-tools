@@ -28,9 +28,7 @@ import {
 import type { NoteWindowState } from "../windows/noteWindowState";
 import { useNoteWindowStates } from "../windows/useNoteWindowStates";
 import {
-  createCategory,
   createNote,
-  deleteCategory,
   deleteNote,
   getErrorMessage,
   getFileModifiedTime,
@@ -39,7 +37,6 @@ import {
   listNotes,
   moveNoteCategory,
   readExternalFile,
-  renameCategory,
   saveExternalFile,
   updateNote,
 } from "./api";
@@ -58,6 +55,8 @@ import { useNoteClosePreparation, useNoteDocument } from "./useNoteDocument";
 import { useNoteMenus } from "./useNoteMenus";
 import { useSplitScrollSync } from "./useSplitScrollSync";
 import { useUpdateReminder } from "./useUpdateReminder";
+import { useNoteCategories } from "./useNoteCategories";
+import { isUnsaved } from "./noteSaveState";
 
 /** Owns document transitions and editor state; views receive typed, scoped props. */
 export function useNoteSession({
@@ -364,7 +363,7 @@ export function useNoteSession({
   const performSave = useCallback(
     async (force = false): Promise<boolean> => {
       // 非强制保存（自动保存、切换前保存）在没有未保存修改时直接视为成功
-      if (!force && !["dirty", "saving", "error"].includes(saveStateRef.current)) return true;
+      if (!force && !isUnsaved(saveStateRef.current)) return true;
       const id = selectedIdRef.current;
       if (!id) return false;
 
@@ -444,7 +443,7 @@ export function useNoteSession({
           selectedIdRef.current !== id ||
           titleValueRef.current !== sourceTitle ||
           contentValueRef.current !== sourceContent ||
-          ["dirty", "saving", "error"].includes(saveStateRef.current)
+          isUnsaved(saveStateRef.current)
         )
           return false;
         commit();
@@ -551,11 +550,7 @@ export function useNoteSession({
         setCollapsedCategories(new Set(loadedCategories));
         if (loadedNotes[0] && loadEpoch.isCurrent(initialEpoch)) {
           const note = await getNote(loadedNotes[0].id);
-          if (
-            !cancelled &&
-            loadEpoch.isCurrent(initialEpoch) &&
-            !["dirty", "saving", "error"].includes(saveStateRef.current)
-          )
+          if (!cancelled && loadEpoch.isCurrent(initialEpoch) && !isUnsaved(saveStateRef.current))
             applyNote(note);
         } else if (!loadedNotes[0] && loadEpoch.isCurrent(initialEpoch)) {
           clearCurrentNote();
@@ -614,12 +609,12 @@ export function useNoteSession({
           if (!currentId) return;
           const stillExists = loaded.some((n) => n.id === currentId);
           if (stillExists) {
-            if (!["dirty", "saving", "error"].includes(saveStateRef.current)) {
+            if (!isUnsaved(saveStateRef.current)) {
               void getNote(currentId)
                 .then((note) => {
                   if (isStale()) return;
                   if (selectedIdRef.current !== currentId) return;
-                  if (["dirty", "saving", "error"].includes(saveStateRef.current)) {
+                  if (isUnsaved(saveStateRef.current)) {
                     return;
                   }
                   titleValueRef.current = note.title;
@@ -631,10 +626,7 @@ export function useNoteSession({
                 })
                 .catch(() => undefined);
             }
-          } else if (
-            selectedNoteRef.current &&
-            !["dirty", "saving", "error"].includes(saveStateRef.current)
-          ) {
+          } else if (selectedNoteRef.current && !isUnsaved(saveStateRef.current)) {
             if (loaded[0]) {
               void loadNote(loaded[0].id);
             } else {
@@ -796,8 +788,7 @@ export function useNoteSession({
   useNoteClosePreparation({
     save: () => saveCurrentNote(true),
     drain: drainSaves,
-    isDirty: () =>
-      pendingSaves.current > 0 || ["dirty", "saving", "error"].includes(saveStateRef.current),
+    isDirty: () => pendingSaves.current > 0 || isUnsaved(saveStateRef.current),
     isSaved: () => saveStateRef.current === "saved" && pendingSaves.current === 0,
     label: () => windowLabelRef.current,
     onFailure: (error) => showToast(getErrorMessage(error)),
@@ -1055,71 +1046,24 @@ export function useNoteSession({
     [setNoteMenuClosing, refreshNotes],
   );
 
-  const handleCreateCategory = useCallback(async () => {
-    const name = categoryInputValue.trim();
-    if (!name) {
-      setShowCategoryInput(false);
-      return;
-    }
-    try {
-      await createCategory(name);
-      setCategories((prev) => [...prev, name].sort());
-      setShowCategoryInput(false);
-      setCategoryInputValue("");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  }, [categoryInputValue, setShowCategoryInput, setCategories, setCategoryInputValue]);
-
-  const handleRenameCategory = useCallback(
-    async (oldName: string) => {
-      const newName = renameCategoryValue.trim();
-      if (!newName || newName === oldName) {
-        setRenamingCategory(null);
-        return;
-      }
-
-      try {
-        await renameCategory(oldName, newName);
-        await refreshNotes();
-        setRenamingCategory(null);
-        setRenameCategoryValue("");
-      } catch (error) {
-        showToast(getErrorMessage(error));
-      }
-    },
-    [renameCategoryValue, setRenamingCategory, refreshNotes, setRenameCategoryValue],
-  );
-
-  const handleDeleteCategory = useCallback(
-    async (name: string) => {
-      try {
-        await deleteCategory(name);
-        await refreshNotes();
-        if (activeCategory === name) {
-          setActiveCategory("");
-        }
-      } catch (error) {
-        showToast(getErrorMessage(error));
-      }
-    },
-    [refreshNotes, activeCategory, setActiveCategory],
-  );
-
-  const toggleCategoryCollapse = useCallback(
-    (category: string) => {
-      setCollapsedCategories((prev) => {
-        const next = new Set(prev);
-        if (next.has(category)) {
-          next.delete(category);
-        } else {
-          next.add(category);
-        }
-        return next;
-      });
-    },
-    [setCollapsedCategories],
-  );
+  const {
+    handleCreateCategory,
+    handleRenameCategory,
+    handleDeleteCategory,
+    toggleCategoryCollapse,
+  } = useNoteCategories({
+    categoryInputValue,
+    setShowCategoryInput,
+    setCategories,
+    setCategoryInputValue,
+    renameCategoryValue,
+    setRenamingCategory,
+    setRenameCategoryValue,
+    refreshNotes,
+    activeCategory,
+    setActiveCategory,
+    setCollapsedCategories,
+  });
 
   const markDirty = useCallback(() => {
     if (!selectedIdRef.current) return;

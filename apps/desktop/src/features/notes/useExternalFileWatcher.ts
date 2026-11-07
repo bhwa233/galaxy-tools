@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { getFileModifiedTime, readExternalFile } from "./api";
 import { SaveState, useLoadEpoch } from "./notePresentation";
 import type { ExternalFile } from "./types";
+import { isUnsaved } from "./noteSaveState";
 interface WatcherOptions {
   selectedExternalFile: ExternalFile | null;
   lastExternalSaveRef: RefObject<number>;
@@ -36,7 +37,7 @@ export function useExternalFileWatcher({
         inFlight ||
         document.visibilityState === "hidden" ||
         Date.now() - lastExternalSaveRef.current < 2000 ||
-        ["dirty", "saving", "error"].includes(saveStateRef.current)
+        isUnsaved(saveStateRef.current)
       )
         return;
       inFlight = true;
@@ -47,7 +48,7 @@ export function useExternalFileWatcher({
         loadEpoch.isCurrent(epoch) &&
         selectedIdRef.current === selectedExternalFile.id &&
         contentValueRef.current === contentBefore &&
-        !["dirty", "saving", "error"].includes(saveStateRef.current);
+        !isUnsaved(saveStateRef.current);
       try {
         const mtime = await getFileModifiedTime(selectedExternalFile.filePath);
         if (!current() || mtime === externalFileMtimeRef.current) return;
