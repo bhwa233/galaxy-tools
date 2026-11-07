@@ -121,13 +121,6 @@ interface LearningReceipt {
   closedByExecution: boolean;
 }
 const localWord = /^[a-z][a-z' -]{0,120}$/i;
-const searchPreviewSchema = z.strictObject({
-  path: z.string().max(32768),
-  line: z.number().int().min(1),
-  snippet: z.string().max(32768),
-  text: z.string().max(512 * 1024),
-  firstLine: z.number().int().min(1),
-});
 export interface LauncherOptions {
   stateFile: string;
   manager: () => PluginManager | undefined;
@@ -1613,17 +1606,6 @@ export class LauncherController {
         "launcherResults" in result
       )
         throw new Error("Plugins must return search items, not host launcher envelopes");
-      if (
-        result &&
-        typeof result === "object" &&
-        !Array.isArray(result) &&
-        "searchPreview" in result
-      ) {
-        if (selected.pluginId !== "spark233.search")
-          throw new Error("Plugin cannot return the host file preview");
-        if (!this.current(session) || (action && !this.available(action))) return;
-        return { searchPreview: searchPreviewSchema.parse(result.searchPreview) };
-      }
       if (result && typeof result === "object" && !Array.isArray(result) && "workspace" in result) {
         const allowed: Record<string, string[]> = {
           ocr: ["spark233.ocr", "spark233.screenshot"],

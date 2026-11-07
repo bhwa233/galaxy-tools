@@ -26,7 +26,6 @@ import type {
   PluginReleaseNotes,
 } from "../src/features/plugins/types.js";
 import type { ReminderItem } from "../src/features/reminders/types.js";
-import type { SearchScopeSettings, SearchServiceStatus } from "../src/features/search/types.js";
 import type {
   AppConfig,
   AppConfigPatch,
@@ -87,36 +86,6 @@ export type ClipboardResponse =
   | ClipboardSettings
   | ClipboardDraft
   | { token: string; entries: ClipboardEntry[]; count: number; bytes: number; hasMore?: boolean };
-/** One workspace row; `searchHit` carries the raw index fields the table shows. */
-export interface SearchWorkspaceRow {
-  id: string;
-  title: string;
-  description?: string;
-  kind?: string;
-  commandId?: string;
-  parameters?: { selection?: string; callerId?: string; cursor?: string };
-  searchHit?: {
-    name: string;
-    path: string;
-    directory: boolean;
-    size?: string;
-    modified?: string;
-    extension: string;
-  };
-}
-export interface SearchWorkspacePage {
-  total: number;
-  /** Index totals are an upper bound until the admitted set has been walked. */
-  approximate: boolean;
-  hasMore: boolean;
-  cursor?: string;
-  revision?: string;
-}
-export interface SearchActionResponse {
-  items?: SearchWorkspaceRow[];
-  searchPage?: SearchWorkspacePage;
-  searchStatus?: { state: string; message?: string };
-}
 /** Every command has an explicit result; business plugins return JSON values. */
 interface CommandResults {
   layer_listTemplates: import("./layer-contract.js").LayerManagementState;
@@ -232,14 +201,6 @@ interface CommandResults {
   /** History rows, or the outcome of a per-row action. */
   ocr_action: OcrSession | OcrSessionSummary[] | { removed: boolean };
   screenshot_action: JsonValue;
-  search_workspace: import("./search-history.js").SearchHistory;
-  search_action: SearchActionResponse;
-  search_scope_get: SearchScopeSettings;
-  search_scope_pick: string | undefined;
-  search_scope_save: SearchScopeSettings;
-  search_service_configure: SearchServiceStatus;
-  search_service_rebuild: SearchServiceStatus;
-  search_service_status: SearchServiceStatus;
   settings_open: void;
   shell_open: void;
   show_note_on_desktop: string;
@@ -281,9 +242,6 @@ interface ArgumentOverrides {
       "globalShortcut" | "toggleVisibilityShortcut" | "desktopOverlayShortcut"
     >;
   };
-  search_scope_save: { excludedRoots: string[] } & Partial<
-    Omit<SearchScopeSettings, "excludedRoots">
-  >;
   plugin_settings_save: { pluginId: string; revision: string; patch: Record<string, unknown> };
 }
 export type Commands = {

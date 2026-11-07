@@ -12,7 +12,6 @@ import { createLayerCommands } from "./layer-commands.js";
 import { createNoteCommands } from "./note-commands.js";
 import { createPlatformCommands } from "./platform-commands.js";
 import { createPluginCommands } from "./plugin-commands.js";
-import { createSearchCommands } from "./search-commands.js";
 import { createSettingsCommands } from "./settings-commands.js";
 import { createWindowCommands } from "./window-commands.js";
 import { createWorkspaceCommands } from "./workspace-commands.js";
@@ -26,7 +25,6 @@ export function createDispatch(ctx: RuntimeContext) {
     ...createApplicationCommands(ctx),
     ...createBackupCommands(ctx),
     ...createWorkspaceCommands(ctx),
-    ...createSearchCommands(ctx),
     ...createNoteCommands(ctx),
     ...createWindowCommands(ctx),
     ...createPlatformCommands(ctx),
@@ -137,7 +135,6 @@ export function createDispatch(ctx: RuntimeContext) {
         "spark233.translation": ["translation_action", "translation_configure"],
         "spark233.ocr": ["ocr_action"],
         "spark233.screenshot": ["screenshot_action"],
-        "spark233.search": ["search_action", "search_workspace"],
       };
       if (!common.includes(command) && !business[layout.pluginId]?.includes(command))
         throw new AppError("permissionDenied", "此插件工作区不能调用宿主管理接口");

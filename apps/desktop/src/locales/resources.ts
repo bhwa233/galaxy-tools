@@ -2,8 +2,6 @@ import applicationsEnUS from "../features/applications/locales/en-US.json";
 import applicationsZhCN from "../features/applications/locales/zh-CN.json";
 import clipboardEnUS from "../features/clipboard/locales/en-US.json";
 import clipboardZhCN from "../features/clipboard/locales/zh-CN.json";
-import searchEnUS from "../features/search/locales/en-US.json";
-import searchZhCN from "../features/search/locales/zh-CN.json";
 import enUS from "./en-US/translation.json";
 import zhCN from "./zh-CN/translation.json";
 
@@ -46,13 +44,11 @@ export const resources = {
   "zh-CN": {
     translation: resolvedTranslations["zh-CN"],
     clipboard: clipboardZhCN,
-    search: searchZhCN,
     applications: applicationsZhCN,
   },
   "en-US": {
     translation: resolvedTranslations["en-US"],
     clipboard: clipboardEnUS,
-    search: searchEnUS,
     applications: applicationsEnUS,
   },
 } as const;

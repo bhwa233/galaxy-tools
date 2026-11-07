@@ -628,7 +628,9 @@
     "applicationRegion": "应用与插件",
     "informationRegion": "操作与结果",
     "resultActions": "{{title}}的操作",
-    "chooseAction": "选择此结果的操作。"
+    "chooseAction": "选择此结果的操作。",
+    "chooseDirectory": "选择搜索目录",
+    "allDirectories": "搜索全部目录"
   },
   "ocr": {
     "close": "关闭窗口",
@@ -1170,11 +1172,7 @@
       "visibleCount": "显示条数",
       "quickKeys": "快捷按键",
       "quickAction": "快捷动作",
-      "compactPosition": "小窗位置",
-      "excludedRoots": "排除目录或卷",
-      "extensions": "正文扩展名（留空使用默认范围）",
-      "maxFileMiB": "正文文件上限（MiB）",
-      "includeHidden": "包含隐藏文件"
+      "compactPosition": "小窗位置"
     },
     "linesPlaceholder": "每行一项",
     "options": {

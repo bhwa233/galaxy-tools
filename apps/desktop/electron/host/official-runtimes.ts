@@ -407,27 +407,10 @@ export function createOfficialRuntimeFactory(
       },
     };
     if (id === "spark233.search") {
-      if (!entries.native.search) throw new Error("Search executable entry is required");
-      // The workspace window loads this package's renderer. A package built
-      // before the workspace existed keeps working in the launcher only.
-      try {
-        ctx.bindOfficialRenderer(id, installation.directory, scope);
-      } catch (error) {
-        if (
-          !(
-            installation.version === "0.1.0" &&
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ENOENT" &&
-            "path" in error &&
-            error.path === path.join(installation.directory, "renderer", "index.html")
-          )
-        )
-          console.error("search-renderer", error);
-      }
+      if (!entries.native.everything) throw new Error("Everything executable entry is required");
       const runtime = createSearchRuntime({
         ...common,
-        descriptor: entries.native.search,
+        descriptor: entries.native.everything,
         getLocale: () => ctx.hostConfig.value.locale,
         privateRoots: () => ctx.privateDataRoots.list(),
         subscribePrivateRoots: (listener) => ctx.privateDataRoots.subscribe(listener),
@@ -438,58 +421,8 @@ export function createOfficialRuntimeFactory(
         copyPath: (filename) => {
           clipboard.writeText(filename);
         },
-        confirmServiceAction: async (action) => {
-          const english = ctx.hostConfig.value.locale.startsWith("en");
-          const title =
-            action === "configure"
-              ? ctx.ui("修改文件索引范围", "Change file index scope")
-              : action === "rebuild"
-                ? ctx.ui("重建文件索引", "Rebuild file index")
-                : ctx.ui("安装或更新文件搜索服务", "Install or update file search");
-          const answer = await dialog.showMessageBox({
-            type: "question",
-            title,
-            message:
-              action !== "install"
-                ? title
-                : english
-                  ? "Install or update the spark233 filename index service?"
-                  : "安装或更新 spark233 文件名索引服务？",
-            detail: english
-              ? "Windows administrator approval is required. File contents are searched only when you query them."
-              : "此操作会请求 Windows 管理员授权。正文只在你查询时按需搜索。",
-            buttons: english ? ["Cancel", "Continue"] : ["取消", "继续"],
-            defaultId: 0,
-            cancelId: 0,
-          });
-          return answer.response === 1;
-        },
       });
-      return {
-        query: runtime.query,
-        activate: async (activation) => {
-          // Entering the workspace does not run a query; the window asks for its
-          // own results so the launcher session stays untouched.
-          const window = metadata.spark233.commands.find(
-            (command) => command.id === activation.commandId,
-          )?.window;
-          if (window && !activation.parameters) {
-            await ctx.openPluginWindow(id, window, { activation });
-            return;
-          }
-          const result = await runtime.activate(activation);
-          if (
-            result &&
-            typeof result === "object" &&
-            !Array.isArray(result) &&
-            "searchPreview" in result
-          ) {
-            await ctx.openPluginWindow(id, "main", { preview: result.searchPreview });
-            return;
-          }
-          return result;
-        },
-      };
+      return { query: runtime.query, activate: runtime.activate };
     }
     if (id === "spark233.clipboard") {
       if (!entries.native.clipboard) throw new Error("Clipboard executable entry is required");

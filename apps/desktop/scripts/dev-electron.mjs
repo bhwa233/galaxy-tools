@@ -345,7 +345,7 @@ compiler.on("exit", async (code) => {
     "native/capture",
     "scripts/native-capture",
     "scripts/native-clipboard",
-    "scripts/native-search",
+    "scripts/native-everything",
     "scripts/native-applications",
   ]) {
     const directory = path.join(projectRoot, relative);

@@ -90,82 +90,11 @@ export function createApplicationCommands(
       }
       throw new AppError("invalidPayload", "Unknown custom application command");
     }
-    if (command.startsWith("search_scope_")) {
-      if (!ctx.isAdminView(layout))
-        throw new AppError("permissionDenied", "Search scope settings require the host view");
-      if (!ctx.pluginHost) throw new Error("Plugin host is not ready");
-      if (command === "search_scope_pick") {
-        const picked = await dialog.showOpenDialog(win, {
-          title: ctx.ui("选择要排除的目录或卷", "Choose a directory or volume to exclude"),
-          properties: ["openDirectory"],
-        });
-        return picked.canceled ? undefined : picked.filePaths[0];
-      }
-      if (command === "search_scope_get")
-        return ctx.pluginHost.manager.activate("spark233.search", {
-          commandId: "settings",
-          parameters: { action: "get" },
-        });
-      if (command === "search_scope_save") {
-        if (
-          !Array.isArray(args.excludedRoots) ||
-          args.excludedRoots.some((root: unknown) => typeof root !== "string")
-        )
-          throw new AppError("invalidPayload", "Expected excluded directory paths");
-        ctx.launcher.clear();
-        const result = await ctx.pluginHost.manager.activate("spark233.search", {
-          commandId: "settings",
-          parameters: {
-            action: "save",
-            excludedRoots: args.excludedRoots,
-            ...(args.extensions !== undefined ? { extensions: args.extensions } : {}),
-            ...(args.maxFileMiB !== undefined ? { maxFileMiB: args.maxFileMiB } : {}),
-            ...(args.includeHidden !== undefined ? { includeHidden: args.includeHidden } : {}),
-          },
-        });
-        ctx.launcher.clear();
-        ctx.emit("search-scope-changed");
-        return result;
-      }
-      throw new AppError("invalidPayload", "Unknown search scope command");
-    }
-    if (command.startsWith("search_service_")) {
-      if (!ctx.isAdminView(layout))
-        throw new AppError("permissionDenied", "Search service settings require the host view");
-      if (!ctx.pluginHost) throw new Error("Plugin host is not ready");
-      const actions: Record<string, string> = {
-        search_service_status: "status",
-        search_service_configure: "configure",
-        search_service_rebuild: "rebuild",
-      };
-      const action = actions[command];
-      if (!action) throw new AppError("invalidPayload", "Unknown search service action");
-      const result = await ctx.pluginHost.manager.activate("spark233.search", {
-        commandId: "service",
-        parameters: {
-          action,
-          ...(command === "search_service_configure"
-            ? { excludedRoots: args.excludedRoots, volumeEnabled: args.volumeEnabled }
-            : {}),
-        },
-      });
-      if (action !== "status") {
-        ctx.launcher.clear();
-        ctx.emit("search-scope-changed");
-      }
-      return result;
-    }
     throw new AppError("invalidCommand", "Unsupported host command: " + command);
   }
   return {
     applications_entries_get: run,
     applications_entries_pick: run,
     applications_entries_save: run,
-    search_scope_get: run,
-    search_scope_pick: run,
-    search_scope_save: run,
-    search_service_configure: run,
-    search_service_rebuild: run,
-    search_service_status: run,
   } satisfies Record<string, CommandHandler>;
 }

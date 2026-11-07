@@ -7,7 +7,6 @@ const source = path.join(root, "apps/desktop/src");
 const namespaces = {
   translation: "locales/{locale}/translation.json",
   clipboard: "features/clipboard/locales/{locale}.json",
-  search: "features/search/locales/{locale}.json",
   applications: "features/applications/locales/{locale}.json",
 };
 const flatten = (tree, prefix = "") =>

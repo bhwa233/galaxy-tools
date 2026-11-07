@@ -125,7 +125,7 @@
       "artifactName": "spark233-${version}-${arch}.${ext}"
     },
     "nsis": {
-      "include": "electron/installer/search-service.nsh",
+      "include": "electron/installer/legacy-search-service.nsh",
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false
@@ -152,6 +152,10 @@
       {
         "from": "src/assets/fonts/LICENSE_SourceHanSerif",
         "to": "licenses/SourceHanSerif.txt"
+      },
+      {
+        "from": "electron/installer/remove-legacy-search-service.ps1",
+        "to": "installer/remove-legacy-search-service.ps1"
       }
     ],
     "fileAssociations": [

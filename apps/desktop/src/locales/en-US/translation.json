@@ -628,7 +628,9 @@
     "applicationRegion": "Applications & plugins",
     "informationRegion": "Actions and results",
     "resultActions": "Actions for {{title}}",
-    "chooseAction": "Choose an action for this result."
+    "chooseAction": "Choose an action for this result.",
+    "chooseDirectory": "Choose search directory",
+    "allDirectories": "Search all directories"
   },
   "ocr": {
     "close": "Close window",
@@ -1170,11 +1172,7 @@
       "visibleCount": "Visible entries",
       "quickKeys": "Quick keys",
       "quickAction": "Quick action",
-      "compactPosition": "Compact window position",
-      "excludedRoots": "Excluded folders or volumes",
-      "extensions": "Content extensions (empty uses defaults)",
-      "maxFileMiB": "Maximum content file size (MiB)",
-      "includeHidden": "Include hidden files"
+      "compactPosition": "Compact window position"
     },
     "linesPlaceholder": "One per line",
     "options": {

@@ -66,12 +66,6 @@ export const clipboardSettingsFields: PluginSettingsField[] = [
     label: "pluginConfig.fields.compactPosition",
   }),
 ];
-export const searchSettingsFields: PluginSettingsField[] = [
-  field("excludedRoots", "lines", { label: "pluginConfig.fields.excludedRoots" }),
-  field("extensions", "lines", { label: "pluginConfig.fields.extensions" }),
-  field("maxFileMiB", "number", { min: 1, max: 64, label: "pluginConfig.fields.maxFileMiB" }),
-  field("includeHidden", "boolean", { label: "pluginConfig.fields.includeHidden" }),
-];
 export const translationSettingsFields: PluginSettingsField[] = [
   field("endpoint", "text", { label: "translation.endpoint" }),
   field("model", "text", { label: "translation.model" }),

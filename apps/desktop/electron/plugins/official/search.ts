@@ -1,17 +1,22 @@
-import { settingsSchema, validateSettings } from "./search-settings.js";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import type { JsonValue, PluginActivation } from "@spark233/sdk";
-import { atomicWrite, canonical, confined, inside } from "../../persistence.js";
-import { createTrustedNativeProcess, type PluginNativeController } from "../backend.js";
+import { canonical, inside } from "../../persistence.js";
 import type { ManagedPluginRuntime } from "../manager.js";
-import { PluginResourceScope, type StopDecision } from "../resources.js";
+import type { PluginResourceScope } from "../resources.js";
+import {
+  EverythingIpcError,
+  EverythingProperty,
+  type EverythingSearchResult,
+} from "./everything-ipc.js";
+import { CONTENT_EXTENSIONS, EverythingInstances } from "./everything-instance.js";
 
 export interface SearchRuntimeOptions {
   scope: PluginResourceScope;
   pluginRoot: string;
+  /** The bundled Everything 1.5 executable resolved from the manifest. */
   descriptor: { path: string; args: string[] };
   dataDir: string;
   cacheDir: string;
@@ -23,156 +28,87 @@ export interface SearchRuntimeOptions {
   openPath: (filename: string) => Promise<string | void>;
   revealPath?: (filename: string) => void | Promise<void>;
   copyPath?: (filename: string) => void | Promise<void>;
-  confirmServiceAction: (action: "install" | "configure" | "rebuild") => Promise<boolean>;
   /** Host-only isolated integration scope. Never sourced from activation input. */
-  fixture?: { pipeName: string; roots: string[]; beforePublish?: () => void };
+  fixture?: {
+    profileRoot: string;
+    bundledInstance: string;
+    userInstances: readonly (string | undefined)[];
+  };
 }
 
-const responseSchema = z.object({
-  protocol: z.literal(1),
-  sessionId: z.string(),
-  owner: z.object({ pluginId: z.string(), version: z.string(), instanceId: z.string() }),
-  status: z.enum([
-    "ok",
-    "cancelled",
-    "service-not-installed",
-    "service-update-required",
-    "service-unavailable",
-    "authorization-denied",
-    "error",
-  ]),
-  error: z.number().int().nonnegative().optional(),
-  message: z.string().optional(),
-  verifiedServiceVersion: z.string().max(8192).optional(),
-  revision: z.string().optional(),
-  hasMore: z.boolean().optional(),
-  total: z
-    .string()
-    .regex(/^\d{1,20}$/)
-    .optional(),
-  totalApproximate: z.boolean().optional(),
-  service: z
-    .object({
-      connected: z.boolean(),
-      message: z.string(),
-      excludedRoots: z.array(z.string()),
-      effectiveExcludedRoots: z.array(z.string()),
-      volumes: z.array(
-        z.object({
-          id: z.string(),
-          label: z.string(),
-          mountPoint: z.string(),
-          fileSystem: z.string(),
-          online: z.boolean(),
-          supported: z.boolean(),
-          enabled: z.boolean(),
-          indexedItems: z.number(),
-          progress: z.number(),
-          state: z.string(),
-          error: z.string(),
-        }),
-      ),
-    })
-    .optional(),
-  hits: z
-    .array(
-      z.object({
-        path: z.string().max(32768),
-        name: z.string().max(32768),
-        directory: z.boolean(),
-        snippet: z.string().max(32768).optional(),
-        line: z.number().int().nonnegative().optional(),
-        fileId: z
-          .string()
-          .regex(/^\d{1,20}$/)
-          .optional(),
-        size: z
-          .string()
-          .regex(/^\d{1,20}$/)
-          .optional(),
-        modified: z
-          .string()
-          .regex(/^\d{1,20}$/)
-          .optional(),
-        fileVersion: z
-          .string()
-          .regex(/^\d{1,10}:\d{1,10}:\d{1,10}:\d{1,20}$/)
-          .optional(),
-      }),
-    )
-    .max(200),
-});
-type SortField = "name" | "size" | "mtime";
-/** Structured states the workspace renders instead of a plain result list. */
-type SearchStatusState =
-  | "ok"
-  | "service-not-installed"
-  | "service-update-required"
-  | "stale"
-  | "error";
-type Query = {
-  mode: "files" | "content";
-  query: string;
-  directory: string;
-  offset: number;
-  limit: number;
-  revision?: string;
-  /** Explicit column order; absent means relevance ranking. */
-  sort?: SortField;
-  sortDesc?: boolean;
-};
-type Session = {
+type Mode = "files" | "content";
+type Query = { mode: Mode; query: string; directory: string; offset: number; limit: number };
+type CallerState = {
   id: string;
-  directory: string;
-  scope: PluginResourceScope;
-  process?: PluginNativeController;
-  cancelled: boolean;
-  done: Promise<void>;
-  finish: () => void;
+  generation: number;
+  controller?: AbortController;
+  selections: Map<string, string>;
+  cursors: Map<string, { query: Query; generation: number }>;
+  windows: Map<string, { query: string; mode: Mode }>;
+  lastQuery?: Query;
 };
+
+/** Files written by the Pulse-backed versions of this plugin. */
+const LEGACY_DATA = ["search-scope.json", "workspace-history.json"];
+
+/** Each term must occur in the file content; quotes are Everything grouping. */
+export function contentSearchText(query: string, indexed: boolean, profileRoot: string): string {
+  const terms = query
+    .split(/\s+/)
+    .map((term) => term.replaceAll('"', ""))
+    .filter(Boolean);
+  if (!terms.length) return "";
+  const prefix = indexed ? "content:" : "notindexed:content:";
+  const matches = terms.map((term) => `${prefix}"${term}"`).join(" ");
+  // Without a content index Everything reads files from disk; keep that to
+  // the user's text files.
+  return indexed ? matches : `"${profileRoot}\\" ext:${CONTENT_EXTENSIONS.join(";")} ${matches}`;
+}
 
 export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPluginRuntime {
   const ui = (zh: string, en: string) => (options.getLocale?.().startsWith("en") ? en : zh);
-  const root = canonical(options.pluginRoot);
-  const executable = canonical(options.descriptor.path);
-  if (
-    !path.isAbsolute(options.descriptor.path) ||
-    !inside(root, executable) ||
-    options.descriptor.args.length
-  )
-    throw new Error(
-      "Official search entry must be a package executable with host-controlled arguments",
-    );
   for (const directory of [options.dataDir, options.cacheDir]) {
     if (!path.isAbsolute(directory)) throw new Error("Search data/cache must be absolute");
     fs.mkdirSync(directory, { recursive: true });
-    if (inside(root, canonical(directory)))
-      throw new Error("Search mutable data must be outside its package");
   }
-  if (
-    options.fixture &&
-    (!options.fixture.pipeName.startsWith("\\\\.\\pipe\\spark233Index.Test.") ||
-      !options.fixture.roots.length ||
-      options.fixture.roots.some((value) => !path.isAbsolute(value)))
-  )
-    throw new Error("Invalid isolated search scope");
-  type CallerState = {
-    id: string;
-    generation: number;
-    current?: Session;
-    selections: Map<
-      string,
-      { path: string; line: number; snippet: string; version?: ContentVersion }
-    >;
-    cursors: Map<string, { query: Query; generation: number }>;
-    lastQuery?: Query;
-    scopeSignal?: AbortSignal;
-    detachSignal?: () => void;
-  };
+  if (options.descriptor.args.length)
+    throw new Error("Official search entry must use host-controlled arguments");
+  // Pulse-era settings and workspace history are no longer read.
+  for (const name of LEGACY_DATA) fs.rmSync(path.join(options.dataDir, name), { force: true });
+  fs.rmSync(path.join(options.cacheDir, "sessions"), { recursive: true, force: true });
+
+  const profileRoot = options.fixture?.profileRoot ?? os.homedir();
+  function excludedRoots(): string[] {
+    return [
+      ...new Set(
+        [
+          ...(typeof options.privateRoots === "function"
+            ? options.privateRoots()
+            : (options.privateRoots ?? [])),
+          options.dataDir,
+          options.cacheDir,
+        ].flatMap((value) => [path.resolve(value), canonical(value)]),
+      ),
+    ];
+  }
+  const everything = new EverythingInstances({
+    scope: options.scope,
+    pluginRoot: options.pluginRoot,
+    executable: options.descriptor.path,
+    dataDir: options.dataDir,
+    profileRoot,
+    excludedRoots,
+    approveTrust: options.approveTrust,
+    onOutputBytes: options.onOutputBytes,
+    ...(options.fixture
+      ? {
+          bundledInstance: options.fixture.bundledInstance,
+          userInstances: options.fixture.userInstances,
+        }
+      : {}),
+  });
+
   const callers = new Map<string, CallerState>();
-  const sessions = new Set<Session>();
-  let generation = 0;
-  let verifiedServiceVersion: string | undefined;
   let disposed = false;
   function caller(parameters: Record<string, JsonValue>): CallerState {
     const id = parameters.callerId ?? "legacy";
@@ -185,355 +121,125 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
       throw new Error("Invalid search caller identity");
     let state = callers.get(id);
     if (!state) {
-      state = { id, generation: 0, selections: new Map(), cursors: new Map() };
+      state = {
+        id,
+        generation: 0,
+        selections: new Map(),
+        cursors: new Map(),
+        windows: new Map(),
+      };
       callers.set(id, state);
     }
     return state;
   }
-  function expireCaller(state: CallerState): void {
-    ++state.generation;
-    state.selections.clear();
-    state.cursors.clear();
-    state.lastQuery = undefined;
-    state.detachSignal?.();
-    if (callers.get(state.id) === state) callers.delete(state.id);
-    if (state.current) requestCancel(state.current);
-  }
-  function bindCallerSignal(state: CallerState, signal: AbortSignal): void {
-    state.detachSignal?.();
-    const abort = () => {
-      if (callers.get(state.id) === state) expireCaller(state);
-    };
-    state.scopeSignal = signal;
-    state.detachSignal = () => {
-      signal.removeEventListener("abort", abort);
-      state.detachSignal = undefined;
-      state.scopeSignal = undefined;
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-  }
   function revokeAll(): void {
-    ++generation;
-    for (const state of callers.values()) expireCaller(state);
+    for (const state of callers.values()) {
+      ++state.generation;
+      state.controller?.abort();
+      state.selections.clear();
+      state.cursors.clear();
+      state.windows.clear();
+    }
+    callers.clear();
   }
-  let control = Promise.resolve();
-  const settingsFile = confined(options.dataDir, "search-scope.json");
-  let settings = fs.existsSync(settingsFile)
-    ? validateSettings(JSON.parse(fs.readFileSync(settingsFile, "utf8")))
-    : settingsSchema.parse({ excludedRoots: [] });
-  function excludedRoots(): string[] {
-    return [
-      ...new Set(
-        [
-          ...(typeof options.privateRoots === "function"
-            ? options.privateRoots()
-            : (options.privateRoots ?? [])),
-          options.dataDir,
-          options.cacheDir,
-          ...settings.excludedRoots,
-        ].flatMap((value) => [path.resolve(value), canonical(value)]),
-      ),
-    ];
-  }
-
   function assertActive(): void {
     if (disposed || options.scope.state !== "active") throw new Error("Search plugin is disabled");
   }
-  type ContentVersion = {
-    id: string;
-    volume: bigint;
-    size: string;
-    modified: string;
-    changed: bigint;
-  };
-  // Reuse Node's bigint stat identity and Pulse's read-handle version; never
-  // establish the baseline from a later stat of a path containing an old hit.
-  function sameVersion(metadata: fs.BigIntStats, version: ContentVersion): boolean {
-    const epoch = 116444736000000000n;
-    return (
-      metadata.isFile() &&
-      metadata.ino === BigInt(version.id) &&
-      metadata.dev === version.volume &&
-      metadata.size === BigInt(version.size) &&
-      metadata.mtimeNs === (BigInt(version.modified) - epoch) * 100n &&
-      metadata.ctimeNs === (version.changed - epoch) * 100n
-    );
+  function isExcluded(filename: string, excluded = excludedRoots()): boolean {
+    const resolved = path.resolve(filename);
+    return excluded.some((root) => inside(root, resolved) || inside(root, canonical(resolved)));
   }
-  function currentVersion(filename: string, version: ContentVersion): boolean {
-    try {
-      return sameVersion(fs.lstatSync(filename, { bigint: true }), version);
-    } catch {
-      return false;
-    }
-  }
-  function requestCancel(session: Session): void {
-    session.cancelled = true;
-    atomicWrite(confined(session.directory, "cancel.request"), session.id);
-  }
-  async function cancel(session?: Session): Promise<StopDecision> {
-    if (!session) return { ok: true };
-    requestCancel(session);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const exited = await Promise.race([
-      session.done.then(() => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), 15000);
-      }),
-    ]);
-    clearTimeout(timer);
-    return exited
-      ? { ok: true }
-      : { ok: false, reason: "Search cancellation pending; native process remains tracked" };
-  }
-  async function cancelAll(): Promise<StopDecision> {
-    const decisions = await Promise.all([...sessions].map((session) => cancel(session)));
-    return decisions.find((decision) => !decision.ok) ?? { ok: true };
-  }
-  function serialize<T>(callback: () => Promise<T>): Promise<T> {
-    const result = control.then(callback);
-    control = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
-  async function finishSession(session: Session, state?: CallerState): Promise<void> {
-    if (session.process) {
-      const released = await session.scope.stop("quit");
-      if (!released.ok) throw new Error(released.errors.join("; "));
-    }
-    try {
-      fs.rmSync(session.directory, { recursive: true, force: true });
-    } finally {
-      if (state?.current === session) state.current = undefined;
-      sessions.delete(session);
-      session.finish();
-    }
-  }
-  async function native(
-    query: Query | undefined,
-    action: "search" | "install" | "service-status" | "service-configure" | "service-rebuild",
-    requestGeneration: number,
-    serviceParameters?: {
-      serviceExcludedRoots: string[];
-      enabledVolumeIds: string[];
-      disabledVolumeIds: string[];
-    },
-    state?: CallerState,
-    signal?: AbortSignal,
-  ) {
-    const epoch = generation;
-    const stale = () =>
-      signal?.aborted || epoch !== generation || (state && requestGeneration !== state.generation);
-    const statusOnly = action === "service-status";
-    if (action !== "search" && !statusOnly) verifiedServiceVersion = undefined;
-    // Serialize only replacement/start. Holding this lock until completion would
-    // prevent a newer query from cancelling a slow content search.
-    const session = await serialize(async () => {
-      assertActive();
-      if (stale()) return;
-      if (!statusOnly) {
-        const stopped = await (state ? cancel(state.current) : cancelAll());
-        if (!stopped.ok) throw new Error(stopped.reason);
-      }
-      assertActive();
-      if (stale()) return;
-      const id = randomUUID();
-      const directory = confined(options.cacheDir, `sessions/${id}`);
-      fs.mkdirSync(directory, { recursive: true });
-      let finish!: () => void;
-      const done = new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-      const created: Session = {
-        id,
-        directory,
-        scope: new PluginResourceScope(options.scope.owner),
-        cancelled: false,
-        done,
-        finish,
-      };
-      atomicWrite(
-        confined(directory, "request.json"),
-        JSON.stringify({
-          protocol: 1,
-          sessionId: id,
-          owner: options.scope.owner,
-          action,
-          ...query,
-          // The engine ignores an explicit order while ranking; clearing rank is
-          // the only way to honour a workspace column sort.
-          rank: !query?.sort,
-          profile: options.dataDir,
-          // Only host-owned roots and the validated persisted user setting enter
-          // the native admission filter; activation parameters cannot override it.
-          privateRoots: excludedRoots(),
-          extensions: settings.extensions,
-          maxFileMiB: settings.maxFileMiB,
-          includeHidden: settings.includeHidden,
-          ...serviceParameters,
-          ...(verifiedServiceVersion ? { verifiedServiceVersion } : {}),
-          ...(options.fixture
-            ? { fixturePipe: options.fixture.pipeName, fixtureRoots: options.fixture.roots }
-            : {}),
-        }),
-      );
-      sessions.add(created);
-      if (state) state.current = created;
-      return created;
-    });
-    if (!session) return;
-    const abort = () => requestCancel(session);
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) abort();
-    try {
-      session.process = await createTrustedNativeProcess({
-        scope: session.scope,
-        pluginRoot: root,
-        descriptor: {
-          path: executable,
-          args: ["--request", confined(session.directory, "request.json")],
-        },
-        approveTrust: options.approveTrust,
-        onOutputBytes: options.onOutputBytes,
-        prepareStop: async () => {
-          requestCancel(session);
-          return { ok: true };
-        },
-        requestShutdown: () => requestCancel(session),
-        timeoutMs: 15000,
-      });
-      const exit = await session.process.waitForExit();
-      if (exit.error || exit.code !== 0)
-        throw new Error(exit.error ?? `Search helper exited (${exit.code})`);
-      if (session.cancelled || stale() || !options.scope.accepts(options.scope.owner)) return;
-      const filename = confined(session.directory, "result.json");
-      if (!fs.existsSync(filename) || fs.statSync(filename).size > 8 * 1024 * 1024)
-        throw new Error(`Search helper did not produce a bounded result (${JSON.stringify(exit)})`);
-      const result = responseSchema.parse(JSON.parse(fs.readFileSync(filename, "utf8")));
-      if (
-        result.sessionId !== session.id ||
-        Object.keys(options.scope.owner).some(
-          (key) =>
-            result.owner[key as keyof typeof result.owner] !==
-            options.scope.owner[key as keyof typeof options.scope.owner],
-        )
-      )
-        throw new Error("Search helper returned a stale owner/session");
-      if (result.status === "ok" && result.verifiedServiceVersion && !stale())
-        verifiedServiceVersion = result.verifiedServiceVersion;
-      return result;
-    } finally {
-      signal?.removeEventListener("abort", abort);
-      await finishSession(session, state);
-    }
-  }
-  function sortOf(value: unknown, descending: unknown): Pick<Query, "sort" | "sortDesc"> {
-    if (value !== "name" && value !== "size" && value !== "mtime") return {};
-    return { sort: value, sortDesc: descending === true };
-  }
-  function info(
-    title: string,
-    description: string,
-    commandId: string = "install-service",
-    state: SearchStatusState = "error",
-  ): JsonValue {
+  function message(title: string, description: string, commandId: string, query: Query): JsonValue {
     return {
-      items: [{ id: randomUUID(), title, description, commandId, parameters: {} }],
-      searchStatus: { state, message: description },
+      items: [
+        {
+          id: randomUUID(),
+          title,
+          description,
+          commandId,
+          parameters: { query: query.query, mode: query.mode },
+        },
+      ],
     };
   }
+
   async function search(
     query: Query,
     state: CallerState,
     signal?: AbortSignal,
     append = false,
   ): Promise<JsonValue | undefined> {
-    if (!append && signal) bindCallerSignal(state, signal);
-    signal?.throwIfAborted();
+    // A newer query of the same caller abandons the older one's pipe request.
+    state.controller?.abort();
+    const controller = new AbortController();
+    state.controller = controller;
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     const mine = ++state.generation;
-    // Paging extends one query snapshot; only new input revokes earlier hits.
-    if (!append) state.selections.clear();
+    if (!append) {
+      state.selections.clear();
+      state.windows.clear();
+    }
     state.cursors.clear();
     state.lastQuery = query;
-    if (!query.query.trim()) {
-      await cancel(state.current);
-      return {
-        items: [],
-        searchPage: { total: 0, approximate: false, hasMore: false },
-        searchStatus: { state: "ok" satisfies SearchStatusState },
-      };
+    const stale = () => combined.aborted || mine !== state.generation || disposed;
+    if (!query.query.trim()) return { items: [] };
+    let connection;
+    try {
+      connection = await everything.connect(combined);
+    } catch (error) {
+      if (stale()) return;
+      return unavailable(error, query);
     }
-    const result = await native(query, "search", mine, undefined, state, signal);
-    if (signal?.aborted || mine !== state.generation) return;
-    if (!result || result.status === "cancelled") return;
-    if (result.status === "service-not-installed")
-      return info(
-        "安装文件搜索服务",
-        "需要管理员确认；安装后使用 Pulse 默认 NTFS 卷与排除项。点击安装或重试。",
-        "install-service",
-        "service-not-installed",
+    const { client, target } = connection;
+    let result: EverythingSearchResult;
+    let loaded = true;
+    // The bundled instance is configured with a content index; a user install
+    // may have it off, which is checked per query because it can change.
+    let indexed = true;
+    try {
+      if (target.bundled) loaded = await client.isDbLoaded();
+      else if (query.mode === "content")
+        indexed = await client.isPropertyIndexed(EverythingProperty.content);
+      let text =
+        query.mode === "content"
+          ? contentSearchText(query.query, indexed, profileRoot)
+          : query.query;
+      // Everything matches a backslash term against the full path.
+      if (query.directory && text) text = `"${query.directory.replace(/\\+$/, "")}\\" ${text}`;
+      result = await client.search(
+        {
+          text,
+          offset: query.offset,
+          count: query.limit,
+          sort: [{ property: EverythingProperty.name }],
+          properties: [EverythingProperty.name, EverythingProperty.path],
+        },
+        combined,
       );
-    if (result.status === "service-update-required")
-      return info(
-        "更新文件搜索服务",
-        "搜索插件包含新服务版本。确认后通过 Windows 管理员授权切换；不会在普通查询时自动升级。",
-        "install-service",
-        "service-update-required",
-      );
-    if (result.status !== "ok")
-      return info(
-        "搜索暂时不可用，点击重试",
-        result.message ?? `Windows error ${result.error ?? 0}`,
-        query.mode === "content" ? "content" : "search",
-      );
-    if (query.revision && query.revision !== result.revision)
-      return info(
-        "文件索引已更新，点击重新搜索",
-        "旧分页已失效。",
-        query.mode === "content" ? "content" : "search",
-        "stale",
-      );
+    } catch (error) {
+      if (stale()) return;
+      return unavailable(error, query);
+    } finally {
+      client.close();
+    }
+    if (stale()) return;
     const items: JsonValue[] = [];
-    options.fixture?.beforePublish?.();
-    if (signal?.aborted || mine !== state.generation) return;
     const excluded = excludedRoots();
-    for (const hit of result.hits) {
-      if (!path.isAbsolute(hit.path)) throw new Error("Search returned a non-absolute path");
-      const resolved = canonical(hit.path);
-      if (excluded.some((root) => inside(root, hit.path) || inside(root, resolved))) continue;
+    for (const item of result.items) {
+      const name = item.values.get(EverythingProperty.name);
+      const parent = item.values.get(EverythingProperty.path);
+      if (typeof name !== "string" || typeof parent !== "string") continue;
+      const filename = path.win32.join(parent, name);
+      if (!path.win32.isAbsolute(filename) || isExcluded(filename, excluded)) continue;
       const id = randomUUID();
-      let version: ContentVersion | undefined;
-      if (query.mode === "content") {
-        if (!hit.fileId || !hit.size || !hit.modified || !hit.fileVersion) continue;
-        const [volume, high, low, changed] = hit.fileVersion.split(":").map(BigInt);
-        if (((high << 32n) | low) !== BigInt(hit.fileId)) continue;
-        version = { id: hit.fileId, volume, size: hit.size, modified: hit.modified, changed };
-        if (!currentVersion(hit.path, version)) continue;
-      }
-      state.selections.set(id, {
-        path: hit.path,
-        line: hit.line ?? 0,
-        snippet: hit.snippet ?? "",
-        version,
-      });
+      state.selections.set(id, filename);
       items.push({
         id,
-        title: hit.name,
-        description: hit.snippet ? `${hit.path}:${hit.line ?? 0} · ${hit.snippet}` : hit.path,
-        kind: hit.directory ? "directory" : "file",
+        title: name,
+        description: filename,
+        kind: item.folder ? "directory" : "file",
         commandId: "open",
         parameters: { selection: id, callerId: state.id },
-        // Workspace tables need the raw row; launchers ignore unknown keys.
-        searchHit: {
-          name: hit.name,
-          path: hit.path,
-          directory: hit.directory,
-          ...(hit.size ? { size: hit.size } : {}),
-          ...(hit.modified ? { modified: hit.modified } : {}),
-          extension: hit.directory ? "" : path.extname(hit.name).replace(/^\./, "").toLowerCase(),
-        },
         actions: [
           {
             title: ui("打开所在位置", "Show location"),
@@ -545,52 +251,68 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
             commandId: "copy-path",
             parameters: { selection: id, callerId: state.id },
           },
-          ...(!hit.directory && hit.snippet
-            ? [
-                {
-                  title: ui("预览并定位命中行", "Preview matching line"),
-                  commandId: "preview",
-                  parameters: { selection: id, callerId: state.id },
-                },
-              ]
-            : []),
         ],
       });
     }
-    let cursor: string | undefined;
-    if (result.hasMore) {
-      cursor = randomUUID();
+    const total = result.folderCount + result.fileCount;
+    if (BigInt(query.offset + result.items.length) < total) {
+      const cursor = randomUUID();
       state.cursors.set(cursor, {
         generation: mine,
-        query: { ...query, offset: query.offset + query.limit, revision: result.revision },
+        query: { ...query, offset: query.offset + query.limit },
       });
       items.push({
         id: cursor,
-        title: "下一页",
+        title: ui("下一页", "Next page"),
         commandId: "next-page",
         parameters: { cursor, callerId: state.id },
       });
     }
-    return {
-      items,
-      // Workspace-only page envelope. Launcher sessions read items and ignore it.
-      searchPage: {
-        total: Number(result.total ?? 0),
-        approximate: result.totalApproximate ?? true,
-        hasMore: !!result.hasMore,
-        ...(cursor ? { cursor } : {}),
-        ...(result.revision ? { revision: result.revision } : {}),
-      },
-      searchStatus: { state: "ok" } satisfies Record<string, string>,
-    };
+    const windowToken = randomUUID();
+    state.windows.set(windowToken, {
+      query:
+        query.mode === "content"
+          ? contentSearchText(query.query, indexed, profileRoot)
+          : query.query,
+      mode: query.mode,
+    });
+    items.push({
+      id: windowToken,
+      title: ui("在 Everything 中查看全部", "Show all in Everything"),
+      description: ui(`共 ${total} 项`, `${total} results`),
+      commandId: "open-everything",
+      parameters: { token: windowToken, callerId: state.id },
+    });
+    const hint = !loaded
+      ? ui("正在准备文件索引，结果会逐步补充", "Preparing the file index; results will fill in")
+      : query.mode === "content" && !indexed
+        ? ui(
+            "当前 Everything 未开启内容索引，正文搜索会较慢。可在 Everything 选项的「内容」中开启。",
+            "Content indexing is off in Everything, so content search is slow. Turn it on under Everything Options > Content.",
+          )
+        : undefined;
+    return { items, ...(hint ? { hint } : {}) };
   }
+
+  function unavailable(error: unknown, query: Query): JsonValue {
+    if (!(error instanceof EverythingIpcError)) console.error("search-everything", error);
+    return message(
+      ui("文件搜索暂时不可用，点击重试", "File search is unavailable. Click to retry"),
+      error instanceof EverythingIpcError && error.code === "timeout"
+        ? ui("Everything 响应超时。", "Everything did not respond in time.")
+        : ui("无法连接 Everything。", "Could not connect to Everything."),
+      query.mode === "content" ? "content" : "search",
+      query,
+    );
+  }
+
   async function activate(
     activation: PluginActivation,
     signal?: AbortSignal,
     queryOnly = false,
   ): Promise<JsonValue | undefined> {
     assertActive();
-    if (signal?.aborted) throw new Error("Search query cancelled");
+    signal?.throwIfAborted();
     if (!activation.commandId) return;
     if (queryOnly && !["search", "content"].includes(activation.commandId))
       throw new Error("Search query cannot perform host actions");
@@ -600,126 +322,34 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
       !Array.isArray(activation.parameters)
         ? activation.parameters
         : {};
-    const state = caller(parameters);
+    if (activation.commandId === "workspace") {
+      await everything.openWindow("", signal);
+      return;
+    }
+    if (activation.commandId === "open-search") {
+      const text = activation.context?.kind === "text" ? activation.context.text : "";
+      await everything.openWindow(text.slice(0, 4096), signal);
+      return;
+    }
     if (activation.commandId === "settings") {
-      const input = z
-        .discriminatedUnion("action", [
-          z.strictObject({ action: z.literal("get") }),
-          z.strictObject({
-            action: z.literal("save"),
-            excludedRoots: settingsSchema.shape.excludedRoots,
-            extensions: settingsSchema.shape.extensions.optional(),
-            maxFileMiB: settingsSchema.shape.maxFileMiB.optional(),
-            includeHidden: settingsSchema.shape.includeHidden.optional(),
-          }),
-        ])
-        .parse(parameters);
-      if (input.action === "get") return structuredClone(settings);
-      const { action: _action, ...changes } = input;
-      const next = validateSettings({
-        ...settings,
-        ...Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined)),
-      });
-      revokeAll();
-      return serialize(async () => {
-        assertActive();
-        const stopped = await cancelAll();
-        if (!stopped.ok) throw new Error(stopped.reason);
-        assertActive();
-        atomicWrite(settingsFile, JSON.stringify(next, null, 2));
-        settings = next;
-        return structuredClone(settings);
-      });
+      await everything.openOptions(signal);
+      return;
     }
-    if (activation.commandId === "service") {
-      const input = z
-        .discriminatedUnion("action", [
-          z.strictObject({ action: z.literal("status") }),
-          z.strictObject({ action: z.literal("rebuild") }),
-          z.strictObject({
-            action: z.literal("configure"),
-            excludedRoots: z.array(z.string().trim().min(1).max(32768)).max(128),
-            volumeEnabled: z
-              .array(z.strictObject({ id: z.string().min(1).max(256), enabled: z.boolean() }))
-              .max(64),
-          }),
-        ])
-        .parse(parameters);
-      let serviceParameters;
-      if (input.action === "configure") {
-        const next = validateSettings({ excludedRoots: input.excludedRoots });
-        if (next.excludedRoots.some((root) => !/^[a-z]:\\.+/i.test(root)))
-          throw new Error(
-            "Machine exclusions require local subdirectories; disable a volume using its switch",
-          );
-        if (
-          new Set(input.volumeEnabled.map((volume) => volume.id)).size !==
-          input.volumeEnabled.length
-        )
-          throw new Error("Duplicate volume settings");
-        serviceParameters = {
-          serviceExcludedRoots: next.excludedRoots,
-          enabledVolumeIds: input.volumeEnabled
-            .filter((volume) => volume.enabled)
-            .map((volume) => volume.id),
-          disabledVolumeIds: input.volumeEnabled
-            .filter((volume) => !volume.enabled)
-            .map((volume) => volume.id),
-        };
-      }
-      if (input.action !== "status" && !(await options.confirmServiceAction(input.action)))
-        return {
-          status: "authorization-denied",
-          message: "Service management was cancelled",
-          connected: false,
-          volumes: [],
-          excludedRoots: [],
-          effectiveExcludedRoots: [],
-        };
-      if (input.action !== "status") {
-        revokeAll();
-      }
-      const result = await native(
-        undefined,
-        input.action === "status"
-          ? "service-status"
-          : input.action === "configure"
-            ? "service-configure"
-            : "service-rebuild",
-        generation,
-        serviceParameters,
-      );
-      return result
-        ? {
-            status: result.status,
-            message: result.message || result.service?.message || "",
-            connected: false,
-            volumes: [],
-            excludedRoots: [],
-            effectiveExcludedRoots: [],
-            ...result.service,
-          }
-        : undefined;
+    const state = caller(parameters);
+    if (activation.commandId === "open-everything") {
+      const entry =
+        typeof parameters.token === "string" ? state.windows.get(parameters.token) : undefined;
+      if (!entry) throw new Error("Search selection expired");
+      await everything.openWindow(entry.query, signal);
+      return;
     }
-    if (["open", "reveal", "copy-path", "preview"].includes(activation.commandId)) {
-      const selected =
+    if (["open", "reveal", "copy-path"].includes(activation.commandId)) {
+      const filename =
         typeof parameters.selection === "string"
           ? state.selections.get(parameters.selection)
           : undefined;
-      if (!selected) throw new Error("Search selection expired");
-      const filename = selected.path;
-      if (
-        excludedRoots().some(
-          (root) => inside(root, path.resolve(filename)) || inside(root, canonical(filename)),
-        )
-      )
-        throw new Error("Search scope was revoked");
-      if (selected.version && !currentVersion(filename, selected.version))
-        return info(
-          "文件已更改，请重新搜索",
-          "旧命中位置已经失效。",
-          state.lastQuery?.mode === "content" ? "content" : "search",
-        );
+      if (!filename) throw new Error("Search selection expired");
+      if (isExcluded(filename)) throw new Error("Search scope was revoked");
       if (activation.commandId === "reveal") {
         if (!options.revealPath) throw new Error("Reveal action is unavailable");
         await options.revealPath(filename);
@@ -729,54 +359,6 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         if (!options.copyPath) throw new Error("Copy path action is unavailable");
         await options.copyPath(filename);
         return;
-      }
-      if (activation.commandId === "preview") {
-        const handle = fs.openSync(filename, "r");
-        let data: Buffer;
-        let bytes: number;
-        try {
-          const metadata = fs.fstatSync(handle, { bigint: true });
-          if (!selected.version || !sameVersion(metadata, selected.version))
-            throw new Error("Search file version changed; search again");
-          const buffer = Buffer.alloc(
-            Number(metadata.size > 256n * 1024n ? 256n * 1024n : metadata.size),
-          );
-          bytes = fs.readSync(handle, buffer, 0, buffer.length, 0);
-          if (
-            !sameVersion(fs.fstatSync(handle, { bigint: true }), selected.version) ||
-            !currentVersion(filename, selected.version)
-          )
-            throw new Error("Search file version changed while reading; search again");
-          data = buffer.subarray(0, bytes);
-        } finally {
-          fs.closeSync(handle);
-        }
-        const text =
-          data[0] === 0xff && data[1] === 0xfe
-            ? data.subarray(2).toString("utf16le")
-            : data[0] === 0xfe && data[1] === 0xff
-              ? Buffer.from(data.subarray(2, data.length - (data.length % 2)))
-                  .swap16()
-                  .toString("utf16le")
-              : data.toString("utf8").replace(/^\uFEFF/, "");
-        const lines = text.split(/\r?\n/),
-          line = Math.max(1, selected.line);
-        const firstLine = Math.max(1, line - 8),
-          readable = !text.includes("\uFFFD") && line <= lines.length;
-        return {
-          searchPreview: {
-            path: filename,
-            line,
-            snippet: selected.snippet,
-            firstLine: readable ? firstLine : line,
-            text: readable
-              ? lines
-                  .slice(firstLine - 1, line + 8)
-                  .join("\n")
-                  .slice(0, 65536)
-              : selected.snippet,
-          },
-        };
       }
       const error = await options.openPath(filename);
       if (error) throw new Error(error);
@@ -789,34 +371,6 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         throw new Error("Search cursor expired");
       return search(cursor.query, state, signal, true);
     }
-    if (activation.commandId === "install-service") {
-      if (!(await options.confirmServiceAction("install")))
-        return info("尚未安装搜索服务，点击重试", "你已取消安装；普通查询不会请求管理员权限。");
-      assertActive();
-      const retry = state.lastQuery;
-      const retrySignal = state.scopeSignal;
-      revokeAll();
-      const result = await native(undefined, "install", generation);
-      if (!result) return;
-      if (result.status !== "ok")
-        return info(
-          "搜索服务安装未完成，点击重试",
-          result.message ?? `Windows error ${result.error ?? 0}`,
-          "install-service",
-          "service-not-installed",
-        );
-      return retry
-        ? search(
-            { ...retry, offset: 0, revision: undefined },
-            caller({ callerId: state.id }),
-            retrySignal,
-          )
-        : {
-            items: [],
-            searchPage: { total: 0, approximate: false, hasMore: false },
-            searchStatus: { state: "ok" satisfies SearchStatusState },
-          };
-    }
     if (!["search", "content"].includes(activation.commandId))
       throw new Error("Unknown search command");
     return search(
@@ -828,46 +382,39 @@ export function createSearchRuntime(options: SearchRuntimeOptions): ManagedPlugi
         mode:
           activation.commandId === "content" || parameters.mode === "content" ? "content" : "files",
         directory:
-          typeof parameters.directory === "string" && path.isAbsolute(parameters.directory)
+          typeof parameters.directory === "string" &&
+          path.win32.isAbsolute(parameters.directory) &&
+          !/["\0]/.test(parameters.directory)
             ? parameters.directory
             : "",
         offset: 0,
         limit:
           typeof parameters.limit === "number"
-            ? Math.min(200, Math.max(1, Math.trunc(parameters.limit)))
+            ? Math.min(98, Math.max(1, Math.trunc(parameters.limit)))
             : 60,
-        ...sortOf(parameters.sort, parameters.sortDesc),
       },
       state,
       signal,
     );
   }
-  const runtime: ManagedPluginRuntime = {
-    activate: (activation) => activate(activation),
-    query: (activation, signal) => activate(activation, signal, true),
-  };
+
   if (options.subscribePrivateRoots) {
-    const unsubscribe = options.subscribePrivateRoots(async () => {
-      revokeAll();
-      await serialize(async () => {
-        const decision = await cancelAll();
-        if (!decision.ok) throw new Error(decision.reason);
-      });
-    });
+    const unsubscribe = options.subscribePrivateRoots(async () => revokeAll());
     options.scope.own("event", { dispose: unsubscribe });
   }
   options.scope.own("task", {
     prepareStop: async () => {
       revokeAll();
-      return cancelAll();
+      return { ok: true };
     },
     async dispose() {
-      revokeAll();
-      const decision = await cancelAll();
-      if (!decision.ok) throw new Error(decision.reason);
       disposed = true;
-      callers.clear();
+      revokeAll();
+      await everything.dispose();
     },
   });
-  return runtime;
+  return {
+    activate: (activation) => activate(activation),
+    query: (activation, signal) => activate(activation, signal, true),
+  };
 }

@@ -1,9 +1,7 @@
-import { searchConditions } from "./search-history.js";
 import { pluginMarketSorts } from "./plugin-market.js";
 import { z } from "zod";
 import type { CommandName } from "./command-policies.js";
 import { configPatchSchema } from "./config-schema.js";
-import { settingsSchema as searchSettings } from "./search-schema.js";
 import { settingsSchema as clipboardSettings } from "./clipboard-schema.js";
 const empty = z.strictObject({}).optional();
 const id = z.string().min(1).max(512);
@@ -417,52 +415,6 @@ export const commandSchemas = {
     action: z.enum(["list", "copy", "save", "ocr", "remove", "clear"]),
     id: id.optional(),
   }),
-  search_workspace: z.discriminatedUnion("action", [
-    z.strictObject({ action: z.enum(["get", "clear", "pick-directory"]) }),
-    z.strictObject({
-      action: z.enum(["remember", "save"]),
-      conditions: searchConditions,
-      name: z.string().max(120).optional(),
-    }),
-    z.strictObject({ action: z.literal("remove"), id: z.uuid() }),
-  ]),
-  search_action: z.discriminatedUnion("action", [
-    z.strictObject({
-      action: z.literal("query"),
-      query: z.string().max(8192),
-      directory: location.optional(),
-      mode: z.enum(["files", "content"]),
-      category: z
-        .enum([
-          "all",
-          "folder",
-          "excel",
-          "word",
-          "ppt",
-          "pdf",
-          "image",
-          "video",
-          "audio",
-          "archive",
-        ])
-        .optional(),
-      sort: z.enum(["name", "size", "mtime"]).optional(),
-      sortDesc: z.boolean().optional(),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
-    z.strictObject({ action: z.literal("next-page"), cursor: id }),
-    z.strictObject({ action: z.enum(["open", "reveal", "copy-path"]), selection: id }),
-    z.strictObject({ action: z.literal("install-service") }),
-  ]),
-  search_scope_get: empty,
-  search_scope_pick: empty,
-  search_scope_save: searchSettings,
-  search_service_configure: z.strictObject({
-    excludedRoots: z.array(location).max(128),
-    volumeEnabled: z.array(z.strictObject({ id, enabled: z.boolean() })).max(128),
-  }),
-  search_service_rebuild: empty,
-  search_service_status: empty,
   settings_open: z.strictObject({
     page: z
       .enum([

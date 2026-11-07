@@ -205,19 +205,14 @@ async function prepareResources(source, metadata) {
       missingNative = true;
   }
   if (id === "spark233.search" && !missingNative) {
+    // A staged Pulse payload (or another Everything build) is restaged from the lock.
     const resources = JSON.parse(
       await fs.readFile(path.join(source, "native/resources.json"), "utf8"),
     );
-    for (const relative of [
-      "packages/official/search/native-src/search.cpp",
-      "packages/official/search/native-src/CMakeLists.txt",
-      "scripts/native-search/build.ps1",
-    ]) {
-      const current = createHash("sha256")
-        .update(await fs.readFile(path.join(project, relative)))
-        .digest("hex");
-      if (resources.inputs?.[relative] !== current) missingNative = true;
-    }
+    const lock = JSON.parse(
+      await fs.readFile(path.join(project, "scripts/native-everything/sources.lock.json"), "utf8"),
+    ).everything;
+    if (resources.upstream?.sha256 !== lock.sha256) missingNative = true;
   }
   if (["spark233.clipboard", "spark233.applications"].includes(id) && !missingNative) {
     const resources = JSON.parse(
@@ -309,7 +304,7 @@ async function prepareResources(source, metadata) {
         path.join(project, "local-build/spark233/native-applications/build/bin"),
       ]);
     } else if (id === "spark233.search")
-      run(await powershell(), ["-NoProfile", "-File", "scripts/native-search/build.ps1"]);
+      run(process.execPath, ["scripts/native-everything/stage.mjs"]);
     else if (id === "spark233.traffic")
       run(await powershell(), [
         "-NoProfile",
@@ -375,15 +370,13 @@ async function prepareResources(source, metadata) {
   }
   if (id === "spark233.search") {
     for (const entry of [
-      "native/spark233.Index.exe",
-      "native/spark233.Document.exe",
-      "native/pdfium.dll",
-      "licenses/Pulse/LICENSE",
-      "licenses/PDFium/pdfium.txt",
+      "native/Everything.lng",
+      "licenses/Everything/License.txt",
+      "licenses/everything_sdk3/LICENSE",
     ])
       if (!(await exists(path.join(source, entry))))
         throw new Error(
-          `Missing search resource ${entry}; run pwsh -File scripts/native-search/build.ps1`,
+          `Missing search resource ${entry}; run node scripts/native-everything/stage.mjs`,
         );
   }
   return true;
@@ -679,19 +672,6 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       files,
       ...(sharedUi ? { sharedUi } : {}),
     });
-    if (metadata.spark233.id === "spark233.search" && !selectedPlugin) {
-      // NSIS cannot execute a helper inside a tarball. Its fixed UAC bridge and
-      // licenses are also carried unpacked; the normal plugin remains a .tgz.
-      const installer = await outputPath("installer/search");
-      await fs.mkdir(installer, { recursive: true });
-      for (const name of ["native", "licenses"]) {
-        const previous = await outputPath(`installer/search/${name}`);
-        await fs.rm(previous, { recursive: true, force: true });
-        await fs.cp(path.join(work, "package", name), path.join(installer, name), {
-          recursive: true,
-        });
-      }
-    }
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }

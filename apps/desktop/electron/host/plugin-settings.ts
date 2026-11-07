@@ -1,22 +1,14 @@
 import { safeStorage } from "electron";
-import fs from "node:fs";
-import path from "node:path";
 import {
   clipboardSettingsFields,
   noteSettingsFields,
-  searchSettingsFields,
   translationSettingsFields,
 } from "../../src/features/plugins/settingsFields.js";
 import type { AppConfig } from "../../src/features/settings/types.js";
-import { atomicWrite } from "../persistence.js";
 import {
   ClipboardHistory,
   settingsSchema as clipboardSettingsSchema,
 } from "../plugins/official/clipboard-history.js";
-import {
-  settingsSchema as searchSettingsSchema,
-  validateSettings as validateSearchSettings,
-} from "../plugins/official/search-settings.js";
 import { PluginSettingsService, type PluginSettingsAdapter } from "../plugins/settings.js";
 import { writeTranslationSettings } from "../plugins/translation-settings.js";
 import type { RuntimeContext } from "../runtime.js";
@@ -66,29 +58,6 @@ export function createPluginSettings(
               return safeStorage.encryptString(key);
             }),
         };
-      if (id === "spark233.search") {
-        const file = path.join(directory, "search-scope.json");
-        return {
-          fields: searchSettingsFields,
-          read: () =>
-            fs.existsSync(file)
-              ? validateSearchSettings(JSON.parse(fs.readFileSync(file, "utf8")))
-              : searchSettingsSchema.parse({ excludedRoots: [] }),
-          save: async (values) => {
-            const next = validateSearchSettings(values);
-            const active =
-              manager.list().find((plugin) => plugin.pluginId === id)?.status === "active";
-            if (active)
-              await manager.activate(id, {
-                commandId: "settings",
-                parameters: { action: "save", ...next },
-              });
-            else atomicWrite(file, JSON.stringify(next));
-            ctx.launcher.clear();
-            ctx.emit("search-scope-changed");
-          },
-        };
-      }
       if (id === "spark233.clipboard") {
         const withHistory = <T>(action: (history: ClipboardHistory) => T): T => {
           const history = new ClipboardHistory(directory);

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "everything": {
+    "version": "1.5.0.1424b",
+    "url": "https://www.voidtools.com/Everything-1.5.0.1424b.x64.zip",
+    "sha256": "f8e5d907305fc1aff288ad4d722548f36a1ef8c3389933b1fbc935dba7083084",
+    "sha256List": "https://www.voidtools.com/Everything-1.5.0.1424b.sha256",
+    "license": "https://www.voidtools.com/License.txt",
+    "signer": "voidtools PTY LTD (DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1)",
+    "files": [
+      {
+        "name": "Everything.exe",
+        "bytes": 5146280,
+        "sha256": "4c994da9c376ce264fb4f0b8a46d76abad3ce160d0cb8aa85883867ebc725fd4"
+      },
+      {
+        "name": "Everything.lng",
+        "bytes": 1391818,
+        "sha256": "da38bf5f82126a6f56724e7a7d25735773dc860f93ac41e5a2a299950951e5f3"
+      }
+    ]
+  },
+  "sdk3": {
+    "repository": "https://github.com/voidtools/everything_sdk3",
+    "archive": "https://github.com/voidtools/everything_sdk3/archive/refs/heads/master.zip",
+    "archiveSha256": "f7322b9568d035aa708ae5a49a023c2ebffd709dc68cbc6a11fc738867a84d6e",
+    "version": "3.0.1.12",
+    "license": "MIT",
+    "use": "Named-pipe framing ported to apps/desktop/electron/plugins/official/everything-ipc.ts; nothing from the archive is built or shipped."
+  }
+}

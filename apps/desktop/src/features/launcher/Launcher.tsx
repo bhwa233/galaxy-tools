@@ -84,7 +84,6 @@ const itemKey = (item: LauncherItem) => JSON.stringify([item.pluginId, item.id])
  * navigation. The frontend owns only input, mode and request-session state. */
 export function Launcher() {
   const { t, i18n } = useTranslation();
-  const { t: searchText } = useTranslation("search");
   const [state, setState] = useState<LauncherState>();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<{ key: string; title: string }>();
@@ -1122,11 +1121,11 @@ export function Launcher() {
                       .catch((value) => setError(message(value)));
                   }}
                 >
-                  {directory ?? searchText("chooseDirectory")}
+                  {directory ?? t("launcher.chooseDirectory")}
                 </Button>
                 {directory && (
                   <Button size="sm" variant="ghost" onClick={() => setDirectory(undefined)}>
-                    {searchText("allDirectories")}
+                    {t("launcher.allDirectories")}
                   </Button>
                 )}
               </>

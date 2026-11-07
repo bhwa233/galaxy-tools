@@ -1,7 +1,6 @@
 import { showToast } from "../../components/Toast";
 import { PluginIcon } from "./PluginIcon";
 import { PluginShortcuts } from "./PluginShortcuts";
-import { SearchServicePanel } from "../search/SearchServicePanel";
 import { PluginConfiguration } from "./PluginConfiguration";
 import { ApplicationsDialog } from "../applications/ApplicationsDialog";
 import { prepareHostWindow } from "../windows/hostPreparation";
@@ -1451,10 +1450,6 @@ export function PluginManagementDialog({
                               )}
                             </div>
                           )}
-                          {mode === "configuration" &&
-                            detailTab === "functions" &&
-                            plugin.pluginId === "spark233.search" &&
-                            plugin.enabled && <SearchServicePanel settingsFooter />}
                           {mode === "configuration" && detailTab === "functions" && (
                             <div className="flex flex-wrap gap-2">
                               {plugin.commands

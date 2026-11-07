@@ -1,11 +1,10 @@
+# Exports the pinned, spark233-namespaced Pulse source that the application
+# pinyin matcher (native/applications) compiles against. The Pulse file search
+# backend itself was replaced by Everything; only this source preparation stays.
 [CmdletBinding()]
 param(
     [string]$SourceRepository,
-    [string]$BuildRoot,
-    [string]$ToolchainSetup,
-    [string]$CMakeExecutable,
-    [string]$NinjaExecutable,
-    [switch]$PrepareOnly
+    [string]$BuildRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -267,62 +266,4 @@ DWORD Stable(HANDLE file, const std::wstring& path, const BY_HANDLE_FILE_INFORMA
     $manifest.adaptation = 8
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
-if ($PrepareOnly) { Write-Output "Prepared pinned, namespaced source: $sourceRoot"; return }
-
-$portableTools = Join-Path $env:LOCALAPPDATA 'spark233/toolchains'
-if (-not $ToolchainSetup) {
-    $portableSetup = Join-Path $portableTools 'vs2026/msvc/setup_x64.bat'
-    if (Test-Path -LiteralPath $portableSetup) { $ToolchainSetup = $portableSetup }
-}
-if ($ToolchainSetup) {
-    $ToolchainSetup = [IO.Path]::GetFullPath($ToolchainSetup)
-    if ($ToolchainSetup.Contains('"')) { throw 'Invalid toolchain setup path' }
-    $environment = & $env:ComSpec /d /s /c "`"`"$ToolchainSetup`" >nul && set`""
-    if ($LASTEXITCODE -ne 0) { throw 'Portable MSVC environment setup failed' }
-    foreach ($line in $environment) {
-        if ($line -match '^([^=]+)=(.*)$' -and $Matches[1] -notin 'HOME', 'CODEX_HOME') {
-            [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
-        }
-    }
-} elseif (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-    $vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    if (-not $vsPath) { throw 'MSVC x64 compiler is missing. Prepare the agreed C++ toolchain first.' }
-    Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
-    Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
-}
-if (-not $CMakeExecutable) {
-    $portableCmake = Join-Path $portableTools 'cmake-4.4.4-windows-x86_64/bin/cmake.exe'
-    $CMakeExecutable = if (Test-Path -LiteralPath $portableCmake) { $portableCmake } else { (Get-Command cmake -ErrorAction Stop).Source }
-}
-if (-not $NinjaExecutable) {
-    $portableNinja = Join-Path $portableTools 'ninja-1.13.2/ninja.exe'
-    $NinjaExecutable = if (Test-Path -LiteralPath $portableNinja) { $portableNinja } else { (Get-Command ninja -ErrorAction Stop).Source }
-}
-$binaryRoot = Join-Path $BuildRoot 'build'
-& $CMakeExecutable -S (Join-Path $repoRoot 'packages/official/search/native-src') -B $binaryRoot -G Ninja "-DCMAKE_MAKE_PROGRAM=$NinjaExecutable" "-DSPARK233_PULSE_SOURCE=$($sourceRoot.Replace('\', '/'))" -DCMAKE_BUILD_TYPE=Release
-if ($LASTEXITCODE -ne 0) { throw 'Search configure failed' }
-& $CMakeExecutable --build $binaryRoot --target spark233_search spark233_search_probe pulse_index_caller_filter_test --parallel 4
-if ($LASTEXITCODE -ne 0) { throw 'Search build failed' }
-$packageRoot = Join-Path $repoRoot 'packages/official/search'
-$payloadRoot = Join-Path $packageRoot 'native'
-New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
-foreach ($name in @('spark233.Search.exe', 'spark233.Index.exe', 'spark233.Document.exe', 'pdfium.dll')) {
-    Copy-Item -LiteralPath (Join-Path $binaryRoot "bin/$name") -Destination $payloadRoot -Force
-}
-Copy-Item -LiteralPath (Join-Path $binaryRoot 'bin/licenses') -Destination $packageRoot -Recurse -Force
-Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $packageRoot 'licenses/Pulse/source-manifest.json') -Force
-$resourceFiles = foreach ($name in @('spark233.Search.exe', 'spark233.Index.exe', 'spark233.Document.exe', 'pdfium.dll')) {
-    $resourcePath = Join-Path $payloadRoot $name
-    @{ name = $name; bytes = (Get-Item -LiteralPath $resourcePath).Length; sha256 = (Get-FileHash -LiteralPath $resourcePath -Algorithm SHA256).Hash.ToLowerInvariant() }
-}
-$sourceHashes = @{}
-foreach ($relative in @('packages/official/search/native-src/search.cpp', 'packages/official/search/native-src/CMakeLists.txt', 'scripts/native-search/build.ps1')) {
-    $sourceHashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $repoRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
-}
-# Windows PowerShell 5.1 writes a BOM for -Encoding utf8, and the packager's
-# JSON.parse rejects it, so publish the manifest explicitly without one.
-$resourcesJson = @{ protocol = 1; files = @($resourceFiles); inputs = $sourceHashes; upstream = @{ commit = $commit; archiveSha256 = $manifest.archiveSha256; adaptation = $manifest.adaptation } } |
-    ConvertTo-Json -Depth 6
-[IO.File]::WriteAllText((Join-Path $payloadRoot 'resources.json'), $resourcesJson, [Text.UTF8Encoding]::new($false))
-Write-Output "Built isolated search tools in $(Join-Path $binaryRoot 'bin')"
+Write-Output "Prepared pinned, namespaced source: $sourceRoot"
