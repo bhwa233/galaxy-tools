@@ -77,7 +77,7 @@ export class Capsules {
   private previewAnchor?: Rect;
   private previewEdge?: Edge;
   private leaveSince = 0;
-  private ticker: ReturnType<typeof setInterval>;
+  private ticker?: ReturnType<typeof setInterval>;
   private drag?: Drag;
   private suppressed: Rect[] = [];
   private hidden = false;
@@ -99,7 +99,6 @@ export class Capsules {
     return operation;
   }
   constructor(private options: Options) {
-    this.ticker = setInterval(() => this.tick(), 60);
     this.releaseEnvironment = LayerWindow.observeEnvironment({
       screen,
       powerMonitor,
@@ -772,11 +771,21 @@ export class Capsules {
       imageDisplay: this.options.getConfig().imageDisplay,
     });
     this.previewId = id;
+    this.wake();
     this.previewAnchor = anchor;
     this.previewEdge = edge;
     this.leaveSince = 0;
   }
+  /** The cursor poll only runs while a drag, hover or preview needs it. */
+  private wake() {
+    this.ticker ??= setInterval(() => this.tick(), 60);
+  }
   private tick() {
+    if (!this.drag && !this.hover && !this.previewId) {
+      clearInterval(this.ticker);
+      this.ticker = undefined;
+      return;
+    }
     if (this.drag) {
       const owner = BrowserWindow.fromId(this.drag.owner);
       if (
@@ -834,6 +843,7 @@ export class Capsules {
         : 0,
       timer,
     };
+    this.wake();
     this.hidePreview();
   }
   private moveDrag() {
@@ -1119,6 +1129,7 @@ export class Capsules {
           owner: win.id,
           due: Date.now() + (this.previewId ? 30 : 220),
         };
+        this.wake();
         return;
       }
       case "capsule_hide": {

@@ -40,11 +40,24 @@ import {
   type WidgetLayoutCard,
   type LayerQuotaCard,
 } from "../layer-layout-store.js";
-import { AppError, confined, inside } from "../persistence.js";
+import { AppError, confined } from "../persistence.js";
 import type { DesktopPluginHost } from "./desktop-host.js";
 import { samePluginOwner } from "./resources.js";
 import type { ResolvedWidgetEntry } from "./manifest.js";
 import { WidgetOpenMainGate } from "./widget-open-main.js";
+import { resolvePackageFile } from "./package-files.js";
+const WIDGET_FILE_EXTENSIONS = [
+  ".html",
+  ".js",
+  ".mjs",
+  ".css",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".woff",
+  ".woff2",
+] as const;
 
 export const widgetScheme: CustomScheme = {
   scheme: "spark233-widget",
@@ -2162,42 +2175,23 @@ export class WidgetHost {
         )
           throw new Error("Forbidden");
         let file: string;
-        if (u.pathname === "/__sdk__/widget.js")
+        let contentType: string;
+        if (u.pathname === "/__sdk__/widget.js") {
           file = fileURLToPath(new URL("./widget.js", import.meta.resolve("@spark233/sdk")));
-        else {
-          const rel = decodeURIComponent(u.pathname).slice(1);
-          if (
-            !rel ||
-            rel.includes("\\") ||
-            rel.split("/").some((p) => !p || p === "." || p === ".." || p.includes("%"))
-          )
-            throw new Error("Forbidden");
-          file = confined(record.entry.root, rel);
-          if (!inside(fs.realpathSync(record.entry.root), fs.realpathSync(file)))
-            throw new Error("Forbidden");
+          contentType = mime[".js"]!;
+        } else {
+          const resolved = resolvePackageFile(record.entry.root, u.pathname, {
+            extensions: WIDGET_FILE_EXTENSIONS,
+            maxBytes: (extension) => (extension === ".html" ? 256 * 1024 : 2 * 1024 * 1024),
+            rejectPercent: true,
+          });
+          if (!resolved) throw new Error("Forbidden");
+          ({ file, mime: contentType } = resolved);
         }
-        const ext = path.extname(file).toLowerCase();
-        if (
-          ![
-            ".html",
-            ".js",
-            ".mjs",
-            ".css",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".woff",
-            ".woff2",
-          ].includes(ext) ||
-          !fs.statSync(file).isFile() ||
-          fs.statSync(file).size > (ext === ".html" ? 256 * 1024 : 2 * 1024 * 1024)
-        )
-          throw new Error("Forbidden");
         const src = "spark233-widget://" + record.hostname;
         return new Response(new Uint8Array(fs.readFileSync(file)), {
           headers: {
-            "Content-Type": mime[ext],
+            "Content-Type": contentType,
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",

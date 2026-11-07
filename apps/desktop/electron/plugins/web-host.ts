@@ -14,7 +14,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
-  isPluginPackagePath,
   localizePluginManifest,
   pluginCapabilitySchema,
   type JsonValue,
@@ -32,6 +31,7 @@ import { atomicWrite, canonical, confined, inside } from "../persistence.js";
 import { bindDevToolsShortcut } from "../host/windows.js";
 import { PluginResourceScope, type StopDecision } from "./resources.js";
 import { PendingRequests } from "./pending-requests.js";
+import { PACKAGE_MIME, resolvePackageFile } from "./package-files.js";
 
 const SCHEME = "spark233-plugin";
 const CHANNEL = "spark233:plugin-web:invoke";
@@ -132,22 +132,6 @@ const launcherPage = z.object({
     .max(100),
   hint: z.string().max(4000).optional(),
 });
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-};
 const CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -532,13 +516,12 @@ class WebRuntime implements WebPluginController {
             url.password
           )
             return new Response("Forbidden", { status: 403 });
-          const relative = decodeURIComponent(url.pathname).slice(1);
-          if (!isPluginPackagePath(relative)) return new Response("Forbidden", { status: 403 });
-          const file = confined(this.root, relative);
-          if (!fs.statSync(file).isFile() || fs.statSync(file).size > 32 * 1024 * 1024)
-            return new Response("Not found", { status: 404 });
-          const mime = MIME[path.extname(file).toLowerCase()];
-          if (!mime) return new Response("Unsupported resource", { status: 415 });
+          const resolved = resolvePackageFile(this.root, url.pathname, {
+            extensions: Object.keys(PACKAGE_MIME).filter((extension) => extension !== ".ico"),
+            maxBytes: () => 32 * 1024 * 1024,
+          });
+          if (!resolved) return new Response("Not found", { status: 404 });
+          const { file, mime } = resolved;
           return new Response(new Uint8Array(fs.readFileSync(file)), {
             headers: {
               "Content-Type": mime,
