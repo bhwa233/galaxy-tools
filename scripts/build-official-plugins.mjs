@@ -582,15 +582,24 @@ async function packageFingerprint(packageRoot, metadata) {
   }
   const inputs = releaseConfig.independent[metadata.spark233.id]?.nativeInputs ?? [];
   if (inputs.length) {
-    const listed = execFileSync(
+    // Tracked files, hashed as they are in the working tree. git applies the
+    // repository's line-ending rules, so Windows and CI checkouts agree.
+    const files = execFileSync(
       "git",
-      ["ls-files", "-s", "--", ...inputs.map((pattern) => `:(glob)${pattern}`)],
+      ["ls-files", "--", ...inputs.map((pattern) => `:(glob)${pattern}`)],
       { cwd: project, encoding: "utf8", windowsHide: true },
-    );
-    for (const line of listed.split("\n").filter(Boolean)) {
-      const [stage, file] = line.split("\t");
-      lines.push(`native ${file} ${stage.split(" ")[1]}`);
-    }
+    )
+      .split("\n")
+      .filter(Boolean);
+    const blobs = execFileSync("git", ["hash-object", "--stdin-paths"], {
+      cwd: project,
+      encoding: "utf8",
+      input: files.join("\n"),
+      windowsHide: true,
+    })
+      .split("\n")
+      .filter(Boolean);
+    files.forEach((file, index) => lines.push(`native ${file} ${blobs[index]}`));
   }
   return `sha256-${sha256(lines.sort().join("\n"))}`;
 }

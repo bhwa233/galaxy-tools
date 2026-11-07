@@ -16,7 +16,17 @@ const name = "spark233.ApplicationMatcher.exe",
 if (content.toString("ascii", 0, 2) !== "MZ")
   throw new Error("Application matcher is not a Windows executable");
 fs.writeFileSync(path.join(target, name), content);
-fs.cpSync(path.join(source, "licenses"), path.join(packageRoot, "licenses"), { recursive: true });
+// The native build writes these with CRLF and a BOM; the committed copies use
+// LF. Normalize so the packaged files (and the release fingerprint) do not
+// depend on where the matcher was built.
+for (const entry of fs.readdirSync(path.join(source, "licenses"), { withFileTypes: true })) {
+  if (!entry.isFile()) continue;
+  const text = fs
+    .readFileSync(path.join(source, "licenses", entry.name), "utf8")
+    .replace(/^\uFEFF/, "")
+    .replaceAll("\r\n", "\n");
+  fs.writeFileSync(path.join(packageRoot, "licenses", entry.name), text);
+}
 const inputs = [
   "native/applications/matcher.cpp",
   "native/applications/CMakeLists.txt",
