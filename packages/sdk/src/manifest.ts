@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { isWidgetRankRows } from "./widget.js";
 
-export const HOST_API_VERSION = "1.6.0";
+export const HOST_API_VERSION = "1.7.0";
 export const THEME_API_VERSION = "1.0.0";
 
 // Reuse Zod already present in the toolchain for one shared runtime/type schema;
@@ -116,6 +116,12 @@ export const launcherPresentationSchema = z.strictObject({
   withInput: z.boolean().optional(),
   input: z.enum(["query", "context"]).optional(),
   preferSentence: z.boolean().optional(),
+  /** Host API 1.7: results this command's search provider contributes per query. */
+  quota: z.number().int().min(1).max(100).optional(),
+  /** Host API 1.7: query this provider without the typing debounce (cheap, local). */
+  immediate: z.boolean().optional(),
+  /** Host API 1.7: keep this command listed beyond the launcher's per-query cutoff. */
+  alwaysListed: z.boolean().optional(),
 });
 const commandSchema = z.strictObject({
   id: localId,

@@ -21,6 +21,14 @@ import {
   normalizeLearningKeyword,
   type LauncherPreferenceTarget,
 } from "./launcher-preferences.js";
+
+/**
+ * The applications plugin is the host's application inventory: pinned and
+ * learned application targets resolve through it. That is a host role bound to
+ * the reserved official identity, not something another plugin can declare.
+ * Presentation budgets (quota, debounce, always listed) are manifest fields.
+ */
+const APPLICATION_INVENTORY = "spark233.applications";
 import { literalCommandScore, type CommandPinyinMatcher } from "./launcher-command-matcher.js";
 
 const querySchema = z.strictObject({
@@ -378,7 +386,7 @@ export class LauncherController {
     if (!record) return;
     if (
       record.packageName === "@spark233/plugin-applications" &&
-      action.pluginId === "spark233.applications" &&
+      action.pluginId === APPLICATION_INVENTORY &&
       action.activation.commandId === "launch"
     ) {
       const parameters = action.activation.parameters;
@@ -460,7 +468,7 @@ export class LauncherController {
       this.options
         .manager()
         ?.list()
-        .find((entry) => entry.pluginId === "spark233.applications")?.packageName !==
+        .find((entry) => entry.pluginId === APPLICATION_INVENTORY)?.packageName !==
       "@spark233/plugin-applications"
     )
       return [];
@@ -1020,7 +1028,7 @@ export class LauncherController {
       if (
         !directory &&
         !inputContext &&
-        entry.pluginId === "spark233.applications" &&
+        entry.pluginId === APPLICATION_INVENTORY &&
         entry.command.id === "search"
       )
         session.learningKeyword = normalizeLearningKeyword(query);
@@ -1043,7 +1051,7 @@ export class LauncherController {
         controller,
         group: session.groups[0],
       });
-      if (query.trim() && entry.pluginId !== "spark233.applications")
+      if (query.trim() && !entry.command.launcher?.immediate)
         await delay(100, undefined, { signal });
       const { value, owner } = await manager.queryOwned(
         entry.pluginId,
@@ -1055,15 +1063,13 @@ export class LauncherController {
             query,
             mode: entry.command.mode!,
             limit:
-              entry.pluginId === "spark233.applications"
+              entry.pluginId === APPLICATION_INVENTORY
                 ? Math.min(100, Math.max(60, modeApplicationIds.length + 12))
-                : entry.pluginId === "spark233.translation"
-                  ? 5 // Keep dictionary suggestions compact and within its provider budget.
-                  : 60,
+                : (entry.command.launcher?.quota ?? 60),
             callerId,
             requestId: session.requestId,
             locale,
-            ...(entry.pluginId === "spark233.applications" && modeApplicationIds.length
+            ...(entry.pluginId === APPLICATION_INVENTORY && modeApplicationIds.length
               ? { includeIds: modeApplicationIds }
               : {}),
             ...(directory ? { directory } : {}),
@@ -1089,7 +1095,7 @@ export class LauncherController {
           hint: page.hint,
           instructions: page.instructions,
           items:
-            entry.pluginId === "spark233.applications"
+            entry.pluginId === APPLICATION_INVENTORY
               ? this.rankApplications(
                   session,
                   query,
@@ -1277,7 +1283,7 @@ export class LauncherController {
             (entry, index) =>
               index < (needle ? 40 : 40 + pinned.length) ||
               (entry.pluginId === "spark233.search" && entry.command.id === "open-search") ||
-              (entry.pluginId === "spark233.translation" && entry.command.id === "lookup") ||
+              !!entry.command.launcher?.alwaysListed ||
               (!needle &&
                 pinnedKeys.has(
                   launcherTargetKey(this.commandTarget(entry.pluginId, entry.command.id)!),
@@ -1374,13 +1380,13 @@ export class LauncherController {
         (command.launcher?.role !== "hidden" || command.compatibilityQuery === "utools") &&
         (needle ||
           (command.compatibilityQuery === "utools" && inputContext) ||
-          (pluginId === "spark233.applications" &&
+          (pluginId === APPLICATION_INVENTORY &&
             command.id === "search" &&
             applicationIds.length)) &&
         (command.search === "default" || (command.search === "word" && localWord.test(needle))),
     )) {
       const id = JSON.stringify([entry.pluginId, entry.command.id]);
-      const resolvingPins = !needle && entry.pluginId === "spark233.applications" && !!pinnedGroup;
+      const resolvingPins = !needle && entry.pluginId === APPLICATION_INVENTORY && !!pinnedGroup;
       const group: LauncherResultGroup = resolvingPins
         ? pinnedGroup!
         : {
@@ -1402,14 +1408,12 @@ export class LauncherController {
       session.providers.set(id, provider);
       const providerLimit = resolvingPins
         ? 100
-        : entry.pluginId === "spark233.applications" && applicationIds.length
+        : entry.pluginId === APPLICATION_INVENTORY && applicationIds.length
           ? Math.min(100, Math.max(12, applicationIds.length + 12))
-          : entry.pluginId === "spark233.translation"
-            ? 5
-            : 12;
+          : (entry.command.launcher?.quota ?? 12);
       const signal = AbortSignal.any([session.controller.signal, provider.controller.signal]);
       const providerReady =
-        needle && entry.pluginId !== "spark233.applications"
+        needle && !entry.command.launcher?.immediate
           ? delay(100, undefined, { signal })
           : Promise.resolve();
       void providerReady
@@ -1426,7 +1430,7 @@ export class LauncherController {
                 callerId,
                 requestId: session.requestId,
                 locale,
-                ...(entry.pluginId === "spark233.applications" &&
+                ...(entry.pluginId === APPLICATION_INVENTORY &&
                 entry.command.id === "search" &&
                 applicationIds.length
                   ? { includeIds: applicationIds, ...(resolvingPins ? { onlyIds: true } : {}) }
@@ -1455,12 +1459,12 @@ export class LauncherController {
             return;
           const page = pageSchema.parse(value);
           const items = this.pageItems(session, entry.pluginId, owner, page, provider.installation);
-          if (entry.pluginId === "spark233.applications" && entry.command.id === "search") {
+          if (entry.pluginId === APPLICATION_INVENTORY && entry.command.id === "search") {
             for (const applicationId of applicationIds) {
               const target: LauncherPreferenceTarget = {
                 kind: "application",
                 packageName: "@spark233/plugin-applications",
-                pluginId: "spark233.applications",
+                pluginId: APPLICATION_INVENTORY,
                 applicationId,
               };
               const key = launcherTargetKey(target);
@@ -1479,7 +1483,7 @@ export class LauncherController {
           if (resolvingPins) refreshPins();
           else
             group.items =
-              entry.pluginId === "spark233.applications"
+              entry.pluginId === APPLICATION_INVENTORY
                 ? this.rankApplications(session, query, items)
                 : items;
           group.status = "ready";
@@ -1533,10 +1537,7 @@ export class LauncherController {
         context: this.providerContext(callerId, input.pluginId, command!.command.id),
       },
     };
-    if (
-      selected.owner &&
-      ["spark233.search", "spark233.applications"].includes(selected.pluginId)
-    ) {
+    if (selected.owner && ["spark233.search", APPLICATION_INVENTORY].includes(selected.pluginId)) {
       const parameters = selected.activation.parameters;
       if (parameters && typeof parameters === "object" && !Array.isArray(parameters))
         selected.activation = { ...selected.activation, parameters: { ...parameters, callerId } };

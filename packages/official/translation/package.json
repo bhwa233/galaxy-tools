@@ -35,7 +35,7 @@
     "schemaVersion": 1,
     "id": "spark233.translation",
     "displayName": "词典与翻译",
-    "api": "^1.0.0",
+    "api": "^1.7.0",
     "host": ">=0.0.1 <1",
     "platforms": [
       "win32"
@@ -99,7 +99,8 @@
         },
         "launcher": {
           "role": "action",
-          "input": "query"
+          "input": "query",
+          "alwaysListed": true
         },
         "window": "main"
       },
@@ -119,7 +120,8 @@
           }
         },
         "launcher": {
-          "role": "hidden"
+          "role": "hidden",
+          "quota": 5
         },
         "window": "main"
       },

@@ -28,7 +28,7 @@
     "schemaVersion": 1,
     "id": "spark233.applications",
     "displayName": "应用搜索",
-    "api": "^1.0.0",
+    "api": "^1.7.0",
     "host": ">=0.0.1 <1",
     "platforms": [
       "win32"
@@ -124,7 +124,8 @@
           }
         },
         "launcher": {
-          "role": "keyword-only"
+          "role": "keyword-only",
+          "immediate": true
         }
       },
       {

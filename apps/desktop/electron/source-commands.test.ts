@@ -486,7 +486,13 @@ describe("source application command authority", () => {
     const dictionary = await fixture({
       pluginId: "spark233.translation",
       commands: [
-        { id: "search", title: "Local dictionary", mode: "dictionary", search: "word" },
+        {
+          id: "search",
+          title: "Local dictionary",
+          mode: "dictionary",
+          search: "word",
+          launcher: { role: "hidden", quota: 5 },
+        },
         { id: "word", title: "Dictionary detail" },
         { id: "excel", title: "Other dictionary action" },
       ],
