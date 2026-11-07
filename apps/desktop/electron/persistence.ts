@@ -21,10 +21,25 @@ export function atomicWrite(file: string, value: string | Uint8Array): void {
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;
-    fs.renameSync(temp, file);
+    renameWithRetry(temp, file);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     if (fs.existsSync(temp)) fs.unlinkSync(temp);
+  }
+}
+/** Windows refuses to replace a file that Defender, the search indexer or a
+ * backup tool holds open for a moment. Retry briefly instead of failing the save. */
+function renameWithRetry(from: string, to: string): void {
+  const transient = new Set(["EPERM", "EBUSY", "EACCES"]);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (process.platform !== "win32" || !transient.has(code) || attempt >= 4) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10 * 2 ** attempt);
+    }
   }
 }
 export function readJson<T>(file: string): T {

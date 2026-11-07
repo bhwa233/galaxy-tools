@@ -112,6 +112,8 @@ export function overlayPanelKey(card: LayerCard): string {
 // stores game-bar placement and explicit presentation choices, never note data.
 export class DesktopOverlayLayout {
   readError?: string;
+  /** Keys of cards that currently exist; set by the desktop layer for pruning. */
+  liveKeys?: () => ReadonlySet<string>;
   private value: z.infer<typeof layoutSchema> = { version: 1, panels: {} };
   constructor(private readonly filename?: string) {
     if (!filename || !fs.existsSync(filename)) return;
@@ -128,11 +130,20 @@ export class DesktopOverlayLayout {
   update(id: string, patch: Partial<z.infer<typeof panelSchema>>) {
     if (this.readError) throw new Error(this.readError);
     const previous = this.value.panels[id] ?? { selected: true, positions: {} };
-    const next = layoutSchema.parse({
-      ...this.value,
-      panels: { ...this.value.panels, [id]: { ...previous, ...patch } },
-    });
-    const serialized = JSON.stringify(next, null, 2);
+    let panels = { ...this.value.panels, [id]: { ...previous, ...patch } };
+    let serialized = JSON.stringify({ ...this.value, panels }, null, 2);
+    // Panels are keyed per card and were never removed, so the file eventually
+    // hit its limits and every drag failed. Near a limit, drop cards that no
+    // longer exist. Cards absent only briefly (startup) keep their place until then.
+    if (Object.keys(panels).length > 384 || Buffer.byteLength(serialized) > 192 * 1024) {
+      const live = this.liveKeys?.();
+      if (live)
+        panels = Object.fromEntries(
+          Object.entries(panels).filter(([key]) => key === id || live.has(key)),
+        );
+      serialized = JSON.stringify({ ...this.value, panels }, null, 2);
+    }
+    const next = layoutSchema.parse({ ...this.value, panels });
     if (Buffer.byteLength(serialized) > 256 * 1024) throw new Error("桌面插件栏布局超过大小限制");
     if (this.filename) atomicWrite(this.filename, serialized);
     this.value = next;

@@ -209,10 +209,24 @@ export class DesktopLayer {
 
   constructor(readonly options: DesktopLayerOptions) {
     this.overlayLayout = options.overlayLayout ?? new DesktopOverlayLayout();
+    this.overlayLayout.liveKeys = () =>
+      new Set([...this.cards.values()].map((card) => overlayPanelKey(card)));
     this.releaseStore = options.store.subscribe(() => this.refresh());
+    let lastTick = Date.now();
     this.monitor = setInterval(() => {
+      const now = Date.now();
+      // Sleep, lock or a throttled main process delays this timer itself; judge
+      // nothing on that tick, otherwise every surface looks stale at once.
+      const stalled = now - lastTick > 3000;
+      lastTick = now;
       for (const surface of this.surfaces.values()) {
-        if (surface.window.win.isVisible() && Date.now() - surface.lastBeat > 7000)
+        // Hidden surfaces are throttled by Chromium and are not judged; restart
+        // their grace window so showing them again does not trigger a recovery.
+        if (stalled || !surface.window.win.isVisible()) {
+          surface.lastBeat = now;
+          continue;
+        }
+        if (now - surface.lastBeat > 7000)
           this.recover(
             surface.id,
             "heartbeat-timeout",

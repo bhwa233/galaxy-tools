@@ -341,7 +341,15 @@ export function createDesktopWindows(
   function createWindow(layout: Layout): BrowserWindow {
     const presentation = ctx.launcherPresentationGuard();
     if (!presentation()) throw new AppError("cancelled", "面板操作已失效");
-    const existing = ctx.windows.get(layout.label);
+    let existing = ctx.windows.get(layout.label);
+    // A crashed renderer cannot paint or answer IPC. Reusing it showed a dead
+    // window on every hotkey; replace it so the next open gets a fresh renderer.
+    if (existing && !existing.isDestroyed() && ctx.crashedWindows.has(existing.id)) {
+      ctx.crashedWindows.delete(existing.id);
+      existing.destroy();
+      ctx.windows.delete(layout.label);
+      existing = undefined;
+    }
     if (existing && !existing.isDestroyed()) {
       applyWindowPresentation(existing, layout);
       ctx.windowPresentations.set(existing, presentation);

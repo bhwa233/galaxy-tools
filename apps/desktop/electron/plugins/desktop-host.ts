@@ -1,4 +1,4 @@
-import { dialog, type BrowserWindow } from "electron";
+import { app, dialog, type BrowserWindow } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -741,11 +741,45 @@ export class DesktopPluginHost {
         Object.keys(metadata.spark233.native).length > 0,
     });
   }
+  /**
+   * Official identities carry privileged host adapters and official data. Only the
+   * bundled package, the update source it declares, or a development directory
+   * import may claim them; a local archive or custom registry cannot.
+   */
+  private assertOfficialIdentity(staged: StagedPluginPackage): void {
+    const id = staged.metadata.spark233.id;
+    const name = staged.metadata.name;
+    if (!id.startsWith("spark233.") && !name.startsWith("@spark233/")) return;
+    const entry = this.bundledCatalog.get(id);
+    const normalized = (value: string) => {
+      try {
+        const url = new URL(value);
+        url.pathname = url.pathname.replace(/\/?$/, "/");
+        return url.href;
+      } catch {
+        return value;
+      }
+    };
+    const bundled = !!entry && entry.name === name && entry.integrity === staged.integrity;
+    const officialRegistry =
+      !!entry?.updateSource &&
+      entry.name === name &&
+      staged.source.kind === "registry" &&
+      !!staged.source.registry &&
+      normalized(staged.source.registry) === normalized(entry.updateSource.registry);
+    const development = !app.isPackaged && staged.source.kind === "directory";
+    if (!bundled && !officialRegistry && !development)
+      throw new AppError(
+        "pluginIdentityMismatch",
+        "spark233 官方插件身份只能来自内置包或官方更新源",
+      );
+  }
   private addPreview(
     staged: StagedPluginPackage,
     updateFrom?: PendingPackage["updateFrom"],
     expectAbsent?: true,
   ): InstallPreview {
+    this.assertOfficialIdentity(staged);
     const record = {
       previewId: randomUUID(),
       createdAt: Date.now(),

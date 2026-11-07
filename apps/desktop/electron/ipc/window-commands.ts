@@ -1,3 +1,4 @@
+import { screen } from "electron";
 import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
 import { text } from "./arguments.js";
@@ -79,6 +80,8 @@ export function createWindowCommands(
             return;
           case "focus":
             if (!(ctx.windowPresentations.get(win)?.() ?? true)) return;
+            // A hidden window must not pull itself forward; showing goes through "show".
+            if (!win.isVisible()) return;
             win.focus();
             return;
           case "hide":
@@ -134,21 +137,29 @@ export function createWindowCommands(
           case "setPosition":
           case "setSize":
           case "setBounds": {
-            const current = win.getBounds();
-            const value = args.value;
+            const value: unknown = args.value;
+            if (!value || typeof value !== "object" || Array.isArray(value))
+              throw new AppError("invalidPayload", "窗口尺寸不合法");
             const entries = Object.entries(value);
             if (
+              !entries.length ||
               entries.some(
-                ([, dimension]) => !Number.isFinite(dimension) || Math.abs(dimension) > 100000,
+                ([key, dimension]) =>
+                  !["x", "y", "width", "height"].includes(key) ||
+                  typeof dimension !== "number" ||
+                  !Number.isFinite(dimension) ||
+                  Math.abs(dimension) > 100000,
               )
             )
               throw new AppError("invalidPayload", "窗口尺寸不合法");
-            win.setBounds({
-              ...current,
-              ...Object.fromEntries(
-                entries.map(([key, dimension]) => [key, Math.round(dimension)]),
-              ),
-            });
+            win.setBounds(
+              keepOnScreen({
+                ...win.getBounds(),
+                ...Object.fromEntries(
+                  entries.map(([key, dimension]) => [key, Math.round(dimension as number)]),
+                ),
+              }),
+            );
             ctx.remember(win);
             return;
           }
@@ -164,4 +175,29 @@ export function createWindowCommands(
     surface_state: run,
     window_control: run,
   } satisfies Record<string, CommandHandler>;
+}
+
+/** Keep a renderer-requested rectangle usable: no larger than its display and
+ * with at least a grab margin on some display, so it cannot cover or vanish. */
+function keepOnScreen(bounds: Electron.Rectangle): Electron.Rectangle {
+  const margin = 32;
+  const area = screen.getDisplayMatching(bounds).bounds;
+  const width = Math.max(1, Math.min(bounds.width, area.width));
+  const height = Math.max(1, Math.min(bounds.height, area.height));
+  const visible = screen
+    .getAllDisplays()
+    .some(
+      ({ bounds: display }) =>
+        bounds.x + width - margin >= display.x &&
+        bounds.x + margin <= display.x + display.width &&
+        bounds.y + height - margin >= display.y &&
+        bounds.y + margin <= display.y + display.height,
+    );
+  if (visible) return { x: bounds.x, y: bounds.y, width, height };
+  return {
+    x: Math.min(Math.max(bounds.x, area.x - width + margin), area.x + area.width - margin),
+    y: Math.min(Math.max(bounds.y, area.y), area.y + area.height - margin),
+    width,
+    height,
+  };
 }

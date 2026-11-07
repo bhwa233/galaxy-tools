@@ -320,10 +320,13 @@ export function createCapabilityBroker(options: {
       if (!target) throw new Error("目标插件命令不可用");
       if (input.text !== undefined && !target.command.inputs.includes("text"))
         throw new Error("目标命令不接受文字");
-      return options.manager().activate(input.pluginId, {
+      const result = await options.manager().activate(input.pluginId, {
         commandId: input.commandId,
         ...(input.text !== undefined ? { context: { kind: "text", text: input.text } } : {}),
       });
+      // Another plugin's activation result may carry that plugin's data. A caller
+      // may trigger a public command, but only reads results of its own commands.
+      return input.pluginId === request.owner.pluginId ? result : undefined;
     }
     throw new Error(`暂不支持此能力操作：${capability}/${operation}`);
   };
