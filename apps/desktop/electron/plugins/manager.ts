@@ -544,11 +544,36 @@ export class PluginManager {
     if (canonical(expected) !== canonical(record.directory))
       throw new AppError("invalidPluginState", "插件代码目录与版本身份不一致");
   }
+  /**
+   * Validated manifest of an installed package. The plugin directory is user
+   * writable, so re-reading it on every dispatch protected against nothing a
+   * same-user process could not do anyway; it only cost synchronous I/O on hot
+   * paths. Results are reused while package.json's identity and timestamps are
+   * unchanged, so an edited or half-written manifest is still caught on next use.
+   */
   private metadata(
     record: PluginInstallation,
     allowIncompatibleHost = false,
   ): PluginPackageMetadata {
     this.assertDirectory(record);
+    const stat = fs.statSync(path.join(record.directory, "package.json"), { bigint: true });
+    const key = JSON.stringify([
+      record.directory,
+      record.packageName,
+      record.version,
+      record.manifestDigest,
+      allowIncompatibleHost,
+      stat.dev.toString(),
+      stat.ino.toString(),
+      stat.size.toString(),
+      stat.mtimeNs.toString(),
+      stat.ctimeNs.toString(),
+    ]);
+    const cached = this.launcherMetadata.get(record.pluginId);
+    if (cached?.key === key) {
+      this.assertGrant(cached.metadata, record.grant);
+      return cached.metadata;
+    }
     const metadata = validatePluginDirectory(
       record.directory,
       this.options.environment,
@@ -562,30 +587,11 @@ export class PluginManager {
     if (this.digest(record.directory) !== record.manifestDigest)
       throw new AppError("pluginChanged", "已安装插件清单发生变化，请重新安装并确认能力");
     this.assertGrant(metadata, record.grant);
-    return metadata;
-  }
-  /** Display-only snapshot. Dispatch and execution always use metadata() directly. */
-  private launcherMetadataFor(record: PluginInstallation): PluginPackageMetadata {
-    const stat = fs.statSync(path.join(record.directory, "package.json"), { bigint: true });
-    const key = JSON.stringify([
-      record.directory,
-      record.packageName,
-      record.version,
-      record.manifestDigest,
-      stat.dev.toString(),
-      stat.ino.toString(),
-      stat.size.toString(),
-      stat.mtimeNs.toString(),
-      stat.ctimeNs.toString(),
-    ]);
-    const cached = this.launcherMetadata.get(record.pluginId);
-    if (cached?.key === key) {
-      this.assertGrant(cached.metadata, record.grant);
-      return cached.metadata;
-    }
-    const metadata = this.metadata(record);
     this.launcherMetadata.set(record.pluginId, { key, metadata });
     return metadata;
+  }
+  private launcherMetadataFor(record: PluginInstallation): PluginPackageMetadata {
+    return this.metadata(record);
   }
   private digest(directory: string): string {
     return createHash("sha256")
