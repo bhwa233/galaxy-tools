@@ -14,6 +14,7 @@ import type {
   LayerRequest,
   LayerSnapshot,
   SurfaceKey,
+  DesktopOverlayLauncher,
   DesktopOverlayPanel,
 } from "../shared/layer-contract.js";
 import { LayerWindow, computeShape, surfaceKey } from "./layer-window.js";
@@ -107,6 +108,10 @@ export interface DesktopLayerOptions {
   onOverlayClosed?: (restoreFocus: boolean) => void | Promise<void>;
   onOverlayOpenPanel?: (card: LayerCard) => Promise<void>;
   onOverlaySettings?: () => void | Promise<void>;
+  /** Plugin windows the plugin bar offers under "Add plugin". */
+  overlayLaunchers?: () => DesktopOverlayLauncher[];
+  onOverlayLaunch?: (pluginId: string, commandId: string) => Promise<void>;
+  onOverlayFavorite?: (pluginId: string, commandId: string, value: boolean) => void;
   onOverlayPresentation?: (
     card: LayerCard,
     patch: { group?: "top" | "normal"; inputMode?: "passive" | "interactive" },
@@ -859,6 +864,9 @@ export class DesktopLayer {
               panels: this.overlayPanels().filter(
                 (p) => id === this.overlay!.id || surface?.cards.some((c) => c.id === p.cardId),
               ),
+              ...(id === this.overlay.id && this.options.overlayLaunchers
+                ? { launchers: this.options.overlayLaunchers() }
+                : {}),
             },
           }
         : {}),
@@ -922,6 +930,24 @@ export class DesktopLayer {
         this.assertOverlaySurface(surface, input.overlayEpoch);
         await this.closeOverlay(false);
         return this.options.onOverlaySettings?.();
+      case "overlay-launch":
+      case "overlay-favorite": {
+        this.assertOverlaySurface(surface, input.overlayEpoch);
+        if (surface.id !== this.overlay!.id)
+          throw new AppError("permissionDenied", "Only the plugin bar can open plugins");
+        // Only entries the host offered can be opened or starred.
+        const entry = this.options
+          .overlayLaunchers?.()
+          .find((item) => item.pluginId === input.pluginId && item.commandId === input.commandId);
+        if (!entry) throw new AppError("pluginDisabled", "插件不可用");
+        if (input.type === "overlay-favorite") {
+          this.options.onOverlayFavorite?.(entry.pluginId, entry.commandId, input.value === true);
+          this.refresh();
+          return;
+        }
+        await this.closeOverlay(false);
+        return this.options.onOverlayLaunch?.(entry.pluginId, entry.commandId);
+      }
       case "overlay-layout": {
         this.assertOverlaySurface(surface, input.overlayEpoch, input.cardId);
         const card = this.cards.get(input.cardId);

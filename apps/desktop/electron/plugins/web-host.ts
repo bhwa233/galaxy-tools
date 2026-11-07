@@ -145,6 +145,8 @@ const CSP =
 const SHELL_CHANNEL = "spark233:plugin-shell";
 /** Height of the host status bar (WindowTitleBar h-12). */
 export const SHELL_BAR_HEIGHT = 48;
+/** Folded status bar of an unfocused desktop card. */
+export const SHELL_STRIP_HEIGHT = 6;
 
 // Reuse Electron sandbox/session/protocol, Zod, and the existing confined/atomic
 // storage primitives. Existing note windows cannot safely own third-party pages.
@@ -164,6 +166,10 @@ class WebRuntime implements WebPluginController {
   private disposed = false;
   private crashed = false;
   private connected = false;
+  /** Host API 1.7 window.status; cleared when the page reloads. */
+  private status: { subtitle?: string; runState?: "unsaved" | "busy" | "error" } = {};
+  private menuOpen = false;
+  private peek?: ReturnType<typeof setInterval>;
   private saveApproved = false;
   private activation?: PluginActivation;
   private activationId?: string;
@@ -264,18 +270,37 @@ class WebRuntime implements WebPluginController {
           item("normal", "普通窗口", "Normal window"),
           item("topmost", "置顶", "Always on top"),
           ...(this.modes?.desktopAvailable ? [item("desktop", "常驻桌面", "Keep on desktop")] : []),
-        ]).popup({ window, ...anchor });
+        ]).popup({ window, ...anchor, callback: this.holdBar() });
         return undefined;
       }
       case "menu:more": {
+        const modes = this.modes;
         Menu.buildFromTemplate([
+          ...(modes?.onDesktop
+            ? [
+                {
+                  label: english ? "Lock position" : "锁定位置",
+                  type: "checkbox" as const,
+                  checked: modes.locked,
+                  click: () => void modes.setLocked(!modes.locked).catch(report),
+                },
+                { type: "separator" as const },
+              ]
+            : []),
           {
             label: english ? "Reload" : "重新加载",
             click: () => void this.reloadPage().catch(report),
           },
-        ]).popup({ window, ...anchor });
+        ]).popup({ window, ...anchor, callback: this.holdBar() });
         return undefined;
       }
+      case "bar:peek":
+        this.startPeek(window);
+        return undefined;
+      case "lock:on":
+      case "lock:off":
+        await this.modes?.setLocked(operation === "lock:on");
+        return undefined;
       case "minimize":
         window.minimize();
         return undefined;
@@ -362,9 +387,53 @@ class WebRuntime implements WebPluginController {
       maximizable: presentation.window?.maximizable ?? true,
       locale: this.options.getLocale?.() ?? "zh-CN",
       theme: this.options.getTheme(),
-      mode: this.mode,
+      ...(this.modes?.state() ?? { mode: "normal" as const, desktopAvailable: false }),
       desktopAvailable: !!this.options.desktop,
+      ...this.status,
+      barCollapsed: this.barCollapsed(),
     };
+  }
+  /**
+   * An unfocused desktop card folds its bar to a strip so the page fills the
+   * card. Hovering the strip (unless locked), focus or an open menu unfolds it.
+   */
+  private barCollapsed(): boolean {
+    const window = this.currentWindow;
+    if (!window || window.isDestroyed() || this.mode !== "desktop") return false;
+    if (window.isFocused() || this.menuOpen) return false;
+    return !this.peek || !!this.modes?.locked;
+  }
+  private refreshBar(): void {
+    this.layout();
+    this.publishShell();
+  }
+  /** Keeps the bar unfolded while a native menu is open. */
+  private holdBar(): () => void {
+    this.menuOpen = true;
+    this.refreshBar();
+    return () => {
+      this.menuOpen = false;
+      this.refreshBar();
+    };
+  }
+  /** Unfolds the bar while the cursor stays over it (checked on the host side). */
+  private startPeek(window: BrowserWindow): void {
+    if (this.mode !== "desktop" || this.modes?.locked || this.peek) return;
+    this.peek = setInterval(() => {
+      const point = screen.getCursorScreenPoint();
+      const area = window.isDestroyed() ? undefined : window.getContentBounds();
+      const over =
+        !!area &&
+        point.x >= area.x &&
+        point.x < area.x + area.width &&
+        point.y >= area.y &&
+        point.y < area.y + SHELL_BAR_HEIGHT;
+      if (over && this.currentWindow === window) return;
+      clearInterval(this.peek);
+      this.peek = undefined;
+      if (!window.isDestroyed()) this.refreshBar();
+    }, 150);
+    this.refreshBar();
   }
   private profile(): string {
     return this.options.windowProfile ?? "main";
@@ -378,6 +447,8 @@ class WebRuntime implements WebPluginController {
     if (!decision.ok) throw new Error(decision.reason);
     this.saveApproved = false;
     this.connected = false;
+    this.status = {};
+    this.publishShell();
     this.page()?.reload();
   }
   private publishShell(): void {
@@ -391,7 +462,7 @@ class WebRuntime implements WebPluginController {
     const view = this.currentView;
     if (!window || window.isDestroyed() || !view) return;
     const [width, height] = window.getContentSize();
-    const top = SHELL_BAR_HEIGHT;
+    const top = this.barCollapsed() ? SHELL_STRIP_HEIGHT : SHELL_BAR_HEIGHT;
     view.setBounds({ x: 0, y: top, width, height: Math.max(1, height - top) });
   }
   private context(): PluginWebContext {
@@ -551,6 +622,25 @@ class WebRuntime implements WebPluginController {
           throw new Error("This plugin window cannot be maximized");
         if (window.isMaximized()) window.unmaximize();
         else window.maximize();
+        return undefined;
+      }
+      case "window.status": {
+        // Plain text only: the shell renders it as text, never as markup.
+        const data = z
+          .strictObject({
+            subtitle: z
+              .string()
+              .max(80)
+              .regex(/^[^\p{Cc}\p{Cf}]*$/u)
+              .optional(),
+            runState: z.enum(["unsaved", "busy", "error"]).optional(),
+          })
+          .parse(request.payload);
+        this.status = {
+          ...(data.subtitle ? { subtitle: data.subtitle } : {}),
+          ...(data.runState ? { runState: data.runState } : {}),
+        };
+        this.publishShell();
         return undefined;
       }
       case "window.close": {
@@ -745,12 +835,18 @@ class WebRuntime implements WebPluginController {
         profile: this.profile(),
         title: () => this.shellState().title,
         taskbar: () => this.presentation().window?.taskbar !== false,
-        onChange: () => this.publishShell(),
+        desktopMinSize: (() => {
+          const size = this.presentation().window?.desktopMinSize;
+          return size && { width: size.width, height: size.height + SHELL_BAR_HEIGHT };
+        })(),
+        onChange: () => this.refreshBar(),
       });
       // Keyboard input belongs to the plugin page, not the status bar.
       window.on("focus", () => {
         if (this.currentView === view && !page.isDestroyed()) page.focus();
+        this.refreshBar();
       });
+      window.on("blur", () => this.refreshBar());
       this.layout();
       page.setWindowOpenHandler(() => ({ action: "deny" }));
       page.on("will-navigate", (event, url) => {
@@ -844,10 +940,13 @@ class WebRuntime implements WebPluginController {
         activation: this.activation,
       });
     // A desktop card is shown by the layer's presentation; focusing raises it.
-    const onDesktop = !!this.modes?.onDesktop;
+    // An existing desktop card is located: raised and briefly highlighted.
     if (this.options.show !== false) {
-      if (!onDesktop || window.isVisible()) window.show();
-      window.focus();
+      if (this.modes?.onDesktop) this.modes.locate();
+      else {
+        window.show();
+        window.focus();
+      }
     }
     return undefined;
   }

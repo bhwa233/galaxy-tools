@@ -55,6 +55,12 @@ export const NoteTitleBar = memo(function NoteTitleBar({
       onModeChange={
         windowMode.onModeChange && ((next) => void windowMode.onModeChange!(next).catch(report))
       }
+      locked={windowMode.locked}
+      hint={windowMode.hint}
+      highlighted={windowMode.highlighted}
+      onLockChange={
+        windowMode.onLockChange && ((value) => void windowMode.onLockChange!(value).catch(report))
+      }
       maximized={isMaximized}
       onMouseDown={handleTitleBarMouseDown}
       onMinimize={handleMinimize}

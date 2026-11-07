@@ -17,7 +17,9 @@ import {
   Network,
   Puzzle,
   Pin,
+  Plus,
   Settings,
+  Star,
   SlidersHorizontal,
   StickyNote,
   X,
@@ -42,6 +44,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "../../components/ui/command";
 import { getErrorMessage } from "../notes/api";
 import { DeclarativeCard } from "./DeclarativeCard";
 import "./desktop-overlay.css";
@@ -68,7 +79,10 @@ export function DesktopOverlayView({
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const panels = snapshot.overlay?.panels ?? [];
+  const launchers = snapshot.overlay?.launchers;
+  const favorites = (launchers ?? []).filter((item) => item.favorite).slice(0, 6);
   const zh = snapshot.locale.startsWith("zh");
   const text = (cn: string, en: string) => (zh ? cn : en);
   const epoch = snapshot.overlay?.epoch;
@@ -99,7 +113,7 @@ export function DesktopOverlayView({
         event.defaultPrevented ||
         event.isComposing ||
         menuOpen ||
-        document.querySelector('[data-overlay-moving], [role="menu"]')
+        document.querySelector('[data-overlay-moving], [role="menu"], [role="dialog"]')
       )
         return;
       event.preventDefault();
@@ -159,6 +173,36 @@ export function DesktopOverlayView({
           );
         })}
         <div className="desktop-overlay-divider" />
+        {favorites.map((item) => (
+          <Button
+            key={`${item.pluginId}/${item.commandId}`}
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="desktop-overlay-tool desktop-overlay-favorite"
+            title={item.title}
+            aria-label={item.title}
+            data-launcher={`${item.pluginId}/${item.commandId}`}
+            onClick={() =>
+              act({ type: "overlay-launch", pluginId: item.pluginId, commandId: item.commandId })
+            }
+          >
+            <span aria-hidden>{Array.from(item.title)[0]}</span>
+          </Button>
+        ))}
+        {launchers && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="desktop-overlay-tool"
+            title={text("添加插件", "Add plugin")}
+            aria-label={text("添加插件", "Add plugin")}
+            onClick={() => setAddOpen(true)}
+          >
+            <Plus />
+          </Button>
+        )}
         <DropdownMenu onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger
             render={
@@ -261,6 +305,71 @@ export function DesktopOverlayView({
           </Button>
         </div>
       )}
+      <CommandDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title={text("添加插件", "Add plugin")}
+        description={text("打开一个插件窗口", "Open a plugin window")}
+        className="desktop-overlay-launcher"
+      >
+        <Command>
+          <CommandInput placeholder={text("搜索插件", "Search plugins")} />
+          <CommandList>
+            <CommandEmpty>{text("没有可打开的插件窗口", "No plugin windows")}</CommandEmpty>
+            <CommandGroup heading={text("插件窗口", "Plugin windows")}>
+              {(launchers ?? []).map((item) => (
+                <CommandItem
+                  key={`${item.pluginId}/${item.commandId}`}
+                  value={`${item.title} ${item.plugin} ${item.pluginId}/${item.commandId}`}
+                  data-launcher={`${item.pluginId}/${item.commandId}`}
+                  onSelect={() => {
+                    setAddOpen(false);
+                    act({
+                      type: "overlay-launch",
+                      pluginId: item.pluginId,
+                      commandId: item.commandId,
+                    });
+                  }}
+                >
+                  <AppWindow />
+                  <span className="desktop-overlay-menu-title">{item.title}</span>
+                  {item.plugin !== item.title && (
+                    <span className="desktop-overlay-menu-title text-xs text-muted-foreground">
+                      {item.plugin}
+                    </span>
+                  )}
+                  <span className="flex-1" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="-mr-6"
+                    aria-pressed={item.favorite}
+                    title={
+                      item.favorite ? text("取消收藏", "Unstar") : text("收藏到插件栏", "Star")
+                    }
+                    aria-label={
+                      item.favorite ? text("取消收藏", "Unstar") : text("收藏到插件栏", "Star")
+                    }
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      act({
+                        type: "overlay-favorite",
+                        pluginId: item.pluginId,
+                        commandId: item.commandId,
+                        value: !item.favorite,
+                      });
+                    }}
+                  >
+                    <Star className={item.favorite ? "fill-current" : undefined} />
+                  </Button>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </CommandDialog>
       {error && (
         <Alert variant="destructive" className="desktop-overlay-error">
           <AlertDescription>{error}</AlertDescription>

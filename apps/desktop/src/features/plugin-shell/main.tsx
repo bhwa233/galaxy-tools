@@ -4,7 +4,7 @@ import type { PluginShellState } from "../../../shared/window-mode";
 import { StatusBar } from "../windows/StatusBar";
 import "../../App.css";
 
-type ShellAction = "minimize" | "toggleMaximize" | "close" | "menu:mode" | "menu:more";
+type ShellAction = "minimize" | "toggleMaximize" | "close" | "menu:mode" | "menu:more" | "bar:peek";
 declare global {
   interface Window {
     pluginShell: {
@@ -43,10 +43,15 @@ function PluginShell() {
     <div className="h-screen bg-background text-foreground">
       <StatusBar
         title={state.title}
-        subtitle={error}
+        subtitle={error ?? state.subtitle}
         locale={state.locale}
-        runState={error ? "error" : undefined}
+        runState={error ? "error" : state.runState}
         mode={state.mode}
+        locked={!!state.locked}
+        hint={state.hint}
+        highlighted={!!state.highlighted}
+        collapsed={!!state.barCollapsed}
+        onPeek={() => action("bar:peek")}
         nativeMenus={{
           mode: (anchor) => action("menu:mode", anchor),
           more: (anchor) => action("menu:more", anchor),

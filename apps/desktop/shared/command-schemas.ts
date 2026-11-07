@@ -504,6 +504,7 @@ export const commandSchemas = {
     }),
     z.strictObject({ action: z.literal("alwaysOnTop"), value: z.boolean() }),
     z.strictObject({ action: z.literal("mode"), value: z.enum(["normal", "topmost", "desktop"]) }),
+    z.strictObject({ action: z.literal("lock"), value: z.boolean() }),
     z.strictObject({ action: z.literal("setPosition"), value: position }),
     z.strictObject({ action: z.literal("setSize"), value: size }),
     z.strictObject({ action: z.literal("setBounds"), value: bounds }),

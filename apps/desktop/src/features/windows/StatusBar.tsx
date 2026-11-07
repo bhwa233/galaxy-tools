@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AppWindow,
   Check,
   Copy,
   Ellipsis,
+  Lock,
   Minus,
   MonitorDown,
   Pin,
@@ -46,6 +47,9 @@ const TEXT = {
     unsaved: "有未保存的修改",
     busy: "正在处理",
     error: "出错",
+    lock: "锁定位置",
+    locked: "位置已锁定",
+    hint: (shortcut: string) => `已放到桌面，按 ${shortcut} 随时呼出`,
   },
   en: {
     mode: "Window mode",
@@ -61,6 +65,9 @@ const TEXT = {
     unsaved: "Unsaved changes",
     busy: "Working",
     error: "Error",
+    lock: "Lock position",
+    locked: "Position locked",
+    hint: (shortcut: string) => `Kept on the desktop. Press ${shortcut} to bring it up anytime`,
   },
 };
 export const statusBarText = (locale: string) => (locale.startsWith("en") ? TEXT.en : TEXT.zh);
@@ -91,6 +98,12 @@ export function StatusBar({
   onClose,
   onMouseDown,
   nativeMenus,
+  locked = false,
+  hint,
+  highlighted = false,
+  onLockChange,
+  collapsed: collapsedInput,
+  onPeek,
   children,
 }: {
   title: string;
@@ -114,6 +127,20 @@ export function StatusBar({
     mode: (anchor: { x: number; y: number }) => void;
     more: (anchor: { x: number; y: number }) => void;
   };
+  /** Desktop card locked in place: the bar no longer unfolds on hover. */
+  locked?: boolean;
+  /** One-time "kept on the desktop" hint: the overlay shortcut to mention. */
+  hint?: string;
+  /** Briefly marks a card that was just located. */
+  highlighted?: boolean;
+  onLockChange?: (locked: boolean) => void;
+  /**
+   * Folded state decided by the owner (Web shells, where the host moves the
+   * page). Left undefined, the bar folds itself on an unfocused desktop card.
+   */
+  collapsed?: boolean;
+  /** Hovering the folded strip asks the owner to unfold it. */
+  onPeek?: () => void;
   children?: ReactNode;
 }) {
   const anchor = (event: React.MouseEvent<HTMLElement>) => {
@@ -124,16 +151,56 @@ export function StatusBar({
   const current = mode ?? "normal";
   const onDesktop = current === "desktop";
   const ModeIcon = MODE_ICONS[current];
+  const fold = useDesktopFold(onDesktop, locked);
+  const collapsed = collapsedInput ?? fold.collapsed;
+  const peekTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(peekTimer.current), []);
+  const showMenuLock = onDesktop && !!onLockChange;
+  if (collapsed)
+    return (
+      <header
+        data-window-mode={current}
+        data-collapsed=""
+        aria-label={title}
+        className="h-1.5 shrink-0 bg-border transition-colors hover:bg-primary/50"
+        onMouseEnter={() => {
+          if (locked) return;
+          clearTimeout(peekTimer.current);
+          peekTimer.current = setTimeout(() => (onPeek ? onPeek() : fold.peek(true)), 250);
+        }}
+        onMouseLeave={() => clearTimeout(peekTimer.current)}
+      />
+    );
+  const notice = hint ? text.hint(hint) : subtitle;
   return (
     <header
       data-window-mode={current}
-      className="electron-title-drag relative z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background pr-3 pl-4 select-none"
+      data-highlighted={highlighted ? "" : undefined}
+      className={
+        "electron-title-drag relative z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background pr-3 pl-4 transition-shadow select-none" +
+        (highlighted ? " ring-2 ring-primary ring-inset" : "")
+      }
       onMouseDown={onMouseDown}
+      onMouseLeave={() => fold.peek(false)}
     >
       <div className="flex min-w-0 items-center gap-2">
         <h1 className="min-w-0 truncate text-sm font-semibold">{title}</h1>
-        {subtitle && (
-          <span className="min-w-0 truncate text-xs text-muted-foreground">{subtitle}</span>
+        {onDesktop && locked && (
+          <Lock
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-label={text.locked}
+            role="img"
+          />
+        )}
+        {notice && (
+          <span
+            data-status-notice={hint ? "hint" : undefined}
+            className={
+              "min-w-0 truncate text-xs " + (hint ? "text-primary" : "text-muted-foreground")
+            }
+          >
+            {notice}
+          </span>
         )}
         {runState && (
           <span
@@ -177,7 +244,7 @@ export function StatusBar({
           </>
         )}
         {!nativeMenus && onModeChange && (
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={fold.menu}>
             <DropdownMenuTrigger
               render={
                 <Button
@@ -208,8 +275,8 @@ export function StatusBar({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {!nativeMenus && !!menu?.length && (
-          <DropdownMenu>
+        {!nativeMenus && (!!menu?.length || showMenuLock) && (
+          <DropdownMenu onOpenChange={fold.menu}>
             <DropdownMenuTrigger
               render={
                 <Button variant="ghost" size="icon-sm" title={text.more} aria-label={text.more} />
@@ -218,7 +285,15 @@ export function StatusBar({
               <Ellipsis />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {menu.map((item, index) => (
+              {showMenuLock && (
+                <DropdownMenuItem data-lock-option="" onClick={() => onLockChange(!locked)}>
+                  <Lock />
+                  <span className="flex-1">{text.lock}</span>
+                  {locked && <Check />}
+                </DropdownMenuItem>
+              )}
+              {showMenuLock && !!menu?.length && <DropdownMenuSeparator />}
+              {(menu ?? []).map((item, index) => (
                 <span key={item.id} className="contents">
                   {item.destructive && index > 0 && <DropdownMenuSeparator />}
                   <DropdownMenuItem
@@ -270,4 +345,32 @@ export function StatusBar({
       </div>
     </header>
   );
+}
+
+/**
+ * Folding of a host-rendered desktop card's bar: shown while the window is
+ * focused, a menu is open or the strip is hovered (not when locked).
+ */
+function useDesktopFold(onDesktop: boolean, locked: boolean) {
+  const [focused, setFocused] = useState(() => document.hasFocus());
+  const [hovered, setHovered] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    const focus = () => setFocused(true);
+    const blur = () => setFocused(false);
+    const leave = () => setHovered(false);
+    window.addEventListener("focus", focus);
+    window.addEventListener("blur", blur);
+    document.documentElement.addEventListener("mouseleave", leave);
+    return () => {
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("blur", blur);
+      document.documentElement.removeEventListener("mouseleave", leave);
+    };
+  }, []);
+  return {
+    collapsed: onDesktop && !focused && !menuOpen && !(hovered && !locked),
+    peek: setHovered,
+    menu: setMenuOpen,
+  };
 }

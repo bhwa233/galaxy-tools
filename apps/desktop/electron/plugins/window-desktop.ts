@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { screen, type BrowserWindow } from "electron";
-import type { WindowMode } from "../../shared/window-mode.js";
+import type { WindowMode, WindowModeState } from "../../shared/window-mode.js";
 import type { LayerCard, LayerInstanceSummary } from "../../shared/layer-contract.js";
 import type { ExternalLayerPresentation } from "../../shared/utools-desktop.js";
 import type { Rect } from "../../src/features/capsules/types.js";
@@ -17,7 +17,9 @@ import { contains } from "../capsule-layout.js";
 type WindowCard = Extract<StoredLayerCard, { kind: "window" }>;
 
 /** What the window owner applies; `null` returns it to an ordinary window. */
-export type PluginWindowPresentation = (ExternalLayerPresentation & { revision: number }) | null;
+export type PluginWindowPresentation =
+  | (ExternalLayerPresentation & { revision: number; locked?: boolean })
+  | null;
 
 interface Session {
   pluginId: string;
@@ -45,6 +47,8 @@ export class PluginWindowDesktopHost {
       store: LayerLayoutStore;
       /** Opens a plugin window that should be restored after a restart. */
       openWindow: (pluginId: string, profile: string) => Promise<void>;
+      /** One-time "it is on the desktop now" hint, remembered across restarts. */
+      hint?: { shown(): boolean; markShown(): void; shortcut(): string };
       /** Whether a plugin is installed, enabled and healthy. */
       available: (pluginId: string) => boolean;
     },
@@ -97,6 +101,9 @@ export class PluginWindowDesktopHost {
   attach(input: Omit<Session, "revision" | "focused" | "release" | "failure">): {
     pin(bounds: Rect): Promise<void>;
     unpin(): Promise<void>;
+    lock(locked: boolean): Promise<void>;
+    hint(): string | undefined;
+    snap(bounds: Rect): Rect;
     focus(focused: boolean): void;
     bounds(bounds: Rect): Promise<void>;
     dispose(): void;
@@ -160,6 +167,27 @@ export class PluginWindowDesktopHost {
         const stored = this.find(input.pluginId, input.profile);
         if (stored) await this.remove(stored[1].windowInstanceId);
       },
+      lock: async (locked) => {
+        const stored = this.find(input.pluginId, input.profile);
+        if (stored) await this.update(stored[1].windowInstanceId, { locked });
+      },
+      // Edges within a small distance of the work area or another visible card
+      // line up with it, so cards can be arranged neatly without a grid.
+      snap: (bounds) => {
+        const own = this.find(input.pluginId, input.profile)?.[0];
+        const others = Object.entries(this.options.store.load().cards)
+          .filter(([id, card]) => id !== own && card.visible)
+          .map(([, card]) => card.bounds);
+        const areas = this.options.layer.options.displays().map((d) => d.workArea);
+        return snapRect(bounds, areas, others);
+      },
+      // True exactly once: the first time any window goes onto the desktop.
+      hint: () => {
+        const hint = this.options.hint;
+        if (!hint || hint.shown()) return undefined;
+        hint.markShown();
+        return hint.shortcut();
+      },
       focus: (focused) => {
         session.focused = focused;
         if (focused) this.options.layer.restackOverlay();
@@ -187,7 +215,8 @@ export class PluginWindowDesktopHost {
       present: async (value) => {
         const revision = ++session.revision;
         try {
-          await session.present({ ...value, revision });
+          const stored = this.find(session.pluginId, session.profile)?.[1];
+          await session.present({ ...value, revision, locked: !!stored?.locked });
           session.failure = undefined;
         } catch (error) {
           session.failure = error instanceof Error ? error.message : String(error);
@@ -258,7 +287,12 @@ export class PluginWindowDesktopHost {
   }
   async update(
     id: string,
-    patch: { visible?: boolean; group?: "normal" | "top"; inputMode?: "passive" | "interactive" },
+    patch: {
+      visible?: boolean;
+      group?: "normal" | "top";
+      inputMode?: "passive" | "interactive";
+      locked?: boolean;
+    },
   ): Promise<void> {
     const layout = this.options.store.load();
     const entry = layout.cards[`window:${id}`];
@@ -306,7 +340,16 @@ export class WindowModeController {
   private presented?: Exclude<PluginWindowPresentation, null>;
   private ordinaryBounds?: Electron.Rectangle;
   private ordinaryMaximized = false;
+  private ordinaryMinSize?: [number, number];
+  private ordinaryResizable = true;
   private disposed = false;
+  /** Card locked in place (no move/resize). */
+  locked = false;
+  /** A one-time hint (the overlay shortcut) shown for a few seconds. */
+  hint?: string;
+  private hintRequested = false;
+  /** Briefly true after a request located this card. */
+  highlighted = false;
 
   constructor(
     private readonly o: {
@@ -319,6 +362,8 @@ export class WindowModeController {
       taskbar: () => boolean;
       /** Applies "always on top" the owner's way (host windows persist it). */
       setTopmost?: (value: boolean) => void;
+      /** Smallest card size the plugin declares for the desktop. */
+      desktopMinSize?: { width: number; height: number };
       onChange: () => void;
     },
   ) {
@@ -356,6 +401,10 @@ export class WindowModeController {
       if (this.mode === "desktop") this.mode = "normal";
       window.setSkipTaskbar(!this.o.taskbar());
       window.setFocusable(true);
+      window.setMovable(true);
+      window.setResizable(this.ordinaryResizable);
+      if (this.ordinaryMinSize) window.setMinimumSize(...this.ordinaryMinSize);
+      this.locked = false;
       window.setIgnoreMouseEvents(false);
       window.setAlwaysOnTop(false);
       if (wasDesktop && this.ordinaryBounds) {
@@ -373,10 +422,27 @@ export class WindowModeController {
       this.o.onChange();
       return;
     }
-    if (!this.presented) {
+    const entering = !this.presented;
+    if (entering) {
       this.ordinaryBounds = window.getBounds();
       this.ordinaryMaximized = window.isMaximized();
+      this.ordinaryMinSize = window.getMinimumSize() as [number, number];
+      this.ordinaryResizable = window.isResizable();
+      if (this.o.desktopMinSize)
+        window.setMinimumSize(this.o.desktopMinSize.width, this.o.desktopMinSize.height);
+      const hint = this.hintRequested ? this.link?.hint() : undefined;
+      this.hintRequested = false;
+      if (hint) {
+        this.hint = hint;
+        setTimeout(() => {
+          this.hint = undefined;
+          if (!this.disposed) this.o.onChange();
+        }, 8000).unref();
+      }
     }
+    this.locked = !!value.locked;
+    window.setMovable(!this.locked);
+    window.setResizable(!this.locked && this.ordinaryResizable);
     if (window.isMaximized()) window.unmaximize();
     this.presented = value;
     this.mode = "desktop";
@@ -399,8 +465,50 @@ export class WindowModeController {
     if (value.visible) {
       if (!window.isVisible()) window.showInactive();
       if (value.mode === "overlay") window.moveTop();
+      // A short fade marks the move onto the desktop.
+      if (entering) this.fadeIn();
     } else window.hide();
     this.o.onChange();
+  }
+  private fadeIn(): void {
+    const window = this.o.window;
+    let step = 0;
+    window.setOpacity(0.55);
+    const timer = setInterval(() => {
+      step++;
+      if (window.isDestroyed()) return clearInterval(timer);
+      window.setOpacity(Math.min(1, 0.55 + step * 0.075));
+      if (step >= 6) clearInterval(timer);
+    }, 30);
+  }
+  /** Lock or unlock the card in place. */
+  async setLocked(locked: boolean): Promise<void> {
+    if (this.mode !== "desktop" || !this.link) return;
+    await this.link.lock(locked);
+  }
+  /** What the status bar shows about this window's mode. */
+  state(): WindowModeState {
+    return {
+      mode: this.mode,
+      desktopAvailable: this.desktopAvailable,
+      ...(this.mode === "desktop" && this.locked ? { locked: true } : {}),
+      ...(this.mode === "desktop" && this.hint ? { hint: this.hint } : {}),
+      ...(this.mode === "desktop" && this.highlighted ? { highlighted: true } : {}),
+    };
+  }
+  /** Raises an existing desktop card and briefly highlights it. */
+  locate(): void {
+    const window = this.o.window;
+    if (this.mode !== "desktop" || window.isDestroyed()) return;
+    if (!window.isVisible()) window.showInactive();
+    window.moveTop();
+    window.focus();
+    this.highlighted = true;
+    this.o.onChange();
+    setTimeout(() => {
+      this.highlighted = false;
+      if (!this.disposed) this.o.onChange();
+    }, 1500).unref();
   }
   async setMode(next: WindowMode): Promise<void> {
     const window = this.o.window;
@@ -409,6 +517,8 @@ export class WindowModeController {
     if (next === "desktop") {
       if (!this.link) throw new AppError("layer.disabled", "桌面卡片不可用");
       this.topmost(false);
+      // Only a move the user asked for earns the one-time hint (not a restore).
+      this.hintRequested = true;
       await this.link.pin(window.getBounds());
       return;
     }
@@ -425,8 +535,13 @@ export class WindowModeController {
   private report(): void {
     const p = this.presented?.card.bounds;
     if (!p || !this.link || this.o.window.isDestroyed()) return;
-    const b = this.o.window.getBounds();
+    let b = this.o.window.getBounds();
     if (b.x === p.x && b.y === p.y && b.width === p.width && b.height === p.height) return;
+    const snapped = this.link.snap(b);
+    if (snapped.x !== b.x || snapped.y !== b.y) {
+      this.o.window.setBounds(snapped);
+      b = snapped;
+    }
     void this.link.bounds(b).catch((error) => console.error("plugin-window-bounds", error));
   }
   dispose(): void {
@@ -435,4 +550,39 @@ export class WindowModeController {
     this.link?.dispose();
     this.link = undefined;
   }
+}
+
+const SNAP = 12;
+/** Pull a rectangle's edges onto nearby work-area or card edges (keeps its size). */
+export function snapRect(bounds: Rect, areas: readonly Rect[], cards: readonly Rect[]): Rect {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const a of areas) {
+    xs.push(a.x, a.x + a.width);
+    ys.push(a.y, a.y + a.height);
+  }
+  for (const c of cards) {
+    // Abut either side of a neighbour, or align with its edges.
+    xs.push(c.x, c.x + c.width);
+    ys.push(c.y, c.y + c.height);
+  }
+  const best = (start: number, size: number, lines: number[]) => {
+    let offset = 0;
+    let distance = SNAP + 1;
+    for (const line of lines)
+      for (const edge of [start, start + size]) {
+        const d = Math.abs(line - edge);
+        if (d < distance) {
+          distance = d;
+          offset = line - edge;
+        }
+      }
+    return distance <= SNAP ? start + offset : start;
+  };
+  return {
+    x: Math.round(best(bounds.x, bounds.width, xs)),
+    y: Math.round(best(bounds.y, bounds.height, ys)),
+    width: bounds.width,
+    height: bounds.height,
+  };
 }

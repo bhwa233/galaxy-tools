@@ -91,8 +91,14 @@ export function createWindowCommands(
           case "modeState": {
             const modes = ctx.windowModes.get(win.id);
             return modes
-              ? { mode: modes.mode, desktopAvailable: modes.desktopAvailable }
+              ? modes.state()
               : { mode: layout.topmost ? "topmost" : "normal", desktopAvailable: false };
+          }
+          case "lock": {
+            const modes = ctx.windowModes.get(win.id);
+            if (!modes) throw new AppError("invalidCommand", "此窗口不支持窗口模式");
+            await modes.setLocked(args.value === true);
+            return;
           }
           case "mode": {
             const modes = ctx.windowModes.get(win.id);

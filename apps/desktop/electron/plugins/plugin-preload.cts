@@ -19,6 +19,7 @@ const operations = new Set<PluginWebOperation>([
   "window.minimize",
   "window.toggleMaximize",
   "window.isMaximized",
+  "window.status",
   "capability.invoke",
   "lifecycle.result",
   "query.result",

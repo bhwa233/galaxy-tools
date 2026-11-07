@@ -32,6 +32,7 @@ export type PluginWebOperation =
   | "window.minimize"
   | "window.toggleMaximize"
   | "window.isMaximized"
+  | "window.status"
   | "capability.invoke"
   | "lifecycle.result"
   | "query.result";
@@ -72,6 +73,15 @@ export interface PluginBrowserClient {
     minimize(): Promise<void>;
     toggleMaximize(): Promise<void>;
     isMaximized(): Promise<boolean>;
+    /**
+     * Host API 1.7: context shown in the host status bar. The subtitle is plain
+     * text (at most 80 characters); runState shows a small marker. Omitted
+     * fields clear it.
+     */
+    setStatus(status: {
+      subtitle?: string;
+      runState?: "unsaved" | "busy" | "error";
+    }): Promise<void>;
   };
   dispose(): void;
 }
@@ -291,6 +301,12 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
         await request("window.toggleMaximize");
       },
       isMaximized: async () => (await request("window.isMaximized")) === true,
+      setStatus: async (status) => {
+        await request("window.status", {
+          ...(status.subtitle !== undefined ? { subtitle: status.subtitle } : {}),
+          ...(status.runState !== undefined ? { runState: status.runState } : {}),
+        });
+      },
     },
     dispose: () => {
       active = false;

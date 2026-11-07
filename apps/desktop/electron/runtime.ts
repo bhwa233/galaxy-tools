@@ -34,13 +34,14 @@ import { acquireDesktopInstance } from "./host/single-instance.js";
 import { createWindowClose } from "./host/window-close.js";
 import { createDispatch } from "./ipc/dispatch.js";
 import { createTransport } from "./ipc/transport.js";
-import { AppError, canonical, confined, inside } from "./persistence.js";
+import { AppError, atomicWrite, canonical, confined, inside } from "./persistence.js";
 import { PluginBackupService, readPendingBackupDataRoots } from "./plugins/backup.js";
 import type { PluginResourceScope } from "./plugins/resources.js";
 import { readTranslationSettings } from "./plugins/translation-settings.js";
 import { FileGrants } from "./security.js";
 
 import type { PluginContext, PluginOwner, PluginTheme } from "@spark233/sdk";
+import { localizePluginManifest } from "@spark233/sdk";
 import type { CapsuleEntry } from "../src/features/capsules/types.js";
 import type { ReminderItem } from "../src/features/reminders/types.js";
 import { Capsules } from "./capsules.js";
@@ -1603,6 +1604,26 @@ export function startDesktopHost(): void {
         trayCardVisibility = next;
         refreshTray();
       });
+      // Starred plugin windows shown as quick buttons in the plugin bar.
+      const favoritesFile = path.join(configDir, "desktop-overlay-favorites.json");
+      const overlayFavorites = {
+        load: (): Set<string> => {
+          try {
+            const value: unknown = JSON.parse(fs.readFileSync(favoritesFile, "utf8"));
+            return new Set(
+              Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [],
+            );
+          } catch {
+            return new Set<string>();
+          }
+        },
+        set(key: string, value: boolean) {
+          const next = overlayFavorites.load();
+          if (value) next.add(key);
+          else next.delete(key);
+          atomicWrite(favoritesFile, JSON.stringify([...next].slice(0, 32)));
+        },
+      };
       desktopLayer = new DesktopLayer({
         store: layerStore,
         overlayLayout: new DesktopOverlayLayout(
@@ -1616,6 +1637,39 @@ export function startDesktopHost(): void {
         onOverlaySettings: async () => {
           await openHostSettings({ page: "desktop" });
         },
+        // "Add plugin" in the plugin bar: every command that opens a plugin window.
+        overlayLaunchers: () => {
+          const manager = pluginHost?.manager;
+          if (!manager) return [];
+          const favorites = overlayFavorites.load();
+          const locale = hostConfig.value.locale;
+          return manager.list().flatMap((record) => {
+            if (!record.enabled || record.lastError) return [];
+            try {
+              const manifest = localizePluginManifest(
+                manager.describe(record.pluginId, true).spark233,
+                locale,
+              );
+              return manifest.commands
+                .filter((command) => command.window && !command.internal)
+                .map((command) => ({
+                  pluginId: record.pluginId,
+                  commandId: command.id,
+                  title: command.title,
+                  plugin: manifest.displayName,
+                  favorite: favorites.has(`${record.pluginId}/${command.id}`),
+                }));
+            } catch {
+              return [];
+            }
+          });
+        },
+        // Windows are single-instance: activating again focuses or locates it.
+        onOverlayLaunch: async (pluginId, commandId) => {
+          await pluginHost?.manager.activate(pluginId, { commandId });
+        },
+        onOverlayFavorite: (pluginId, commandId, value) =>
+          overlayFavorites.set(`${pluginId}/${commandId}`, value),
         onOverlayOpenPanel: async (card) => {
           if (!card.widget || !pluginHost?.manager.isOwnerCurrent(card.widget.owner))
             throw new AppError("pluginDisabled", "插件实例已失效");
@@ -1713,6 +1767,17 @@ export function startDesktopHost(): void {
             .spark233.commands.find((entry) => entry.window === profile && !entry.internal);
           if (!command) throw new Error("No command opens this plugin window");
           await manager.activate(pluginId, { commandId: command.id });
+        },
+        hint: {
+          shown: () => fs.existsSync(path.join(configDir, "desktop-window-hint")),
+          markShown: () => {
+            try {
+              fs.writeFileSync(path.join(configDir, "desktop-window-hint"), "1");
+            } catch (error) {
+              console.error("desktop-window-hint", error);
+            }
+          },
+          shortcut: () => hostConfig.value.desktopOverlayShortcut || "Ctrl+Alt+D",
         },
       });
       widgetHost = new WidgetHost({

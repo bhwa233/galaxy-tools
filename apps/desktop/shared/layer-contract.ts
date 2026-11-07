@@ -98,9 +98,19 @@ export interface DesktopOverlayPanel {
   pinned: boolean;
   inputMode: LayerInputMode;
 }
+/** A plugin window the plugin bar can open ("Add plugin"). */
+export interface DesktopOverlayLauncher {
+  pluginId: string;
+  commandId: string;
+  title: string;
+  plugin: string;
+  favorite: boolean;
+}
 export interface DesktopOverlayState {
   displayId: string;
   panels: DesktopOverlayPanel[];
+  /** Host surface only. */
+  launchers?: DesktopOverlayLauncher[];
   epoch?: number;
   host?: boolean;
   workArea?: Rect;
@@ -166,6 +176,8 @@ type OverlayClientRequest = (
       action: "show" | "hide" | "pin" | "passthrough" | "open";
       value?: boolean;
     }
+  | { type: "overlay-launch"; pluginId: string; commandId: string }
+  | { type: "overlay-favorite"; pluginId: string; commandId: string; value: boolean }
   | { type: "overlay-layout"; cardId: string; bounds: Rect }
   | { type: "overlay-preview"; cardId: string; visible: boolean; region?: "menu" | "preview" }
   | {

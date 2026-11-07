@@ -100,6 +100,8 @@ export const pluginWindowSchema = z.strictObject({
   icon: pluginIconSchema.optional(),
   size: windowSizeSchema.optional(),
   minSize: windowSizeSchema.optional(),
+  /** Host API 1.7: smallest size of this window while it is kept on the desktop. */
+  desktopMinSize: windowSizeSchema.optional(),
   resizable: z.boolean().optional(),
   maximizable: z.boolean().optional(),
   taskbar: z.boolean().optional(),

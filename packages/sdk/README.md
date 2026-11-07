@@ -215,7 +215,11 @@ no longer removes the host bar, so packages should delete their own title bar.
 `client.window.minimize()`, `toggleMaximize()` and `isMaximized()` work for every
 page, act on the calling plugin's own window and accept no target or options.
 Maximize respects both `resizable` and `maximizable`. `client.close()` keeps the
-existing save-before-close lifecycle.
+existing save-before-close lifecycle. `client.window.setStatus({ subtitle,
+runState })` shows plain-text context (at most 80 characters) and an
+`unsaved` / `busy` / `error` marker in the host status bar; omitted fields clear
+it. `ui.windows.<profile>.desktopMinSize` sets the smallest card size while the
+window is kept on the desktop.
 
 HTML/icon paths are confined to the package, including symlink resolution.
 Icons are signature checked, limited to 1 MiB and PNG 1024 pixels per side.

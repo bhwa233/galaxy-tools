@@ -262,7 +262,7 @@ export type CommandResult<C extends CommandName, A> = C extends "window_control"
         : A extends { action: "isMaximized" | "isAlwaysOnTop" }
           ? boolean
           : A extends { action: "modeState" }
-            ? { mode: import("./window-mode.js").WindowMode; desktopAvailable: boolean }
+            ? import("./window-mode.js").WindowModeState
             : void
   : C extends "translation_action"
     ? A extends { action: "config_status" }
@@ -284,7 +284,7 @@ export interface Events {
   "search-scope-changed": undefined;
   "launcher-shown": undefined;
   "launcher-reset": undefined;
-  "window-mode-changed": { mode: import("./window-mode.js").WindowMode; desktopAvailable: boolean };
+  "window-mode-changed": import("./window-mode.js").WindowModeState;
   "launcher-input-updated": { text: string; revision: number };
   "launcher-visibility-changed": { visible: boolean };
   "ocr-result": JsonValue;

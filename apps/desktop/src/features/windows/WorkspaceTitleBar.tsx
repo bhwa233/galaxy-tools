@@ -118,6 +118,12 @@ export function WorkspaceTitleBar({
       onModeChange={
         windowMode.onModeChange && ((next) => void perform(() => windowMode.onModeChange!(next)))
       }
+      locked={windowMode.locked}
+      hint={windowMode.hint}
+      highlighted={windowMode.highlighted}
+      onLockChange={
+        windowMode.onLockChange && ((value) => void perform(() => windowMode.onLockChange!(value)))
+      }
       maximized={isMaximized}
       maximizable={windowInfo?.maximizable !== false}
       onMouseDown={onMouseDown}

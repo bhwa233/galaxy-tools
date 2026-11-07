@@ -361,7 +361,10 @@ export function createDesktopWindows(
       // Keep that first cold window hidden until desktop_ready, otherwise the
       // user sees the themed background as a blank flash. Once a renderer has
       // acknowledged readiness, reuse remains immediate for later hotkeys.
-      if (layout.label !== "launcher" || ctx.ready.has(existing.id)) {
+      // An existing desktop card is located (raised and highlighted) instead.
+      const modes = ctx.windowModes.get(existing.id);
+      if (modes?.onDesktop) modes.locate();
+      else if (layout.label !== "launcher" || ctx.ready.has(existing.id)) {
         if (!existing.isVisible()) existing.show();
         if (!existing.isFocused()) existing.focus();
       }
@@ -438,18 +441,14 @@ export function createDesktopWindows(
           presentationConfig?.window?.taskbar !== undefined
             ? presentationConfig.window.taskbar
             : isHostView(layout),
+        desktopMinSize: presentationConfig?.window?.desktopMinSize,
         setTopmost: (value) => {
           layout.topmost = value;
           ctx.applyNoteTopmost(win, layout);
           remember(win);
         },
         onChange: () => {
-          if (!win.isDestroyed())
-            ctx.emit(
-              "window-mode-changed",
-              { mode: modes.mode, desktopAvailable: modes.desktopAvailable },
-              win,
-            );
+          if (!win.isDestroyed()) ctx.emit("window-mode-changed", modes.state(), win);
         },
       });
       if (layout.topmost) modes.mode = "topmost";

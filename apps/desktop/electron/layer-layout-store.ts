@@ -55,6 +55,8 @@ const windowCardSchema = z.strictObject({
   pluginId: localId,
   windowProfile: localId,
   windowInstanceId: z.uuid(),
+  /** Locked cards cannot be moved or resized until unlocked. */
+  locked: z.boolean().optional(),
 });
 const storedCardSchema = z.discriminatedUnion("kind", [
   widgetCardSchema,

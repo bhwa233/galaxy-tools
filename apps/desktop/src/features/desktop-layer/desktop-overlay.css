@@ -262,3 +262,14 @@
     display: none;
   }
 }
+/* "Add plugin" dialog sits above the plugin bar and its menus. */
+body:has(.desktop-overlay) [data-slot="dialog-overlay"] {
+  z-index: 1290;
+}
+.desktop-overlay-launcher {
+  z-index: 1300;
+}
+.desktop-overlay .desktop-overlay-favorite span {
+  font-size: 13px;
+  font-weight: 600;
+}
