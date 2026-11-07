@@ -7,8 +7,9 @@ $BuildRoot = [IO.Path]::GetFullPath($BuildRoot)
 if (-not $PulseSourceRoot) { $PulseSourceRoot = Join-Path $repoRoot 'local-build/spark233/native-search/pulse-source' }
 if (-not (Test-Path -LiteralPath (Join-Path $PulseSourceRoot 'src/index/filename_pinyin.cpp'))) {
     $dependencyRoot = Join-Path $BuildRoot 'pulse-dependency'
+    # The preparation script throws on failure. Do not test $LASTEXITCODE: an
+    # already prepared root runs no native command, leaving it $null.
     & (Join-Path $repoRoot 'scripts/native-applications/prepare-pulse-source.ps1') -BuildRoot $dependencyRoot
-    if ($LASTEXITCODE -ne 0) { throw 'Pinned Pulse source preparation failed' }
     $PulseSourceRoot = Join-Path $dependencyRoot 'pulse-source'
 }
 $PulseSourceRoot = [IO.Path]::GetFullPath($PulseSourceRoot)
