@@ -626,6 +626,8 @@ const registryBase = new URL(releaseConfig.registry);
 async function downloadPublished(metadata) {
   const documentUrl = new URL(metadata.name.replace("/", "%2f"), registryBase);
   for (let attempt = 0; ; attempt++) {
+    // Skip the CDN copy of the registry document (cached for up to five minutes).
+    documentUrl.searchParams.set("cache", String(Date.now()));
     const response = await fetch(documentUrl, { headers: { accept: "application/json" } });
     if (!response.ok && response.status !== 404)
       throw new Error(`Registry lookup failed for ${metadata.name}: ${response.status}`);

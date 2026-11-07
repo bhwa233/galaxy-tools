@@ -72,7 +72,6 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm sdk:build
       - uses: actions/setup-python@v5
@@ -85,12 +84,11 @@ jobs:
         run: ./scripts/native-capture/prepare-toolchain.ps1 -PythonExecutable python -PythonArguments @()
       - name: Tests
         run: pnpm --filter @spark233/desktop exec vitest run packages/official/${{ matrix.plugin.directory }}/ --passWithNoTests
+      # npm trusted publishing: the id-token permission authenticates this
+      # workflow and no token is stored. A brand-new package needs one release
+      # with a temporary NODE_AUTH_TOKEN before trusted publishing can be set up.
       - name: Build and publish
         run: node scripts/plugin-release.mjs publish ${{ matrix.plugin.id }} --expect ${{ matrix.plugin.fingerprint }}
-        env:
-          # Only needed for a package's first release; later releases use npm
-          # trusted publishing through the id-token permission.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   host:
     needs: [plan, plugin]

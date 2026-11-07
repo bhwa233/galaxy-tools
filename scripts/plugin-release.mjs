@@ -48,6 +48,9 @@ function build(ids, output, extra = []) {
 }
 async function registryDocument(name) {
   const url = new URL(name.replace("/", "%2f"), config.registry);
+  // The registry document is cached at the CDN for up to five minutes; a
+  // just-published version must not look unpublished.
+  url.searchParams.set("cache", String(Date.now()));
   const response = await fetch(url, { headers: { accept: "application/json" } });
   if (response.status === 404) return undefined;
   if (!response.ok) throw new Error(`Registry lookup failed for ${name}: ${response.status}`);

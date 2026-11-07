@@ -2,11 +2,11 @@
 
 ## 2026-11-07 宿主与插件独立发布
 
-用户已确认[宿主与插件独立发布方案](plugin-independent-release.md)，阶段一已实施（D2–D6），等待 D1 的 npm 准备。
+用户已确认[宿主与插件独立发布方案](plugin-independent-release.md)，阶段一已实施（D1–D6）。
 
 阶段一：CI 与发布拆分。先拆快捷链接、流量监控、应用搜索；便签、翻译、OCR、截图暂时仍跟宿主一起发。
 
-- [ ] **D1** npm 准备（需用户操作）：在 npm 创建 `@spark233` 组织；在仓库 Secrets 添加有发布权限的 `NPM_TOKEN`；在仓库 Variables 设置 `SPARK233_NPM_READY=true`。三个插件首次发布成功后，在 npm 上为每个包配置可信发布（GitHub Actions，工作流 `release.yml`），然后删除 `NPM_TOKEN`。
+- [x] **D1** npm 准备：已创建 `@spark233` 组织；三个插件已用一次性 token 首次发布（0.1.1 / 0.2.5 / 1.1.6，带来源证明），然后为每个包配置了可信发布（GitHub Actions，`bhwa233/galaxy-tools`，`release.yml`，只允许 `npm publish`），发布权限改为“需要双重验证且禁止 token”。`NPM_TOKEN` 已从仓库删除。可信发布需要工作流真实发布一次才能激活，所以三个插件各升了一个补丁版本（0.1.2 / 0.2.6 / 1.1.7）。另外，首次失败的发布在 npm 上留下了 `0.0.0-stage` 暂存版本，客户端会忽略它。
 - [x] **D2** 插件包可发布：打包时生成发布用的 `package.json`（去掉 `private`、开发依赖和 `scripts`，加上仓库地址、公开访问设置和指纹）；源码保留 `private` 防止误发布。发布的就是 `build-official-plugins` 产出的同一个 tarball，CI 中附带来源证明。快捷链接已用 `npm publish --dry-run` 验证。
 - [x] **D3** `release.yml`：main 推送后 `plugin-release.mjs plan` 找出版本号还没上 npm 的独立插件，逐个构建（含原生组件）、测试、核对指纹后发布。由仓库变量 `SPARK233_NPM_READY` 开启；首次发布用 `NPM_TOKEN`，之后用可信发布。
 - [x] **D4** 发布指纹：打包产物中除原生二进制以外的全部文件，加上原生组件源码的 git blob；写入包的 `spark233Build.fingerprint`。已发布版本的指纹和当前不同就失败（PR 和 main 都检查）。本机连续两次构建指纹一致。

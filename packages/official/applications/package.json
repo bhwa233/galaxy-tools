@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-applications",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "private": true,
   "description": "Windows Start menu and registered application search for spark233",
   "license": "(MIT AND Apache-2.0)",
