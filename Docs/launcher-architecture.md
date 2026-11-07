@@ -757,3 +757,7 @@ Electron 资料：[进程模型](https://www.electronjs.org/docs/latest/tutorial
 ## 2026-10-30 插件声明与独立 renderer
 
 宿主 API 1.3 将窗口标题、图标、入口、默认尺寸和命令展示角色迁入各插件声明。启动器只处理发现、查询和激活，不再渲染插件页面。6 个带页面的官方插件分别构建 renderer，按所属实例接收激活载荷。字段及验证边界见 [实施方案](plugin-declaration-and-launcher-decoupling.md)。
+
+## 2026-11-07 插件窗口统一状态栏
+
+所有插件独立窗口统一显示宿主状态栏，窗口模式（普通、置顶、常驻桌面）互斥，并由状态栏控制；桌面卡片直接复用原窗口实例，取消设置页的「编辑桌面」全局模式。官方可信工作区扩展页面内的标题栏；Web 插件改为宿主壳窗口加 `WebContentsView`，`titleBar: "custom"` 废弃；uTools 壳窗口换用同一组件。方案与合同变化见 [插件窗口统一状态栏](plugin-window-status-bar.md)。

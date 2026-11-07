@@ -1,5 +1,16 @@
 # spark233 一期实施 TODO
 
+## 2026-11-07 插件窗口统一状态栏
+
+用户已确认[插件窗口统一状态栏方案](plugin-window-status-bar.md)，尚未授权编码。此为新增范围，不计入下方一期统计。
+
+- [ ] **W1** web-host 改为宿主壳窗口加 `WebContentsView`，安全约束迁到内容视图，状态栏先只包含窗口控制，行为与现有一致。
+- [ ] **W2** 抽出共用状态栏组件，接入 `WorkspaceTitleBar`、web-host 壳窗口和 uTools 壳窗口。
+- [ ] **W3** 窗口模式状态机（普通 / 置顶 / 常驻桌面）接入桌面层；移除设置页「编辑桌面」全局模式，插件栏图钉改为模式控件；切换不重载页面。
+- [ ] **W4** 流量监控、快捷链接移除自绘标题栏；SDK 废弃 `titleBar`，升级宿主 API 次版本并更新 README。
+- [ ] **W5** 插件栏顶部「添加插件」入口、单实例复用与收藏。
+- [ ] **W6** UI 自动化与视觉验收（最后进行）。
+
 ## 2026-11-03 uTools 常用插件兼容
 
 用户已授权按[兼容实施 TODO](utools-compatibility-todo.md)实现首版：预构建目录导入、独立受信运行器、常用 API、本地存储和搜索交互。此为新增范围；下方原一期人工验收统计保持原口径。
@@ -127,6 +138,7 @@
 
 - [截图能力补强 TODO](archive/2026-10/screenshot-enhancement-todo.md)：P4.19 / P4.20 / 部分选字的实现定位与决策记录
 - [架构设计](launcher-architecture.md)：产品范围与模块边界
+- [插件窗口统一状态栏](plugin-window-status-bar.md)：窗口模式、桌面卡片与 Web 插件壳窗口
 - [Electron 迁移与后续验收](archive/2026-10/electron-todo.md)：迁移期遗留的验收项
 - [历史归档](archive/2026-10/launcher-todo-archive.md)：重构前的完整 TODO 与全部 evidence 链接
 
