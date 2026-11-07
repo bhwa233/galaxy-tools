@@ -9,6 +9,7 @@ export function createLayerCommands(
     | "widgetHost"
     | "desktopLayer"
     | "utoolsDesktop"
+    | "windowDesktop"
     | "screenshotLayer"
     | "notesMigrationError"
     | "isAdminView"
@@ -34,6 +35,7 @@ export function createLayerCommands(
       case "layer_remove": {
         const id = String(args.widgetInstanceId);
         if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.remove(id);
+        if (ctx.windowDesktop?.has(id)) return ctx.windowDesktop.remove(id);
         return ctx.screenshotLayer?.has(id)
           ? ctx.screenshotLayer.close(id)
           : ctx.widgetHost.remove(id);
@@ -41,6 +43,7 @@ export function createLayerCommands(
       case "layer_retry": {
         const id = String(args.widgetInstanceId);
         if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.retry(id);
+        if (ctx.windowDesktop?.has(id)) return ctx.windowDesktop.retry(id);
         return ctx.screenshotLayer?.has(id)
           ? ctx.screenshotLayer.retry(id)
           : ctx.widgetHost.retry(id);

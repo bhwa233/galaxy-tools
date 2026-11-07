@@ -54,6 +54,7 @@ import { DEFAULT_DESKTOP_LAYER_PREFERENCES } from "../shared/config-schema.js";
 import { NotesLayerCoordinator, parseNotesLayout } from "./notes-layer.js";
 import { WidgetHost, widgetScheme } from "./plugins/widget-host.js";
 import { UToolsDesktopHost } from "./plugins/utools-desktop.js";
+import { PluginWindowDesktopHost } from "./plugins/window-desktop.js";
 import { parseCliArgs, type CliCommand } from "./cli-args.js";
 import { HostConfigStore, persistedConfigSchema } from "./host-config.js";
 import { ShortcutManager } from "./host/shortcuts.js";
@@ -78,6 +79,7 @@ import { initializeWindowsRuntime, watchFullscreen } from "./windows-runtime.js"
 export interface RuntimeContext {
   readonly desktopLayer: typeof desktopLayer;
   readonly utoolsDesktop: typeof utoolsDesktop;
+  readonly windowDesktop: typeof windowDesktop;
   readonly toggleDesktopOverlay: typeof toggleDesktopOverlay;
   readonly widgetHost: typeof widgetHost;
   readonly notesLayer: typeof notesLayer;
@@ -274,6 +276,9 @@ const runtimeContext: RuntimeContext = {
   },
   get utoolsDesktop(): typeof utoolsDesktop {
     return utoolsDesktop;
+  },
+  get windowDesktop(): typeof windowDesktop {
+    return windowDesktop;
   },
   get toggleDesktopOverlay(): typeof toggleDesktopOverlay {
     return toggleDesktopOverlay;
@@ -1105,6 +1110,7 @@ function toggleDesktopOverlay(): Promise<void> {
 }
 let widgetHost: WidgetHost | undefined;
 let utoolsDesktop: UToolsDesktopHost | undefined;
+let windowDesktop: PluginWindowDesktopHost | undefined;
 let notesLayer: NotesLayerCoordinator | undefined;
 let screenshotLayer: ScreenshotLayerCoordinator | undefined;
 let notesMigrationError: string | undefined;
@@ -1142,6 +1148,7 @@ async function syncDesktopLayer(strict = false): Promise<void> {
   screenshotLayer?.refresh();
   await widgetHost?.sync();
   await utoolsDesktop?.sync();
+  await windowDesktop?.sync();
   desktopLayer?.refresh();
 }
 async function flushDesktopLayer(): Promise<void> {
@@ -1684,6 +1691,24 @@ export function startDesktopHost(): void {
         store: layerStore,
         pluginHost: () => pluginHost,
       });
+      windowDesktop = new PluginWindowDesktopHost({
+        layer: desktopLayer,
+        store: layerStore,
+        available: (pluginId) => {
+          const installed = pluginHost?.manager.list().find((p) => p.pluginId === pluginId);
+          return !!installed?.enabled && !installed.lastError;
+        },
+        // Restores a kept window by running the command that opens that window.
+        openWindow: async (pluginId, profile) => {
+          const manager = pluginHost?.manager;
+          if (!manager) return;
+          const command = manager
+            .describe(pluginId)
+            .spark233.commands.find((entry) => entry.window === profile && !entry.internal);
+          if (!command) throw new Error("No command opens this plugin window");
+          await manager.activate(pluginId, { commandId: command.id });
+        },
+      });
       widgetHost = new WidgetHost({
         layer: desktopLayer,
         store: layerStore,
@@ -1692,6 +1717,7 @@ export function startDesktopHost(): void {
           ...capsules.quotaCards(),
           ...(screenshotLayer?.quotaCards() ?? []),
           ...(utoolsDesktop?.quotaCards() ?? []),
+          ...(windowDesktop?.quotaCards() ?? []),
         ],
         resolveScreenshotImage: async (handle) => screenshotLayer?.resolveImage(handle),
         pluginHost: () => pluginHost,
@@ -1919,6 +1945,7 @@ export function startDesktopHost(): void {
       try {
         pluginHost = new DesktopPluginHost({
           utoolsDesktop,
+          windowDesktop,
           root: path.join(configDir, "plugins"),
           bundledRoot: app.isPackaged
             ? path.join(process.resourcesPath, "plugins")

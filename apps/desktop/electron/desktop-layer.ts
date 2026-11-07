@@ -300,7 +300,8 @@ export class DesktopLayer {
       );
       const layout = this.options.store.load();
       const stored = layout.cards[cardId];
-      if (stored?.kind !== "utools") throw new AppError("permissionDenied", "兼容桌面窗口已失效");
+      if (stored?.kind !== "utools" && stored?.kind !== "window")
+        throw new AppError("permissionDenied", "桌面窗口已失效");
       layout.cards[cardId] = constrainLayerCard(
         {
           ...stored,
@@ -409,7 +410,8 @@ export class DesktopLayer {
         });
     if (this.options.flags().enabled && !this.options.store.readError)
       for (let card of next.values()) {
-        if (card.renderKind === "utools" && !this.editor) continue;
+        if ((card.renderKind === "utools" || card.renderKind === "window") && !this.editor)
+          continue;
         if (this.editor && card.presentationOnly) continue;
         if (!card.visible && !this.editor) continue;
         if (card.renderKind === "notes" && !this.options.flags().notesEnabled) continue;
@@ -1496,7 +1498,7 @@ export class DesktopLayer {
           ? consumer?.onInvoke?.(card.id, "capsule_open", { id: card.renderRef })
           : card.renderKind === "screenshot"
             ? consumer?.onInvoke?.(card.id, "edit", {})
-            : card.renderKind === "utools"
+            : card.renderKind === "utools" || card.renderKind === "window"
               ? consumer?.onInvoke?.(card.id, "open", {})
               : this.options.onOverlayOpenPanel?.(card);
       // Release the operation layer before handing focus to an editor or

@@ -265,11 +265,23 @@ export class WidgetHost {
     const reservations: LayerQuotaCard[] = trusted.flatMap((card): LayerQuotaCard[] => {
       const display = displays.find((item) => item.id === card.displayId);
       if (!card.renderRef || !card.visible || !display) return [];
-      if (card.renderKind === "screenshot" || card.renderKind === "utools") {
+      if (
+        card.renderKind === "screenshot" ||
+        card.renderKind === "utools" ||
+        card.renderKind === "window"
+      ) {
         const saved = stored.cards[card.id];
-        if (!saved || (saved.kind !== "screenshot" && saved.kind !== "utools")) return [];
+        if (
+          !saved ||
+          (saved.kind !== "screenshot" && saved.kind !== "utools" && saved.kind !== "window")
+        )
+          return [];
         const instanceId =
-          saved.kind === "screenshot" ? saved.screenshotId : saved.utoolsInstanceId;
+          saved.kind === "screenshot"
+            ? saved.screenshotId
+            : saved.kind === "utools"
+              ? saved.utoolsInstanceId
+              : saved.windowInstanceId;
         if (saved.kind !== card.renderKind || instanceId !== card.renderRef) return [];
         return [
           {

@@ -48,11 +48,20 @@ const utoolsCardSchema = z.strictObject({
   utoolsInstanceId: z.uuid(),
   featureCode: z.string().min(1).max(160),
 });
+/** A plugin's own window (host status bar shell) kept on the desktop. */
+const windowCardSchema = z.strictObject({
+  ...common,
+  kind: z.literal("window"),
+  pluginId: localId,
+  windowProfile: localId,
+  windowInstanceId: z.uuid(),
+});
 const storedCardSchema = z.discriminatedUnion("kind", [
   widgetCardSchema,
   noteCardSchema,
   screenshotCardSchema,
   utoolsCardSchema,
+  windowCardSchema,
 ]);
 const placementSchema = z.strictObject({
   kind: z.enum(["docked", "floating"]),
@@ -120,6 +129,7 @@ export const desktopLayoutSchema = z
       context.addIssue({ code: "custom", message: "Desktop layout exceeds 512 stored cards" });
     const removed = new Set(state.removedInstances.map((entry) => entry.id));
     const compatibilityPlugins = new Set<string>();
+    const pluginWindows = new Set<string>();
     if (removed.size !== state.removedInstances.length)
       context.addIssue({
         code: "custom",
@@ -135,6 +145,16 @@ export const desktopLayoutSchema = z
           });
         compatibilityPlugins.add(card.pluginId);
       }
+      if (card.kind === "window") {
+        const key = JSON.stringify([card.pluginId, card.windowProfile]);
+        if (pluginWindows.has(key))
+          context.addIssue({
+            code: "custom",
+            path: ["cards", id],
+            message: "A plugin window has more than one desktop card",
+          });
+        pluginWindows.add(key);
+      }
       const expected =
         card.kind === "widget"
           ? `widget:${card.widgetInstanceId}`
@@ -142,7 +162,9 @@ export const desktopLayoutSchema = z
             ? `screenshot:${card.screenshotId}`
             : card.kind === "utools"
               ? `utools:${card.utoolsInstanceId}`
-              : `notes:${card.noteId}`;
+              : card.kind === "window"
+                ? `window:${card.windowInstanceId}`
+                : `notes:${card.noteId}`;
       if (id !== expected || removed.has(id))
         context.addIssue({
           code: "custom",
@@ -158,11 +180,13 @@ export type WidgetLayoutCard = z.infer<typeof widgetCardSchema>;
 export type NotesLayoutCard = z.infer<typeof noteCardSchema>;
 export type ScreenshotLayoutCard = z.infer<typeof screenshotCardSchema>;
 export type UToolsLayoutCard = z.infer<typeof utoolsCardSchema>;
+export type WindowLayoutCard = z.infer<typeof windowCardSchema>;
 export type StoredLayerCard =
   | WidgetLayoutCard
   | NotesLayoutCard
   | ScreenshotLayoutCard
-  | UToolsLayoutCard;
+  | UToolsLayoutCard
+  | WindowLayoutCard;
 export type DesktopLayoutV1 = z.infer<typeof desktopLayoutSchema>;
 export interface NotesLayoutV2 {
   version: 2;
@@ -438,6 +462,9 @@ export class LayerLayoutStore {
   removeUTools(instanceId: string): Promise<void> {
     return this.removeCard(`utools:${z.uuid().parse(instanceId)}`);
   }
+  removeWindow(instanceId: string): Promise<void> {
+    return this.removeCard(`window:${z.uuid().parse(instanceId)}`);
+  }
   private async removeCard(id: string): Promise<void> {
     const next = this.load();
     if (!Object.hasOwn(next.cards, id)) return;
@@ -537,7 +564,7 @@ export function findLayerPlacement(
 export interface LayerQuotaCard {
   id: string;
   card: StoredLayerCard;
-  renderKind: "notes" | "declarative" | "web" | "screenshot" | "utools";
+  renderKind: "notes" | "declarative" | "web" | "screenshot" | "utools" | "window";
 }
 export interface LayerQuotas {
   perPlugin: number;
@@ -571,7 +598,7 @@ export function allocateLayerCards(
   )) {
     if (!card.visible || !card.restore) continue;
     const plugin =
-        card.kind === "widget" || card.kind === "utools"
+        card.kind === "widget" || card.kind === "utools" || card.kind === "window"
           ? card.pluginId
           : card.kind === "screenshot"
             ? "spark233.screenshot"

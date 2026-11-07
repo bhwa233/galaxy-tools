@@ -41,6 +41,7 @@ export function createMenus(
     | "toggleDesktopOverlay"
     | "widgetHost"
     | "utoolsDesktop"
+    | "windowDesktop"
     | "screenshotLayer"
   >,
 ) {

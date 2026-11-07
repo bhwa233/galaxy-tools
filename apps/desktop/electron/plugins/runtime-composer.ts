@@ -243,6 +243,7 @@ export async function composePluginRuntime(
       pluginRoot: installation.directory,
       entryPath: declaration ? confined(installation.directory, declaration.entry) : entries.web!,
       windowProfile: profile,
+      desktop: ctx.options.windowDesktop,
       getLocale: ctx.options.getLocale,
       manifest: metadata.spark233,
       dataDir: ctx.manager().dataDirectory(installation.pluginId),

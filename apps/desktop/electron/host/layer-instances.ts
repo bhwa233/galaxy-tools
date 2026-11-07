@@ -1,7 +1,10 @@
 import type { LayerManagementState } from "../../shared/layer-contract.js";
 import type { RuntimeContext } from "../runtime.js";
 
-type LayerHosts = Pick<RuntimeContext, "widgetHost" | "utoolsDesktop" | "screenshotLayer">;
+type LayerHosts = Pick<
+  RuntimeContext,
+  "widgetHost" | "utoolsDesktop" | "windowDesktop" | "screenshotLayer"
+>;
 export type LayerInstancePatch = Parameters<NonNullable<RuntimeContext["widgetHost"]>["update"]>[1];
 
 /** One listing of every desktop card owner, shared by settings and the tray. */
@@ -13,6 +16,7 @@ export function listLayerInstances(ctx: LayerHosts): LayerManagementState {
       ...state.instances,
       ...(ctx.screenshotLayer?.list() ?? []),
       ...(ctx.utoolsDesktop?.list() ?? []),
+      ...(ctx.windowDesktop?.list() ?? []),
     ],
   };
 }
@@ -24,6 +28,7 @@ export async function updateLayerInstance(
   patch: LayerInstancePatch,
 ): Promise<unknown> {
   if (ctx.utoolsDesktop?.has(id)) return ctx.utoolsDesktop.update(id, patch);
+  if (ctx.windowDesktop?.has(id)) return ctx.windowDesktop.update(id, patch);
   return ctx.screenshotLayer?.has(id)
     ? ctx.screenshotLayer.update(id, patch)
     : ctx.widgetHost!.update(id, patch);

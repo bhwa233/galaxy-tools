@@ -66,6 +66,7 @@ export interface WidgetSourceEvent {
 
 export interface DesktopPluginHostOptions {
   utoolsDesktop?: import("./utools-desktop.js").UToolsDesktopHost;
+  windowDesktop?: import("./window-desktop.js").PluginWindowDesktopHost;
   utoolsFetch?: typeof fetch;
   getPluginIcon?: (pluginId: string) => string | undefined;
   root: string;

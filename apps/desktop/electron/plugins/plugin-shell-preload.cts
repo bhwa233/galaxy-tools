@@ -5,7 +5,8 @@ const { contextBridge, ipcRenderer } = require("electron") as typeof import("ele
 
 contextBridge.exposeInMainWorld("pluginShell", {
   state: () => ipcRenderer.invoke("spark233:plugin-shell", "state"),
-  action: (name: string) => ipcRenderer.invoke("spark233:plugin-shell", name),
+  action: (name: string, anchor?: unknown) =>
+    ipcRenderer.invoke("spark233:plugin-shell", name, anchor),
   subscribe: (listener: (state: unknown) => void) => {
     const receive = (_event: unknown, state: unknown) => listener(state);
     ipcRenderer.on("spark233:plugin-shell:state", receive);

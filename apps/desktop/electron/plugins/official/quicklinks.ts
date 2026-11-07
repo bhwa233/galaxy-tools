@@ -60,6 +60,8 @@ interface QuicklinksRuntimeOptions {
   getLocale: () => string;
   getTheme: () => PluginTheme;
   subscribeTheme: (listener: () => void) => () => void;
+  /** Lets the user keep the Quick Links window on the desktop. */
+  desktop?: import("../window-desktop.js").PluginWindowDesktopHost;
 }
 
 /** Reuse the sandboxed plugin web host, capability broker and indexed application
@@ -93,6 +95,7 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
         pluginRoot: installation.directory,
         entryPath: confined(installation.directory, profile.entry),
         windowProfile: "main",
+        desktop: options.desktop,
         manifest: metadata.spark233,
         dataDir: manager.dataDirectory(metadata.spark233.id),
         grant: installation.grant,

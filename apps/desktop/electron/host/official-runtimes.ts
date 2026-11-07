@@ -78,6 +78,7 @@ export function createOfficialRuntimeFactory(
     | "hostShutdown"
     | "exiting"
     | "requestLauncher"
+    | "windowDesktop"
   >,
 ): NonNullable<DesktopPluginHostOptions["createOfficialRuntime"]> {
   return async (installation, metadata, scope, backend, startupCheckOnly = false) => {
@@ -339,6 +340,7 @@ export function createOfficialRuntimeFactory(
         getLocale: () => ctx.hostConfig.value.locale,
         getTheme: () => ctx.getPluginTheme(),
         subscribeTheme: (listener) => ctx.subscribePluginTheme(listener),
+        desktop: ctx.windowDesktop,
       });
     }
     if (id === "spark233.translation") {

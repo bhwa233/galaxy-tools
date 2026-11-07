@@ -1,34 +1,24 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
-import { WindowTitleBar } from "@spark233/ui/components";
+import type { PluginShellState } from "../../../shared/window-mode";
+import { StatusBar } from "../windows/StatusBar";
 import "../../App.css";
 
-/** Pushed by the host; the plugin page cannot reach this window. */
-export interface PluginShellState {
-  title: string;
-  maximized: boolean;
-  maximizable: boolean;
-  locale: string;
-  theme: { effective: "light" | "dark"; accent?: string };
-}
+type ShellAction = "minimize" | "toggleMaximize" | "close" | "menu:mode" | "menu:more";
 declare global {
   interface Window {
     pluginShell: {
       state(): Promise<PluginShellState>;
-      action(name: "minimize" | "toggleMaximize" | "close"): Promise<void>;
+      action(name: ShellAction, anchor?: { x: number; y: number }): Promise<void>;
       subscribe(listener: (value: PluginShellState) => void): () => void;
     };
   }
 }
 
-const LABELS = {
-  zh: { minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" },
-  en: { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" },
-};
-
-/** Host-drawn status bar above a Web plugin page (W1: window controls only). */
+/** Host-drawn status bar above a Web plugin page. The page cannot reach it. */
 function PluginShell() {
   const [state, setState] = useState<PluginShellState>();
+  const [error, setError] = useState<string>();
   useEffect(() => {
     const receive = (value: PluginShellState) => {
       setState(value);
@@ -41,15 +31,28 @@ function PluginShell() {
     return unsubscribe;
   }, []);
   if (!state) return null;
-  const action = (name: "minimize" | "toggleMaximize" | "close") =>
-    void window.pluginShell.action(name).catch(console.error);
+  const action = (name: ShellAction, anchor?: { x: number; y: number }) => {
+    setError(undefined);
+    void window.pluginShell
+      .action(name, anchor)
+      .catch((value: unknown) =>
+        setError(String(value instanceof Error ? value.message : value).replace(/^Error: /, "")),
+      );
+  };
   return (
     <div className="h-screen bg-background text-foreground">
-      <WindowTitleBar
+      <StatusBar
         title={state.title}
-        isMaximized={state.maximized}
+        subtitle={error}
+        locale={state.locale}
+        runState={error ? "error" : undefined}
+        mode={state.mode}
+        nativeMenus={{
+          mode: (anchor) => action("menu:mode", anchor),
+          more: (anchor) => action("menu:more", anchor),
+        }}
+        maximized={state.maximized}
         maximizable={state.maximizable}
-        labels={state.locale.startsWith("en") ? LABELS.en : LABELS.zh}
         onMinimize={() => action("minimize")}
         onToggleMaximize={() => action("toggleMaximize")}
         onClose={() => action("close")}

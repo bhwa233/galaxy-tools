@@ -99,6 +99,7 @@ export function overlayPanelKind(card: LayerCard): DesktopOverlayPanel["kind"] |
   }
   if (card.renderKind === "screenshot") return "screenshot";
   if (card.renderKind === "utools") return "utools";
+  if (card.renderKind === "window") return "window";
   if (card.renderKind === "declarative" && card.widget?.pluginId === "spark233.traffic")
     return "traffic";
 }
@@ -161,11 +162,11 @@ export class DesktopOverlayLayout {
       Math.max(1, area.height - 122) / card.bounds.height,
     );
     const width =
-      card.renderKind === "utools"
+      card.renderKind === "utools" || card.renderKind === "window"
         ? Math.min(Math.max(1, area.width - 24), Math.max(320, card.bounds.width * scale))
         : card.bounds.width * scale;
     const height =
-      card.renderKind === "utools"
+      card.renderKind === "utools" || card.renderKind === "window"
         ? Math.min(Math.max(1, area.height - 122), Math.max(160, card.bounds.height * scale))
         : card.bounds.height * scale;
     const columns = Math.max(1, Math.floor((area.width - 32) / (Math.min(340, width) + 20)));

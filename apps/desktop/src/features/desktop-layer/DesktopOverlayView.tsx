@@ -8,6 +8,7 @@ import {
   type HTMLAttributes,
 } from "react";
 import {
+  AppWindow,
   ExternalLink,
   GripHorizontal,
   Image,
@@ -47,7 +48,13 @@ import "./desktop-overlay.css";
 import { DesktopPanelToolbar } from "./DesktopPanelToolbar";
 
 type Send = (request: LayerClientRequest) => Promise<unknown>;
-const kindIcons = { notes: StickyNote, traffic: Network, screenshot: Image, utools: Puzzle };
+const kindIcons = {
+  notes: StickyNote,
+  traffic: Network,
+  screenshot: Image,
+  utools: Puzzle,
+  window: AppWindow,
+};
 
 /** Management chrome lives in one existing trusted surface; plugin content
  * remains mounted in each source's persistent LayerCardFrame below. */
