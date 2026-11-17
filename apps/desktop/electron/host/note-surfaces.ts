@@ -8,6 +8,8 @@ import {
 import { deriveNoteWindowState } from "../note-window-state.js";
 import { AppError } from "../persistence.js";
 import { NotesDataClient } from "../plugins/official/notes-data-client.js";
+import { routePluginWindow, windowOpenContext } from "./plugin-window-routing.js";
+import { unifiedWindowControl } from "./plugin-window-adapters.js";
 import type { Layout, RuntimeContext } from "../runtime.js";
 
 /** note-surfaces owns this domain; shared state remains in the composition root. */
@@ -37,6 +39,8 @@ export function createNoteSurfaces(
     | "launcherPresentationGuard"
     | "pendingManagerOpen"
     | "notesLayer"
+    | "prepare"
+    | "pluginWindowLayouts"
   >,
 ) {
   function noteWindowSnapshot(): NoteWindowSnapshot {
@@ -49,12 +53,15 @@ export function createNoteSurfaces(
     );
     const notes = [...entries].map(([noteId, layout]) => {
       const win = ctx.windows.get(layout.label);
-      return deriveNoteWindowState(
-        noteId,
-        layout,
-        !!win && !win.isDestroyed() && win.isVisible(),
-        ctx.capsules?.isHidden() ?? false,
-      );
+      return {
+        ...deriveNoteWindowState(
+          noteId,
+          layout,
+          !!win && !win.isDestroyed() && win.isVisible(),
+          ctx.capsules?.isHidden() ?? false,
+        ),
+        editingElsewhere: !!win && !win.isDestroyed(),
+      };
     });
     return { version: ctx.noteStateVersion, notes };
   }
@@ -70,6 +77,7 @@ export function createNoteSurfaces(
   }
 
   function applyNoteTopmost(win: BrowserWindow, layout: Layout): void {
+    if (unifiedWindowControl(win)) return;
     const b = win.getBounds(),
       blocked = ctx.fullscreenRects.some(
         (r) =>
@@ -108,6 +116,11 @@ export function createNoteSurfaces(
     }
     const before = layout.topmost,
       win = ctx.windows.get(layout.label);
+    const control = win && unifiedWindowControl(win);
+    if (control) {
+      control.setAlwaysOnTop(pinned);
+      return;
+    }
     try {
       layout.topmost = pinned;
       if (win && !win.isDestroyed()) applyNoteTopmost(win, layout);
@@ -190,10 +203,32 @@ export function createNoteSurfaces(
     // Never replace it with the still-empty startup map, including on early quit.
     if (ctx.backupRecoveryPending || !ctx.layoutsRestored || !ctx.notesActive) return;
     if (ctx.layoutTimer) clearTimeout(ctx.layoutTimer);
+    const managedNotes = ctx.pluginWindowLayouts
+      ?.load()
+      .instances.filter((value) => value.pluginId === "spark233.notes" && value.binding.contentId);
     const layout = {
       version: 2 as const,
       capsuleQueues: [...(ctx.capsules?.queues.values() ?? [])],
-      windows: [...ctx.layouts.values()].filter((entry) => entry.view === "main" || entry.noteId),
+      windows: [...ctx.layouts.values()]
+        .filter((entry) => entry.view === "main" || entry.noteId)
+        .map((entry) => {
+          const instance = managedNotes?.find((value) => value.binding.contentId === entry.noteId);
+          const ordinary =
+            instance &&
+            ctx.pluginWindowLayouts
+              ?.load()
+              .placements.find(
+                (value) => value.instanceId === instance.id && value.environment === "desktop",
+              );
+          return instance
+            ? {
+                ...entry,
+                bounds: ordinary?.bounds ?? entry.bounds,
+                visible: ordinary?.visible ?? false,
+                topmost: ordinary?.topmost ?? false,
+              }
+            : entry;
+        }),
     };
     const write = (value: typeof layout) =>
       data.putState("layout", JSON.parse(JSON.stringify(value)));
@@ -234,8 +269,46 @@ export function createNoteSurfaces(
     bounds?: Electron.Rectangle,
   ): Promise<string> {
     ctx.requireNotes();
+    if (!noteId && !windowOpenContext.getStore()?.coordinated) {
+      const previous = new Set(ctx.layouts.keys());
+      if (
+        await routePluginWindow(
+          "spark233.notes",
+          {
+            windowId: view === "tile" ? "tile" : "notepad",
+            parameterVersion: 1,
+          },
+          "create",
+        )
+      )
+        return (
+          [...ctx.layouts.values()].find((entry) => !previous.has(entry.label) && entry.noteId)
+            ?.label ?? ""
+        );
+    }
     if (noteId) await ctx.notesClient.get(noteId);
+    if (
+      noteId &&
+      (await routePluginWindow("spark233.notes", {
+        windowId: view === "tile" ? "tile" : "notepad",
+        contentId: noteId,
+        parameterVersion: 1,
+      }))
+    ) {
+      return (
+        [...ctx.layouts.values()].find(
+          (entry) => entry.noteId === noteId && (entry.view === "notepad" || entry.view === "tile"),
+        )?.label ?? ""
+      );
+    }
     ctx.endLauncherExecutionQuery();
+    for (const [label, manager] of ctx.windows)
+      if (
+        ctx.layouts.get(label)?.view === "main" &&
+        !manager.isDestroyed() &&
+        !(await ctx.prepare(manager))
+      )
+        throw new AppError("saveFailed", "便签管理器尚未保存，无法转交编辑");
     const found = noteId
       ? [...ctx.layouts.values()].find(
           (entry) => entry.noteId === noteId && (entry.view === "notepad" || entry.view === "tile"),
@@ -273,13 +346,14 @@ export function createNoteSurfaces(
     const win = ctx.createWindow(layout);
     if (modeChanged && ctx.ready.has(win.id))
       ctx.emit("surface-mode-request", view === "tile" ? "tile" : "pad", win);
-    if (ctx.ready.has(win.id)) {
+    if (ctx.ready.has(win.id) && !windowOpenContext.getStore()?.coordinated) {
       win.show();
       win.focus();
     }
     scheduleLayout();
     ctx.refreshTray();
     ctx.capsules?.refresh();
+    publishNoteStates();
     return label;
   }
 

@@ -1,5 +1,6 @@
 export type NoteDesktopPresence = "unopened" | "desktop" | "capsule" | "hidden";
 export interface NoteWindowState {
+  editingElsewhere?: boolean;
   noteId: string;
   pinned: boolean;
   presence: NoteDesktopPresence;

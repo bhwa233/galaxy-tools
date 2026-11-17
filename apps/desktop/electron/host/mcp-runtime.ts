@@ -12,6 +12,8 @@ export function createMcpOperations(
     | "layouts"
     | "windows"
     | "persistLayout"
+    | "pluginWindowCoordinator"
+    | "prepare"
   >,
 ): McpOps {
   return {
@@ -46,6 +48,12 @@ export function createMcpOperations(
       }),
     writeNote: (id, mode, content) =>
       ctx.enqueueMutation(async () => {
+        if (
+          [...ctx.layouts.values()].some(
+            (entry) => entry.noteId === id && ctx.windows.has(entry.label),
+          )
+        )
+          throw new AppError("noteInUse", "此便签正在独立窗口编辑");
         const note = mode === "replace" ? await ctx.notesClient.get(id) : undefined;
         const saved = note
           ? await ctx.notesClient.save({ title: note.title, content, category: note.category }, id)
@@ -53,20 +61,29 @@ export function createMcpOperations(
         ctx.changed();
         return ctx.toMcpNote(saved);
       }),
-    deleteNote: (id) =>
-      ctx.enqueueMutation(async () => {
-        const editors = [...ctx.layouts.values()].filter(
-          (entry) => entry.noteId === id && ctx.windows.has(entry.label),
-        );
-        if (editors.length)
-          throw new AppError("noteInUse", "该便签有独立窗口打开，请先关闭后再删除");
-        await ctx.notesClient.delete(id);
-        await ctx.notesClient.cancelRemindersForNote(id);
-        for (const entry of ctx.layouts.values())
-          if (entry.noteId === id) ctx.layouts.delete(entry.label);
-        await ctx.persistLayout();
-        ctx.changed();
-      }),
+    deleteNote: async (id) => {
+      const editors = [...ctx.layouts.values()].filter(
+        (entry) => entry.noteId === id && ctx.windows.has(entry.label),
+      );
+      for (const editor of editors) {
+        const win = ctx.windows.get(editor.label);
+        if (win && !(await ctx.prepare(win)))
+          throw new AppError("saveFailed", "便签尚未保存，已保留窗口和内容");
+      }
+      const cleanup = ctx.pluginWindowCoordinator?.beginCleanup("spark233.notes", id);
+      // A transport failure does not prove the business deletion was rolled back.
+      await ctx.enqueueMutation(() => ctx.notesClient.delete(id));
+      if (cleanup) ctx.pluginWindowCoordinator?.confirmCleanup(cleanup);
+      for (const editor of editors) {
+        const win = ctx.windows.get(editor.label);
+        if (win && !win.isDestroyed()) win.destroy();
+      }
+      await ctx.notesClient.cancelRemindersForNote(id);
+      for (const entry of ctx.layouts.values())
+        if (entry.noteId === id) ctx.layouts.delete(entry.label);
+      await ctx.persistLayout();
+      ctx.changed();
+    },
     setReminder: (input) =>
       ctx.enqueueMutation(async () => {
         let noteId = input.noteId;

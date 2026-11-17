@@ -1,5 +1,6 @@
 import { useNoteDocument, useNoteClosePreparation } from "./useNoteDocument";
 import { useNoteWindowStates } from "../windows/useNoteWindowStates";
+import { useWindowMode } from "../windows/useWindowMode";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -153,6 +154,8 @@ export function NotePad({
   );
   const [isExiting, setIsExiting] = useState(false);
   const [draftAlwaysOnTop, setAlwaysOnTop] = useState(false);
+  const windowMode = useWindowMode();
+  const inCardDesktop = windowMode.mode === "desktop";
   const noteWindowStates = useNoteWindowStates();
   const alwaysOnTop =
     (editingNoteId ? noteWindowStates[editingNoteId]?.pinned : undefined) ?? draftAlwaysOnTop;
@@ -169,7 +172,7 @@ export function NotePad({
       showToast(getErrorMessage(error));
     }
   };
-  const topmostButton = (
+  const topmostButton = !inCardDesktop && (
     <button
       type="button"
       aria-pressed={alwaysOnTop}
@@ -686,7 +689,7 @@ export function NotePad({
 
   const handleClose = useCallback(() => {
     setIsExiting(true);
-    // Main process requests a durable save before releasing the renderer.
+    // Closing is immediate; autosave owns persistence independently.
     void closeCurrentWindow().catch((error) => {
       setIsExiting(false);
       showToast(getErrorMessage(error));
@@ -709,6 +712,19 @@ export function NotePad({
 
   useEffect(() => {
     const fold = (event: KeyboardEvent) => {
+      if (
+        inCardDesktop &&
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        !document.querySelector('[role="dialog"], [role="menu"]')
+      ) {
+        event.preventDefault();
+        void invoke("window_control", { action: "collapseWorkspace" }).catch((error) =>
+          showToast(getErrorMessage(error)),
+        );
+        return;
+      }
       if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "w") {
         event.preventDefault();
         handleClose();
@@ -716,7 +732,7 @@ export function NotePad({
     };
     document.addEventListener("keydown", fold);
     return () => document.removeEventListener("keydown", fold);
-  }, [handleClose]);
+  }, [handleClose, inCardDesktop]);
 
   const handleCloseRef = useRef(handleClose);
   handleCloseRef.current = handleClose;
@@ -890,8 +906,8 @@ export function NotePad({
           <div className="absolute top-2 left-2 z-10">{topmostButton}</div>
           <button
             type="button"
-            aria-label={t("contextMenu.foldCapsule")}
-            title={t("contextMenu.foldCapsule")}
+            aria-label={inCardDesktop ? t("notepad.tooltip.close") : t("contextMenu.foldCapsule")}
+            title={inCardDesktop ? t("notepad.tooltip.close") : t("contextMenu.foldCapsule")}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={() => void handleClose()}
             className="absolute top-2 right-2 z-10 w-7 h-7 flex items-center justify-center rounded-full text-ink-ghost/70 hover:text-red-400 hover:bg-danger-bg/80 transition-colors cursor-pointer"
@@ -1006,7 +1022,7 @@ export function NotePad({
                 <button
                   onClick={() => void handleClose()}
                   className="group w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:bg-danger-bg hover:text-red-400 transition-all duration-200 cursor-pointer"
-                  title={t("contextMenu.foldCapsule")}
+                  title={inCardDesktop ? t("notepad.tooltip.close") : t("contextMenu.foldCapsule")}
                 >
                   <svg
                     width="13"

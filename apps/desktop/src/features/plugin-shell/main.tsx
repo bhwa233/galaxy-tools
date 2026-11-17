@@ -30,7 +30,7 @@ function PluginShell() {
     void window.pluginShell.state().then(receive);
     return unsubscribe;
   }, []);
-  if (!state) return null;
+  if (!state || state.chrome === "none") return null;
   const action = (name: ShellAction, anchor?: { x: number; y: number }) => {
     setError(undefined);
     void window.pluginShell
@@ -58,6 +58,7 @@ function PluginShell() {
         }}
         maximized={state.maximized}
         maximizable={state.maximizable}
+        minimizable={state.minimizable}
         onMinimize={() => action("minimize")}
         onToggleMaximize={() => action("toggleMaximize")}
         onClose={() => action("close")}

@@ -1036,11 +1036,6 @@ export function Launcher() {
           </Button>
         </Alert>
       )}
-      {state?.warnings?.map((warning) => (
-        <Alert key={warning} className="shrink-0">
-          <AlertDescription>{warning}</AlertDescription>
-        </Alert>
-      ))}
       {state && !state.pluginsReady && (
         <Alert className="shrink-0">
           <Spinner />

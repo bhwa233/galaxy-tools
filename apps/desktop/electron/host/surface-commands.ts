@@ -64,7 +64,7 @@ export function createSurfaceCommands(
   }
 
   function executeCliCommand(command: CliCommand): void {
-    if (ctx.lifecycle.blocked) {
+    if (ctx.lifecycle.blocked && command !== "show" && command !== "exit") {
       console.error("正在备份或恢复，CLI 操作未执行");
       return;
     }

@@ -9,11 +9,13 @@ export const desktopLayerPreferencesSchema = z.strictObject({
   enabled: z.boolean(),
   webEnabled: z.boolean(),
   notesEnabled: z.boolean(),
+  topTriggerEnabled: z.boolean().optional(),
 });
 export const DEFAULT_DESKTOP_LAYER_PREFERENCES = {
   enabled: true,
   webEnabled: true,
   notesEnabled: true,
+  topTriggerEnabled: true,
 } as const;
 // Explicit mutable fields only: unknown keys, including dataDir, must never
 // reach the host preferences through an ordinary settings write.

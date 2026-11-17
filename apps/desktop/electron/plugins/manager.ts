@@ -6,9 +6,11 @@ import semver from "semver";
 import { z } from "zod";
 import {
   pluginCapabilitySchema,
+  pluginDevelopmentBuildSchema,
   isPluginPackagePath,
   commandMatchesSourceApplication,
   sourceApplicationSchema,
+  pluginWidgetDefinitions,
   type JsonValue,
   type PluginActivation,
   type PluginCapability,
@@ -18,6 +20,7 @@ import {
   type PluginDataMigration,
   type PluginCommand,
   type WidgetBinding,
+  type WindowBinding,
 } from "@spark233/sdk";
 import { AppError, atomicWrite, canonical, confined, inside, readJson } from "../persistence.js";
 import { validatePluginDirectory, type HostEnvironment } from "./manifest.js";
@@ -30,6 +33,7 @@ import { PluginResourceScope, samePluginOwner } from "./resources.js";
 import { pluginPackageSourceSchema } from "../../shared/plugin-sources.js";
 import { compatibilityManifest, utoolsUpstreamVersion } from "./utools-manifest.js";
 import { diagnosticErrorCode, type DiagnosticEvent } from "../diagnostics.js";
+import { awaitPluginTask, windowOpenContext } from "../host/plugin-window-routing.js";
 
 export const pluginTrustGrantSchema = z.strictObject({
   capabilities: z.array(pluginCapabilitySchema),
@@ -39,6 +43,7 @@ const installationSchema = z.strictObject({
   pluginId: z.string(),
   packageName: z.string(),
   version: z.string(),
+  development: pluginDevelopmentBuildSchema.optional(),
   directory: z.string(),
   enabled: z.boolean(),
   integrity: z.string(),
@@ -97,7 +102,12 @@ const stateSchema = z.strictObject({
 type PersistentState = z.infer<typeof stateSchema>;
 type Journal = z.infer<typeof journalSchema>;
 export interface ManagedPluginRuntime {
-  activate(activation: PluginActivation): Promise<JsonValue | undefined>;
+  openWindow?(instanceId: string, binding: WindowBinding): Promise<void>;
+  activateWindow?(instanceId: string, activation: PluginActivation): Promise<void>;
+  prepareWindowClose?(instanceId: string): Promise<{ ok: boolean; reason?: string }>;
+  closeWindow?(instanceId: string): Promise<void>;
+  createWindowContent?(windowId: string, creationId: string): Promise<WindowBinding>;
+  activate(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   query?(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   /** Explicitly headless: never fall back to activate, which may open a window. */
   executeWidget?(request: {
@@ -117,6 +127,8 @@ export interface WidgetExecution {
   signal: AbortSignal;
 }
 export interface PluginManagerOptions {
+  onUninstallBegin?: (pluginId: string) => string;
+  onUninstallCommitted?: (receipt: string) => void;
   stateFile: string;
   dataRoot: string;
   backupRoot: string;
@@ -188,6 +200,7 @@ export class PluginManager {
   }>();
   private exclusive = false;
   private ready = false;
+  private readonly startupPending = new Set<string>();
 
   getBackupLayout() {
     return structuredClone({
@@ -213,11 +226,17 @@ export class PluginManager {
       identities.add(record.pluginId);
       const directory =
         directoryFor?.(record) ??
-        getPluginVersionDirectory(this.options.packages, record.pluginId, record.version);
+        getPluginVersionDirectory(
+          this.options.packages,
+          record.pluginId,
+          record.version,
+          record.development,
+        );
       const metadata = validatePluginDirectory(directory, this.options.environment, {
         name: record.packageName,
         version: record.version,
         pluginId: record.pluginId,
+        development: record.development ?? null,
       });
       if (this.digest(directory) !== record.manifestDigest)
         throw new AppError("invalidBackup", "备份插件清单散列与安装状态不一致");
@@ -239,6 +258,7 @@ export class PluginManager {
         this.options.packages,
         record.pluginId,
         record.version,
+        record.development,
       );
     }
     for (const record of snapshot.plugins) {
@@ -488,6 +508,7 @@ export class PluginManager {
     const instance = this.instances.get(pluginId);
     return (
       this.lifecycle.has(pluginId) ||
+      this.startupPending.has(pluginId) ||
       this.pendingCrashes.has(pluginId) ||
       this.state.transaction?.pluginId === pluginId ||
       !!(instance && instance.scope.state !== "active")
@@ -540,6 +561,7 @@ export class PluginManager {
       this.options.packages,
       record.pluginId,
       record.version,
+      record.development,
     );
     if (canonical(expected) !== canonical(record.directory))
       throw new AppError("invalidPluginState", "插件代码目录与版本身份不一致");
@@ -561,6 +583,7 @@ export class PluginManager {
       record.directory,
       record.packageName,
       record.version,
+      record.development,
       record.manifestDigest,
       allowIncompatibleHost,
       stat.dev.toString(),
@@ -581,6 +604,7 @@ export class PluginManager {
         name: record.packageName,
         version: record.version,
         pluginId: record.pluginId,
+        development: record.development ?? null,
       },
       { allowIncompatibleHost },
     );
@@ -705,13 +729,15 @@ export class PluginManager {
       const instance = this.instances.get(record.pluginId);
       return structuredClone({
         ...record,
-        status: record.lastError
-          ? "error"
-          : instance
-            ? instance.scope.state
-            : record.enabled
-              ? "enabled"
-              : "disabled",
+        status: this.startupPending.has(record.pluginId)
+          ? "starting"
+          : record.lastError
+            ? "error"
+            : instance
+              ? instance.scope.state
+              : record.enabled
+                ? "enabled"
+                : "disabled",
         ...(instance ? { instanceId: instance.scope.owner.instanceId } : {}),
       });
     });
@@ -1038,26 +1064,52 @@ export class PluginManager {
           const metadata = this.metadata(record);
           this.dependencies(metadata);
           if (metadata.spark233.activation === "on-startup")
-            await (await this.start(record, false, true)).activate({});
+            this.startupPending.add(record.pluginId);
         } catch (error) {
           await this.activationFailed(record, error);
         }
       }
       this.persist();
       this.ready = true;
+      // Recovery/metadata validation is complete. Keep lifecycle mutations on
+      // this queue while independent commands can run during service startup.
+      this.exclusive = false;
+      this.notifyChange();
+      for (const pluginId of this.startupPending) {
+        const record = this.record(pluginId);
+        try {
+          await (await this.start(record, false, true)).activate({});
+        } catch (error) {
+          await this.activationFailed(record, error);
+        } finally {
+          this.startupPending.delete(pluginId);
+          this.persist();
+          this.notifyChange();
+        }
+      }
     });
   }
-  activate(pluginId: string, activation: PluginActivation): Promise<JsonValue | undefined> {
-    return this.dispatch(pluginId, activation, false).then(({ value }) => value);
+  activate(
+    pluginId: string,
+    activation: PluginActivation,
+    signal = windowOpenContext.getStore()?.signal,
+  ): Promise<JsonValue | undefined> {
+    return this.dispatch(pluginId, activation, false, signal).then(({ value }) => value);
   }
   async ensureWidgetOwner(pluginId: string): Promise<PluginOwner> {
+    return this.ensureWindowOwner(pluginId, true);
+  }
+  async ensureWindowOwner(pluginId: string, widgetOnly = false): Promise<PluginOwner> {
     const record = this.record(pluginId);
     if (!record.enabled || record.lastError)
       throw new AppError("pluginDisabled", "插件已停用或存在错误");
     const metadata = this.metadata(record);
     if (
       !metadata.spark233.compatibility &&
-      !Object.keys(metadata.spark233.ui?.widgets ?? {}).length
+      !(widgetOnly
+        ? Object.keys(pluginWidgetDefinitions(metadata.spark233)).length
+        : Object.keys(metadata.spark233.ui?.windows ?? {}).length ||
+          Object.keys(pluginWidgetDefinitions(metadata.spark233)).length)
     )
       throw new AppError("invalidPlugin", "插件未声明桌面卡片");
     this.assertDispatch(metadata);
@@ -1072,6 +1124,48 @@ export class PluginManager {
       throw new AppError("pluginStopping", "桌面卡片所属插件实例已变化");
     return { ...instance.scope.owner };
   }
+  async openWindow(pluginId: string, instanceId: string, binding: WindowBinding): Promise<void> {
+    const owner = await this.ensureWindowOwner(pluginId);
+    windowOpenContext.getStore()?.assertActive?.();
+    const runtime = this.instances.get(pluginId)!.runtime;
+    if (!runtime.openWindow) throw new AppError("window.unsupported", "此窗口承载尚不支持统一打开");
+    await runtime.openWindow(instanceId, binding);
+    windowOpenContext.getStore()?.assertActive?.();
+    if (!this.isOwnerCurrent(owner)) throw new AppError("pluginStopping", "窗口所属插件实例已变化");
+  }
+  async prepareWindowClose(pluginId: string, instanceId: string) {
+    const instance = this.instances.get(pluginId);
+    const decision = (await instance?.runtime.prepareWindowClose?.(instanceId)) ?? { ok: true };
+    if (instance && this.instances.get(pluginId) !== instance)
+      throw new AppError("pluginStopping", "保存期间插件实例已变化");
+    return decision;
+  }
+  async activateWindow(
+    pluginId: string,
+    instanceId: string,
+    activation: PluginActivation,
+  ): Promise<void> {
+    const owner = await this.ensureWindowOwner(pluginId);
+    await this.instances.get(pluginId)!.runtime.activateWindow?.(instanceId, activation);
+    if (!this.isOwnerCurrent(owner))
+      throw new AppError("pluginStopping", "窗口激活期间插件实例已变化");
+  }
+  async closeWindow(pluginId: string, instanceId: string): Promise<void> {
+    await this.instances.get(pluginId)?.runtime.closeWindow?.(instanceId);
+  }
+  async createWindowContent(
+    pluginId: string,
+    windowId: string,
+    creationId: string,
+  ): Promise<WindowBinding> {
+    const owner = await this.ensureWindowOwner(pluginId);
+    const runtime = this.instances.get(pluginId)!.runtime;
+    if (!runtime.createWindowContent)
+      throw new AppError("window.createUnsupported", "窗口未提供创建入口");
+    const binding = await runtime.createWindowContent(windowId, creationId);
+    if (!this.isOwnerCurrent(owner)) throw new AppError("pluginStopping", "创建期间插件实例已变化");
+    return binding;
+  }
   async executeWidgetOwned(
     request: WidgetExecution,
   ): Promise<{ owner: PluginOwner; value: JsonValue | undefined }> {
@@ -1084,7 +1178,7 @@ export class PluginManager {
     )
       throw new AppError("pluginStopping", "桌面卡片所属插件实例已失效");
     const metadata = this.describe(binding.pluginId),
-      widget = metadata.spark233.ui?.widgets?.[binding.widgetDefinitionId];
+      widget = pluginWidgetDefinitions(metadata.spark233)[binding.widgetDefinitionId];
     const action = widget?.actions[request.actionId];
     const command =
       action && metadata.spark233.commands.find((c) => c.id === action.commandId && !c.internal);
@@ -1146,7 +1240,13 @@ export class PluginManager {
     activation: PluginActivation,
     beforeDispatch?: () => void,
   ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
-    return this.dispatch(pluginId, activation, false, undefined, beforeDispatch);
+    return this.dispatch(
+      pluginId,
+      activation,
+      false,
+      windowOpenContext.getStore()?.signal,
+      beforeDispatch,
+    );
   }
   query(
     pluginId: string,
@@ -1188,7 +1288,29 @@ export class PluginManager {
       return false;
     }
   }
-  private async dispatch(
+  private dispatch(
+    pluginId: string,
+    activation: PluginActivation,
+    query: boolean,
+    signal = windowOpenContext.getStore()?.signal,
+    beforeDispatch?: () => void,
+  ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
+    const parent = windowOpenContext.getStore();
+    return windowOpenContext.run(
+      {
+        ...parent,
+        environment: parent?.environment ?? "desktop",
+        signal,
+        assertActive: () => {
+          parent?.assertActive?.();
+          signal?.throwIfAborted();
+        },
+      },
+      () => this.dispatchActive(pluginId, activation, query, signal, beforeDispatch),
+    );
+  }
+
+  private async dispatchActive(
     pluginId: string,
     activation: PluginActivation,
     query: boolean,
@@ -1196,6 +1318,7 @@ export class PluginManager {
     beforeDispatch?: () => void,
   ): Promise<{ value: JsonValue | undefined; owner: PluginOwner }> {
     signal?.throwIfAborted();
+    windowOpenContext.getStore()?.assertActive?.();
     activation = structuredClone(activation);
     const record = this.record(pluginId);
     if (!record.enabled || record.lastError)
@@ -1209,8 +1332,9 @@ export class PluginManager {
     this.assertDispatch(metadata, command);
     this.activationForCommand(command, activation);
     beforeDispatch?.();
-    const runtime = await this.start(record);
+    const runtime = await awaitPluginTask(this.start(record), signal);
     signal?.throwIfAborted();
+    windowOpenContext.getStore()?.assertActive?.();
     if (this.find(pluginId) !== record || this.instances.get(pluginId)?.runtime !== runtime)
       throw new AppError("pluginStopping", "插件实例已变化，请重新调用");
     const currentMetadata = this.metadata(record);
@@ -1234,9 +1358,14 @@ export class PluginManager {
     const startedAt = performance.now();
     this.diagnostic({ kind, code: "started", level: "debug", owner });
     try {
-      const value = await (query && runtime.query
-        ? runtime.query(forwarded, signal)
-        : runtime.activate(forwarded));
+      const value = await awaitPluginTask(
+        query && runtime.query
+          ? runtime.query(forwarded, signal)
+          : runtime.activate(forwarded, signal),
+        signal,
+      );
+      signal?.throwIfAborted();
+      windowOpenContext.getStore()?.assertActive?.();
       if (query) {
         signal?.throwIfAborted();
         beforeDispatch?.();
@@ -1414,6 +1543,7 @@ export class PluginManager {
         name: staged.metadata.name,
         version: staged.metadata.version,
         pluginId: staged.metadata.spark233.id,
+        development: staged.metadata.spark233.development ?? null,
       });
       const id = metadata.spark233.id;
       if (
@@ -1458,7 +1588,10 @@ export class PluginManager {
         throw new AppError("pluginMigrationRequired", "此数据版本升级需要声明可信迁移入口");
       if (before?.packageName !== undefined && before.packageName !== metadata.name)
         throw new AppError("pluginIdentityMismatch", "其他 npm 包不能覆盖已安装插件身份");
-      if (before?.version === metadata.version)
+      if (
+        before?.version === metadata.version &&
+        before.development?.buildId === metadata.spark233.development?.buildId
+      )
         throw new AppError("pluginVersionExists", "同一版本不作为覆盖更新方式");
       this.dependents(id, metadata.version);
       if (before?.enabled ?? enabled) this.dependencies(metadata);
@@ -1466,6 +1599,7 @@ export class PluginManager {
         pluginId: id,
         packageName: metadata.name,
         version: metadata.version,
+        ...(metadata.spark233.development ? { development: metadata.spark233.development } : {}),
         directory: staged.directory,
         enabled: before?.enabled ?? enabled,
         source: pluginPackageSourceSchema.parse(staged.source),
@@ -1615,6 +1749,7 @@ export class PluginManager {
       const record = this.record(pluginId);
       this.dependents(pluginId);
       await this.stop(pluginId, "uninstall");
+      const cleanup = this.options.onUninstallBegin?.(pluginId);
       this.baselineDataVersion(record);
       // Persist the inactive identity before removing immutable code. A crash
       // cannot restart a version that is midway through being removed.
@@ -1629,6 +1764,7 @@ export class PluginManager {
         delete this.state.dataVersions[pluginId];
         this.persist();
       }
+      if (cleanup) this.options.onUninstallCommitted?.(cleanup);
       this.diagnostic({
         kind: "lifecycle",
         code: "uninstalled",

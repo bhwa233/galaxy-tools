@@ -140,6 +140,9 @@ export class LayerWindow {
       // shape on a screen-sized HWND can otherwise occlude the app beneath it.
       ...(process.platform === "win32" ? { type: "toolbar" } : {}),
       frame: false,
+      // Shared surfaces have their own card handles and never use native edge
+      // resizing. Avoid the OS show/hide fade on every desktop handoff.
+      thickFrame: false,
       transparent: true,
       show: false,
       resizable: false,

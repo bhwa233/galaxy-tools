@@ -153,8 +153,14 @@ export function createBackupRuntime(
     ctx.hostConfig = new HostConfigStore(ctx.hostConfigDir, dataDir);
     await ctx.reloadDesktopLayer();
     ctx.launcher = new LauncherController({
+      getMaintenance: () => ctx.maintenance,
       commandMatcher: ctx.commandMatcher,
-      getWarnings: () => (ctx.shortcutWarning ? [ctx.shortcutWarning] : []),
+      getWarnings: () => [
+        ...(ctx.maintenance
+          ? [ctx.ui("正在备份或恢复，相关操作暂不可用", "Backup or restore in progress")]
+          : []),
+        ...(ctx.shortcutWarning ? [ctx.shortcutWarning] : []),
+      ],
       stateFile: path.join(ctx.hostConfigDir, "launcher.json"),
       manager: () => ctx.pluginHost?.manager,
       onQueryUpdate: ctx.deliverLauncherQueryUpdate,

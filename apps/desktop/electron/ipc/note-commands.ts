@@ -32,6 +32,11 @@ export function createNoteCommands(
     | "foldAndRelease"
     | "openNoteWithAnchor"
     | "startupFile"
+    | "pluginWindowCoordinator"
+    | "prepare"
+    | "desktopLayer"
+    | "toggleDesktopOverlay"
+    | "enqueueMutation"
   >,
 ) {
   async function run({
@@ -84,6 +89,14 @@ export function createNoteCommands(
         return note;
       }
       case "notes_update": {
+        const editor = [...ctx.layouts.values()].find(
+          (entry) =>
+            entry.noteId === text(args.id) &&
+            entry.label !== layout.label &&
+            ctx.windows.has(entry.label),
+        );
+        if (layout.view === "main" && editor)
+          throw new AppError("noteInUse", "此便签正在独立窗口编辑，请在该窗口继续编辑");
         const note = await data.save(args.request as SaveNoteRequest, text(args.id));
         ctx.changed();
         return note;
@@ -93,8 +106,20 @@ export function createNoteCommands(
         const editors = [...ctx.layouts.values()].filter(
           (entry) => entry.noteId === id && ctx.windows.has(entry.label),
         );
-        if (editors.length) throw new AppError("noteInUse", "请先关闭该便签的独立窗口再删除");
-        await data.delete(id);
+        for (const editor of editors) {
+          const target = ctx.windows.get(editor.label);
+          if (target && !(await ctx.prepare(target)))
+            throw new AppError("saveFailed", "便签尚未保存，已保留窗口和内容");
+        }
+        const cleanup = ctx.pluginWindowCoordinator?.beginCleanup("spark233.notes", id);
+        // A rejected transport may have lost a committed deletion response.
+        // Keep the intent until startup can query the authoritative note store.
+        await ctx.enqueueMutation(() => data.delete(id));
+        if (cleanup) ctx.pluginWindowCoordinator?.confirmCleanup(cleanup);
+        for (const editor of editors) {
+          const target = ctx.windows.get(editor.label);
+          if (target && !target.isDestroyed()) target.destroy();
+        }
         for (const entry of ctx.layouts.values())
           if (entry.noteId === id) ctx.layouts.delete(entry.label);
         await ctx.persistLayout();
@@ -168,6 +193,19 @@ export function createNoteCommands(
         await ctx.hideNoteOnDesktop(text(args.noteId));
         return;
       case "show_note_on_desktop":
+        if (args.cardDesktop) {
+          const noteId = text(args.noteId);
+          await data.get(noteId);
+          await ctx.pluginWindowCoordinator?.open({
+            pluginId: "spark233.notes",
+            windowId: "tile",
+            action: "open",
+            environment: "card-desktop",
+            binding: { windowId: "tile", contentId: noteId, parameterVersion: 1 },
+          });
+          if (!ctx.desktopLayer?.overlayActive) await ctx.toggleDesktopOverlay();
+          return "";
+        }
         return ctx.openNote(text(args.noteId));
       case "open_notepad_window":
         return ctx.openNote(args.noteId ?? undefined, "notepad", args.bounds ?? undefined);

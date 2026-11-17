@@ -11,7 +11,7 @@ import type {
 } from "@spark233/sdk";
 import { atomicWrite, canonical, confined, inside } from "../../persistence.js";
 import { createTrustedNativeProcess, type PluginNativeController } from "../backend.js";
-import { PluginResourceScope, type StopDecision } from "../resources.js";
+import { PluginResourceScope, samePluginOwner, type StopDecision } from "../resources.js";
 import { CaptureHistory, type CaptureAction } from "./capture-history.js";
 
 export interface CaptureImage {
@@ -55,6 +55,8 @@ export interface CaptureRuntimeOptions {
   recognize?: (image: CaptureImage) => Promise<JsonValue | undefined>;
   /** Every completed screenshot, whether or not it was forwarded to OCR. */
   onResult?: (image: CaptureImage, action: CaptureAction) => void | Promise<void>;
+  /** Business completion precedes cache/process cleanup. */
+  onComplete?: (outcome: { sessionId: string; resultPresented: boolean }) => void;
   canPinToDesktop?: () => boolean;
   /** Copies the session bundle into durable host storage before acknowledging native exit. */
   onPin?: (image: CapturePinImage, isCurrent: () => boolean) => Promise<string>;
@@ -105,7 +107,8 @@ export interface OcrResult {
 export interface CaptureRuntime {
   readonly owner: PluginOwner;
   readonly activeSession: string | undefined;
-  activate(activation: PluginActivation): Promise<JsonValue | undefined>;
+  readonly activeProcessId: number | undefined;
+  activate(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   /** Trusted host entry only; activation payloads cannot supply paths. */
   editPin(input: {
     sourcePath: string;
@@ -117,7 +120,7 @@ export interface CaptureRuntime {
   dispose(): Promise<void>;
 }
 export interface OcrRuntime extends CaptureRuntime {
-  recognize(image: CaptureImage): Promise<JsonValue | undefined>;
+  recognize(image: CaptureImage, signal?: AbortSignal): Promise<JsonValue | undefined>;
 }
 
 const envelope = z.object({
@@ -239,13 +242,17 @@ class CaptureController implements CaptureRuntime {
       if (inside(this.root, canonical(directory)))
         throw new Error("Plugin mutable data cannot be inside its immutable package");
     }
-    options.scope.own("task", {
+    options.scope.own("process", {
       prepareStop: (reason) => this.prepareStop(reason),
       dispose: () => this.dispose(),
+      forceTerminate: () => this.forceTerminate(),
     });
   }
   get activeSession(): string | undefined {
     return this.current?.id;
+  }
+  get activeProcessId(): number | undefined {
+    return this.current?.process?.pid;
   }
   /** Only the screenshot plugin keeps history; OCR input is a borrowed image. */
   protected get history(): CaptureHistory | undefined {
@@ -328,12 +335,33 @@ class CaptureController implements CaptureRuntime {
       }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const exited = await Promise.race([
-      session.done.then(() => true),
+      (this.kind === "capture" && session.process
+        ? session.process.waitForExit().catch(() => undefined)
+        : session.done
+      ).then(() => true),
       new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), this.options.timeoutMs ?? 15000);
+        timer = setTimeout(
+          () => resolve(false),
+          this.options.timeoutMs ?? (this.kind === "capture" ? 750 : 15000),
+        );
       }),
     ]);
     clearTimeout(timer);
+    if (!exited && this.kind === "capture") {
+      // This child scope contains only this capture's registered process. Never
+      // search by executable name or terminate the plugin's background scope.
+      const process = session.process;
+      if (
+        this.current !== session ||
+        (process && !samePluginOwner(process.owner, session.scope.owner))
+      )
+        return { ok: false, reason: "Capture session ownership changed" };
+      const released = await session.scope.forceTerminateProcesses();
+      if (!released.ok) return { ok: false, reason: released.errors.join("; ") };
+      if (this.current === session) this.current = undefined;
+      session.finish();
+      return { ok: true };
+    }
     return exited
       ? { ok: true }
       : { ok: false, reason: "Native cancellation is still pending; the process remains tracked" };
@@ -351,7 +379,17 @@ class CaptureController implements CaptureRuntime {
       throw new Error("Native task must finish before plugin resources are released");
     this.disposed = true;
   }
+  protected async forceTerminate(): Promise<void> {
+    const session = this.current;
+    if (!session) return;
+    session.cancelled = true;
+    const released = await session.scope.forceTerminateProcesses();
+    if (!released.ok) throw new Error(released.errors.join("; "));
+    if (this.current === session) this.current = undefined;
+    session.finish();
+  }
   protected async start(session: NativeSession, args: string[]): Promise<void> {
+    if (session.cancelled) throw new Error("Native task cancelled");
     const process = await createTrustedNativeProcess({
       scope: session.scope,
       pluginRoot: this.root,
@@ -368,7 +406,7 @@ class CaptureController implements CaptureRuntime {
       onOutputBytes: this.options.onOutputBytes,
       prepareStop: () => ({ ok: true }),
       requestShutdown: () => this.requestCancellation(session),
-      timeoutMs: this.options.timeoutMs ?? 15000,
+      timeoutMs: this.options.timeoutMs ?? (this.kind === "capture" ? 1000 : 15000),
     });
     session.process = process;
     if (session.cancelled) this.requestCancellation(session);
@@ -571,7 +609,10 @@ class CaptureController implements CaptureRuntime {
         );
     });
   }
-  async activate(activation: PluginActivation): Promise<JsonValue | undefined> {
+  async activate(
+    activation: PluginActivation,
+    signal?: AbortSignal,
+  ): Promise<JsonValue | undefined> {
     if (activation.commandId === "cancel") return (await this.cancel()) as unknown as JsonValue;
     if (activation.commandId && !["capture", "ocr"].includes(activation.commandId))
       throw new Error("Unknown screenshot command");
@@ -581,7 +622,16 @@ class CaptureController implements CaptureRuntime {
         options.getOcrStatus().reason ??
           "OCR plugin is unavailable; basic screenshot remains available",
       );
-    return this.capture(activation);
+    signal?.throwIfAborted();
+    const abort = () => {
+      void this.cancel().catch(console.error);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      return await this.capture(activation);
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
   }
   private async capture(
     activation: PluginActivation,
@@ -605,6 +655,7 @@ class CaptureController implements CaptureRuntime {
     let pinTimer: ReturnType<typeof setInterval> | undefined;
     let pinTask = Promise.resolve();
     let pinBusy = false;
+    let resultPresented = false;
     try {
       prepareEdit?.(session);
       // The native session reads this file dynamically. A fixed false argv
@@ -638,7 +689,10 @@ class CaptureController implements CaptureRuntime {
       ]);
       clearInterval(pinTimer);
       await pinTask;
-      if (session.pinId) return { status: "pinned", pinId: session.pinId };
+      if (session.pinId) {
+        resultPresented = true;
+        return { status: "pinned", pinId: session.pinId };
+      }
       // A cancelled selection publishes nothing; every completed one publishes exactly
       // once, whatever the user did with it.
       if (!fs.existsSync(confined(session.directory, "capture.json")))
@@ -687,10 +741,19 @@ class CaptureController implements CaptureRuntime {
           image: image.resource as unknown as JsonValue,
           reason: options.getOcrStatus().reason ?? "OCR plugin is disabled",
         };
-      return await options.recognize(image);
+      const recognized = await options.recognize(image);
+      resultPresented = true;
+      return recognized;
+    } catch (error) {
+      if (session.cancelled) return { status: "closed", sessionId: session.id };
+      throw error;
     } finally {
       clearInterval(availabilityTimer);
       clearInterval(pinTimer);
+      options.onComplete?.({
+        sessionId: session.id,
+        resultPresented,
+      });
       await pinTask;
       await this.finishSession(session);
     }
@@ -923,6 +986,13 @@ class OcrController extends CaptureController implements OcrRuntime {
     await this.closeWorker();
     await super.dispose();
   }
+  protected override async forceTerminate(): Promise<void> {
+    if (this.worker) {
+      const released = await this.worker.scope.forceTerminateProcesses();
+      if (!released.ok) throw new Error(released.errors.join("; "));
+    }
+    await super.forceTerminate();
+  }
   protected override async start(session: NativeSession, _args: string[]): Promise<void> {
     const worker = await this.getWorker();
     session.process = worker.process;
@@ -996,24 +1066,35 @@ class OcrController extends CaptureController implements OcrRuntime {
       this.idleTimer.unref();
     }
   }
-  override async activate(activation: PluginActivation): Promise<JsonValue | undefined> {
+  override async activate(
+    activation: PluginActivation,
+    signal?: AbortSignal,
+  ): Promise<JsonValue | undefined> {
+    signal?.throwIfAborted();
     if (activation.commandId === "cancel") return (await this.cancel()) as unknown as JsonValue;
     if (activation.commandId && activation.commandId !== "ocr")
       throw new Error("Unknown OCR command");
     if (activation.context?.kind !== "image") throw new Error("Select an image before running OCR");
     const image = resource.parse(activation.context.resource);
     const filename = await this.ocrOptions.resolveImage(image);
-    return this.recognize({
-      owner: this.owner,
-      sessionId: "resource",
-      resource: image,
-      path: filename,
-      width: 0,
-      height: 0,
-    });
+    return this.recognize(
+      {
+        owner: this.owner,
+        sessionId: "resource",
+        resource: image,
+        path: filename,
+        width: 0,
+        height: 0,
+      },
+      signal,
+    );
   }
-  async recognize(image: CaptureImage): Promise<JsonValue | undefined> {
+  async recognize(image: CaptureImage, signal?: AbortSignal): Promise<JsonValue | undefined> {
+    signal?.throwIfAborted();
     let session: NativeSession | undefined;
+    const abort = () => {
+      if (session && this.current === session) void this.cancel().catch(console.error);
+    };
     let retained: { image: CaptureImage; resultFile: string } | undefined;
     let registered = false;
     let published = false;
@@ -1021,6 +1102,7 @@ class OcrController extends CaptureController implements OcrRuntime {
     let savedResult = false;
     try {
       session = this.createSession();
+      signal?.addEventListener("abort", abort, { once: true });
       const source = checkedPng(image.path);
       const imagePath = confined(session.directory, "selection.png");
       fs.copyFileSync(source.path, imagePath, fs.constants.COPYFILE_EXCL);
@@ -1095,6 +1177,7 @@ class OcrController extends CaptureController implements OcrRuntime {
           fs.rmSync(image.path, { force: true });
         }
       } finally {
+        signal?.removeEventListener("abort", abort);
         if (session) await this.finishSession(session);
       }
     }

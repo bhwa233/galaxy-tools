@@ -91,7 +91,7 @@ export function useImagePaste({
 
   const processFiles = useCallback(
     async (files: File[]) => {
-      if (processingRef.current || files.length === 0) return;
+      if (processingRef.current || files.length === 0 || textareaRef.current?.readOnly) return;
       processingRef.current = true;
 
       try {
@@ -112,7 +112,7 @@ export function useImagePaste({
           }
         }
 
-        if (markdownLines.length > 0) {
+        if (markdownLines.length > 0 && !textarea.readOnly && textareaRef.current === textarea) {
           insertTextAtCursor(textarea, setContent, markdownLines.join("\n"));
           markDirty();
         }

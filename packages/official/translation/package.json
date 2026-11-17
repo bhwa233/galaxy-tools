@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-translation",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "Offline ECDICT base dictionary and explicit OpenAI-compatible translation",
   "license": "MIT",
@@ -36,8 +36,8 @@
     "schemaVersion": 1,
     "id": "spark233.translation",
     "displayName": "词典与翻译",
-    "api": "^1.7.0",
-    "host": ">=0.0.1 <1",
+    "api": "^1.8.0",
+    "host": ">=0.1.7 <1",
     "platforms": [
       "win32"
     ],
@@ -371,7 +371,12 @@
           "presentation": "standard",
           "legacyLabels": [
             "translation"
-          ]
+          ],
+          "cardDesktop": true,
+          "chrome": "host",
+          "restore": {
+            "parameterVersion": 1
+          }
         }
       }
     },

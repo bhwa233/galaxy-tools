@@ -2,6 +2,7 @@ import { dialog, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { pluginWindowPageEntry } from "@spark233/sdk";
 import type {
   JsonValue,
   PluginActivation,
@@ -15,6 +16,8 @@ import type { ManagedPluginRuntime, PluginInstallation, PluginManager } from "..
 import type { PluginResourceScope } from "../resources.js";
 import { createWebPluginRuntime, type WebPluginController } from "../web-host.js";
 import { performIndexedApplicationAction } from "./applications.js";
+import { routePluginWindow, windowOpenContext } from "../../host/plugin-window-routing.js";
+import type { BrowserWindow } from "electron";
 
 const parametersSchema = z.strictObject({
   id: z.string().min(1).max(100),
@@ -62,6 +65,7 @@ interface QuicklinksRuntimeOptions {
   subscribeTheme: (listener: () => void) => () => void;
   /** Lets the user keep the Quick Links window on the desktop. */
   desktop?: import("../window-desktop.js").PluginWindowDesktopHost;
+  onWindowAttach?: (instanceId: string, window: BrowserWindow) => () => void;
 }
 
 /** Reuse the sandboxed plugin web host, capability broker and indexed application
@@ -71,6 +75,7 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
   const { scope, backend, metadata, installation, manager } = options;
   let web: Promise<WebPluginController> | undefined;
   const assertActive = () => {
+    windowOpenContext.getStore()?.assertActive?.();
     if (scope.state !== "active" || !manager.isOwnerCurrent(scope.owner))
       throw new AppError("pluginDisabled", "快捷搜索插件实例已失效或正在停止");
   };
@@ -87,14 +92,27 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
   });
   const workspace = async (activation: PluginActivation) => {
     assertActive();
+    if (
+      await routePluginWindow(
+        metadata.spark233.id,
+        { windowId: "main", parameterVersion: 1 },
+        "open",
+        activation,
+      )
+    )
+      return;
     if (!web) {
       const profile = metadata.spark233.ui?.windows?.main;
-      if (!profile) throw new Error("Quicklinks workspace window is not declared");
+      const entry = profile ? pluginWindowPageEntry(profile) : undefined;
+      if (!entry) throw new Error("Quicklinks workspace window is not declared");
       const opening = createWebPluginRuntime({
         scope,
         pluginRoot: installation.directory,
-        entryPath: confined(installation.directory, profile.entry),
+        entryPath: confined(installation.directory, entry),
         windowProfile: "main",
+        windowInstanceId: windowOpenContext.getStore()?.instanceId,
+        show: windowOpenContext.getStore()?.coordinated ? false : undefined,
+        onWindowAttach: options.onWindowAttach,
         desktop: options.desktop,
         manifest: metadata.spark233,
         dataDir: manager.dataDirectory(metadata.spark233.id),
@@ -120,7 +138,7 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
     assertActive();
     await controller.activate({ ...activation, commandId: "workspace" });
   };
-  const run = async (activation: PluginActivation): Promise<JsonValue> => {
+  const run = async (activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue> => {
     // commands.execute carries text, while launcher actions retain parameters.
     // Parse only entry identity and variable input; targets always come from the
     // trusted backend's current persisted definition and revision check.
@@ -129,7 +147,7 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
         (activation.context?.kind === "text" ? JSON.parse(activation.context.text) : undefined),
     );
     const result = resolutionSchema.parse(
-      await backend.activate({ commandId: "resolve", parameters: input }),
+      await backend.activate({ commandId: "resolve", parameters: input }, signal),
     );
     assertActive();
     if (result.kind === "prompt") {
@@ -163,20 +181,29 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
     return { ok: true };
   };
   return {
+    openWindow: async () => workspace({ commandId: "workspace" }),
+    activateWindow: async (_instanceId, activation) => workspace(activation),
+    prepareWindowClose: async () => (web ? (await web).prepareStop("window-close") : { ok: true }),
+    closeWindow: async () => {
+      const closing = web;
+      web = undefined;
+      await (await closing)?.dispose();
+    },
     query: (activation, signal) => {
       assertActive();
       if (activation.commandId !== "search")
         throw new AppError("unknownPluginCommand", "快捷入口查询仅允许搜索命令");
       return backend.activate(activation, signal);
     },
-    activate: async (activation) => {
+    activate: async (activation, signal) => {
+      signal?.throwIfAborted();
       assertActive();
       const commandId = activation.commandId ?? "workspace";
       if (commandId === "workspace" || (commandId === "search" && !activation.parameters)) {
         await workspace(activation);
         return;
       }
-      if (commandId === "run") return run(activation);
+      if (commandId === "run") return run(activation, signal);
       if (commandId === "pick-program") {
         const controller = web ? await web : undefined;
         assertActive();
@@ -196,7 +223,7 @@ export function createQuicklinksRuntime(options: QuicklinksRuntimeOptions): Mana
         return { path: filename };
       }
       if (commandId === "search" || configurationCommands.has(commandId))
-        return backend.activate({ ...activation, commandId });
+        return backend.activate({ ...activation, commandId }, signal);
       throw new AppError("unknownPluginCommand", "快捷入口命令不可用");
     },
   };

@@ -1,4 +1,5 @@
-import { Monitor, PanelLeft, Pin, Redo2, Trash2, Undo2 } from "lucide-react";
+import { Monitor, LayoutGrid, PanelLeft, Pin, Redo2, Trash2, Undo2 } from "lucide-react";
+import { invoke } from "../../platform/desktop";
 import { Button } from "@/components/ui/button";
 import { memo } from "react";
 import { showToast } from "../../components/Toast";
@@ -10,6 +11,7 @@ import { applyFormat } from "./notePresentation";
 import { formatShortDate, formatTime } from "./noteUtils";
 import { NOTE_TITLE_MAX_LENGTH } from "./types";
 import type { NoteSession } from "./useNoteSession";
+import { useNoteWindowStates } from "../windows/useNoteWindowStates";
 type Props = Pick<
   NoteSession,
   | "setSidebarCollapsed"
@@ -121,6 +123,8 @@ export const EditorPane = memo(function EditorPane({
   handleCleanUnusedImages,
   byteSize,
 }: Props) {
+  const noteStates = useNoteWindowStates();
+  const editingElsewhere = !!selectedId && !!noteStates[selectedId]?.editingElsewhere;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-2">
@@ -183,13 +187,31 @@ export const EditorPane = memo(function EditorPane({
           >
             <Monitor aria-hidden="true" />
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            disabled={!selectedId || isExternal}
+            title={t("noteMenu.addToCardDesktop")}
+            aria-label={t("noteMenu.addToCardDesktop")}
+            className="size-7 p-0"
+            onClick={() => {
+              if (!selectedId) return;
+              void (async () => {
+                if (await saveCurrentNote())
+                  await invoke("show_note_on_desktop", { noteId: selectedId, cardDesktop: true });
+              })().catch((error) => showToast(getErrorMessage(error)));
+            }}
+          >
+            <LayoutGrid />
+          </Button>
 
           <Button
             variant="ghost"
             size="sm"
             onMouseDown={(event) => event.preventDefault()}
             onClick={handleUndo}
-            disabled={!selectedId}
+            disabled={!selectedId || editingElsewhere}
             className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
             title={t("main.editor.undo", { defaultValue: "撤销（Ctrl+Z）" })}
             aria-label={t("main.editor.undoLabel", { defaultValue: "撤销" })}
@@ -202,7 +224,7 @@ export const EditorPane = memo(function EditorPane({
             size="sm"
             onMouseDown={(event) => event.preventDefault()}
             onClick={handleRedo}
-            disabled={!selectedId}
+            disabled={!selectedId || editingElsewhere}
             className="size-7 p-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
             title={t("main.editor.redo", { defaultValue: "重做（Ctrl+Y）" })}
             aria-label={t("main.editor.redoLabel", { defaultValue: "重做" })}
@@ -214,7 +236,7 @@ export const EditorPane = memo(function EditorPane({
             variant="ghost"
             size="sm"
             onClick={() => void saveCurrentNote(true)}
-            disabled={!selectedId || saveState === "saving"}
+            disabled={!selectedId || editingElsewhere || saveState === "saving"}
             className="px-2.5 h-7 flex items-center justify-center rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
             title={t("common.save", { defaultValue: "保存" })}
           >
@@ -302,11 +324,24 @@ export const EditorPane = memo(function EditorPane({
         </div>
       </div>
 
+      {editingElsewhere && (
+        <div className="flex items-center justify-between border-b px-5 py-2 text-sm text-muted-foreground">
+          <span>{t("main.editor.editingElsewhere")}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => selectedId && void showNoteOnDesktop(selectedId)}
+          >
+            {t("main.editor.locateEditor")}
+          </Button>
+        </div>
+      )}
       <div key={noteTransitionKey} className="shrink-0 border-b px-5 py-4">
         <input
           type="text"
           maxLength={isExternal ? undefined : NOTE_TITLE_MAX_LENGTH}
           value={title}
+          readOnly={editingElsewhere}
           onChange={(event) => {
             titleValueRef.current = event.target.value;
             setTitle(event.target.value);
@@ -371,6 +406,7 @@ export const EditorPane = memo(function EditorPane({
                       variant="ghost"
                       size="sm"
                       key={button.label}
+                      disabled={editingElsewhere}
                       title={button.title}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
@@ -396,6 +432,7 @@ export const EditorPane = memo(function EditorPane({
                     ref={contentRef}
                     data-tab-indent="true"
                     value={content}
+                    readOnly={editingElsewhere}
                     onChange={(event) => {
                       contentValueRef.current = event.target.value;
                       setContent(event.target.value);
@@ -456,7 +493,9 @@ export const EditorPane = memo(function EditorPane({
                 >
                   <MarkdownPreview
                     content={deferredContent}
-                    onContentChange={selectedId ? handlePreviewContentChange : undefined}
+                    onContentChange={
+                      selectedId && !editingElsewhere ? handlePreviewContentChange : undefined
+                    }
                     fontSize={settingsConfig?.fontSize ?? 14}
                     renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
                     imageBaseDir={imageBaseDir ?? undefined}
@@ -489,6 +528,7 @@ export const EditorPane = memo(function EditorPane({
                 variant="ghost"
                 size="sm"
                 type="button"
+                disabled={editingElsewhere}
                 onClick={() => void handleCleanUnusedImages()}
                 className="text-xs text-muted-foreground hover:text-primary font-body cursor-pointer transition-colors"
               >

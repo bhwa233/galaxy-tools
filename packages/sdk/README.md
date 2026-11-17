@@ -3,6 +3,36 @@
 Local SDK under development. `@spark233/sdk` is a working package name, not a
 claim that its npm scope has been registered. Publishing is a separate step.
 
+Host API 1.8 / SDK 0.4 unifies business windows under `ui.windows`. An HTML
+entry does not imply card desktop support: declare `cardDesktop: true` explicitly.
+`content` accepts a page or the existing widget schema; legacy `ui.widgets`
+keeps its restricted bridge. `chrome: "host" | "none"` defaults to `host` and
+cannot be overridden by the user.
+
+Windows declare dimensions, capabilities and `reuse` (`singleton`, `document`,
+or `multiple`). Documents require a stable `contentId`. `create.commandId`
+references an internal backend command returning `{kind: "window-binding",
+binding}`; the host supplies a durable `creationId`. Plugins supporting recovery
+after an unknown result must implement idempotent creation. Restore uses the
+saved binding and never invokes create. New fields require `api: "^1.8.0"`
+and `host: ">=0.1.7 <1"`.
+
+`client.windows.open(binding, "open" | "create")` targets only this plugin's
+declared windows; the host derives the caller's environment.
+`client.window.state()` returns environment, chrome and effective capabilities;
+`onState(handler)` receives changes without reloading. `showMenu(anchor?)`
+opens the host menu, `setAlwaysOnTop(value)` is ordinary-desktop only, and
+`addToCardDesktop()` / `openIndependent()` reveal that presentation.
+Card panels have no topmost, minimize or maximize. Closing removes the current
+presentation after save approval. Collapsing the card desktop hides live pages
+and preserves their editing state. Background work stays shared.
+
+Trusted backends can call their invocation's
+`context.callHost({operation: "window.open", binding, action: "open" | "create"})`.
+The host binds the request to that backend owner, validates its window declaration
+and retains the originating environment across asynchronous work. Calls during a
+create/restore handshake are rejected to avoid recursive creation and queue waits.
+
 Host API 1.7 adds launcher budget fields to `commands[].launcher`: `quota`
 (results a search provider contributes per query, 1–100), `immediate` (query
 without the typing debounce) and `alwaysListed` (stay listed past the per-query
@@ -30,7 +60,7 @@ checks before dispatch and before returning. The host never falls back to
 
 A plugin is a prebuilt npm package with a `spark233` manifest in `package.json`.
 The manifest is validated without running plugin code or npm lifecycle scripts.
-`schemaVersion` is 1; the current host API is 1.7.0 and theme protocol is 1.0.0.
+`schemaVersion` is 1; the current host API is 1.8.0 and theme protocol is 1.0.0.
 Package, plugin data and host API versions are independent.
 
 Web entry paths, backend entry paths and native executable paths are relative to
@@ -121,6 +151,29 @@ identity and stored manifest hash are verified. Data without either that record
 or committed version metadata is not silently adopted. Empty fresh data is
 initialized at the new package's declared version.
 
+### Window task lifetimes and cancellation
+
+Temporary queries and translations belong to the window instance that starts
+them. The host cancels them when its last desktop/card-desktop placement closes;
+closing one shared placement leaves the other usable. A warm or hidden page is
+not permission to retain a closed window's tasks or publish late results.
+
+Honor the existing `AbortSignal` supplied to `client.registerQuery` handlers and
+backend activation contexts. Pass it through to network/native work. The backend
+lifetime signal belongs to the plugin service; clipboard monitoring and traffic
+collection must not use a page request's lifetime as their service lifetime.
+Committed data writes retain their own persistence boundary.
+
+User close and quit do not wait for `onPrepareStop` approval. Preparation and data
+consistency checks remain required for disable, update, uninstall, backup and
+restore; a refusal cancels that management operation. For legacy plugins without
+cooperative cancellation, the host stops waiting and rejects late host window
+requests. This does not prove their internal computation or side effects stopped,
+and does not terminate their whole background process.
+
+These rules reuse the existing SDK cancellation and window contracts; no new
+public activation fields or API version are introduced by this integration.
+
 ### Global shortcuts and system tray actions
 
 Every declared public command can be assigned a global shortcut in the host's
@@ -153,7 +206,7 @@ public command; internal commands and commands owned by another plugin are
 rejected. There are at most 32 items per plugin. `title` defaults to the localized
 command title, `type` defaults to `normal`, and `order` defaults to zero. Group
 changes insert separators inside the plugin's submenu. The host owns the root
-menu, including settings and save-before-quit. Users can hide and reorder items
+menu, including settings and quit. Users can hide and reorder items
 and plugin groups in **Settings → System tray**. These preferences survive
 disable/re-enable; an unavailable plugin contributes no executable menu items.
 
@@ -202,7 +255,8 @@ versions are independent.
 
 See `packages/official/traffic/package.json`: no launcher source registration
 is required. `reuse` defaults to singleton; `document` uses activation
-`parameters.documentId` when supplied, otherwise a new document identity.
+`parameters.documentId` in legacy activation. The unified API requires a stable
+content identity and separates creation from restore.
 `presentation` defaults to standard. Titles fall back to the localized plugin
 name; window icons inherit `ui.icon`. Dimensions are constrained to the display.
 Existing official window geometry takes priority. `legacyLabels` migrates old
@@ -211,7 +265,8 @@ official window labels.
 Since Host API 1.7 every Web plugin window is a host shell: the host draws the
 status bar (title and window controls) and the plugin page fills the area below
 it. `ui.windows.<profile>.titleBar` is deprecated; `"custom"` still validates but
-no longer removes the host bar, so packages should delete their own title bar.
+does not remove the host bar. API 1.8 uses `chrome: "none"` explicitly; do not
+combine the old titleBar field with chrome.
 `client.window.minimize()`, `toggleMaximize()` and `isMaximized()` work for every
 page, act on the calling plugin's own window and accept no target or options.
 Maximize respects both `resizable` and `maximizable`. `client.close()` keeps the

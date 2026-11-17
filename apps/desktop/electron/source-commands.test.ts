@@ -14,6 +14,20 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
+it("stops waiting for an uncancellable legacy activation while preserving its plugin instance", async () => {
+  const f = await fixture({ holdActivation: true });
+  const controller = new AbortController();
+  const pending = f.manager.activate("fixture.source", { commandId: "common" }, controller.signal);
+  await f.activationStarted;
+  controller.abort(new Error("page closed"));
+  await expect(pending).rejects.toThrow("page closed");
+  f.releaseActivation();
+  await expect(
+    f.manager.activate("fixture.source", { commandId: "common" }),
+  ).resolves.toHaveProperty("items");
+  expect(f.factories).toBe(1);
+});
+
 // Reuse the real Manager and Controller with owned package files. Only the final
 // runtime is synthetic: these tests exercise routing/authority, not Electron UI.
 async function fixture(

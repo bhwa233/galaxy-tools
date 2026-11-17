@@ -23,6 +23,7 @@ import {
   type UToolsFeature,
 } from "./utools-manifest.js";
 import { PendingRequests } from "./pending-requests.js";
+import { routePluginWindow, windowOpenContext } from "../host/plugin-window-routing.js";
 
 interface Match {
   code: string;
@@ -364,7 +365,35 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
     options.scope.own("event", { dispose: unsubscribe });
   }
   return {
-    async activate(activation: PluginActivation) {
+    async openWindow(instanceId, binding) {
+      if (!options.desktop) throw new Error("uTools window adapter is unavailable");
+      await start();
+      windowOpenContext.getStore()?.assertActive?.();
+      const featureCode =
+        binding.parameters &&
+        typeof binding.parameters === "object" &&
+        !Array.isArray(binding.parameters) &&
+        typeof binding.parameters.featureCode === "string"
+          ? binding.parameters.featureCode
+          : features()[0]?.code;
+      if (!featureCode) throw new Error("uTools plugin has no supported feature");
+      await rpc("workspace-open", {
+        featureCode,
+        environment: windowOpenContext.getStore()?.environment ?? "desktop",
+      });
+      windowOpenContext.getStore()?.assertActive?.();
+      await options.desktop.openWorkspace(options.scope.owner.pluginId, instanceId, featureCode);
+    },
+    async prepareWindowClose() {
+      if (!child?.connected) return { ok: true };
+      return await rpc("workspace-save");
+    },
+    async closeWindow(instanceId) {
+      await options.desktop?.closeWorkspace(options.scope.owner.pluginId, instanceId);
+      if (child?.connected) await rpc("workspace-hide");
+    },
+    async activate(activation: PluginActivation, signal?: AbortSignal) {
+      signal?.throwIfAborted();
       if (options.startupCheckOnly || !activation.commandId) return;
       const parameters = activation.parameters as Record<string, unknown> | undefined;
       let action: Record<string, unknown>,
@@ -398,6 +427,12 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
         };
       }
       await start();
+      signal?.throwIfAborted();
+      await routePluginWindow(options.scope.owner.pluginId, {
+        windowId: "utools-main",
+        parameterVersion: 1,
+        parameters: { featureCode: String(action.code) },
+      });
       await rpc(
         push ? "select" : "activate",
         push
@@ -408,7 +443,17 @@ export function createUToolsRuntime(options: Options): ManagedPluginRuntime {
               // editor. Matched text/files/images are always a fresh activation.
               revealOnly: activation.commandId !== "compat-dispatch" && !activation.context,
             },
+        undefined,
+        signal,
       );
+      signal?.throwIfAborted();
+      const instanceId = options.desktop?.workspaceInstance(options.scope.owner.pluginId);
+      if (instanceId)
+        await options.desktop!.openWorkspace(
+          options.scope.owner.pluginId,
+          instanceId,
+          String(action.code),
+        );
       return undefined;
     },
     async query(activation, signal) {

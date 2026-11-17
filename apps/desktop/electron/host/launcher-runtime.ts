@@ -6,7 +6,16 @@ import { NativeSelectionReader } from "../selection-native.js";
 import { SelectionLauncher } from "../selection-launcher.js";
 import { AppError } from "../persistence.js";
 import type { Layout, RuntimeContext } from "../runtime.js";
-import { markPresented, presentationCount } from "./presentation-epoch.js";
+import {
+  markPresented,
+  presentationCount,
+  presentationGuard,
+  supersedePresentation,
+  registerExclusivePresentation,
+  cancelExclusivePresentation,
+} from "./presentation-epoch.js";
+import { windowOpenContext } from "./plugin-window-routing.js";
+import type { StopDecision } from "../plugins/resources.js";
 
 /** launcher-runtime owns this domain; shared state remains in the composition root. */
 export function createLauncherRuntime(
@@ -87,7 +96,7 @@ export function createLauncherRuntime(
     },
     present: (text, revision, signal) => {
       if (signal.aborted) return;
-      if (ctx.lifecycle.blocked) return;
+      if (ctx.lifecycle.shellBlocked) return;
       const started = performance.now();
       ctx.clearLauncherContext();
       const win = ctx.launcherExecutions.exit(() => openLauncherWindow());
@@ -129,8 +138,12 @@ export function createLauncherRuntime(
     selectionLauncher.stop();
     await reader?.stop();
   }
-  function showLauncherWithSelection(): Promise<void> {
-    if (ctx.lifecycle.blocked) return Promise.resolve();
+  async function showLauncherWithSelection(): Promise<void> {
+    if (ctx.lifecycle.shellBlocked) return Promise.resolve();
+    supersedePresentation();
+    const currentIntent = presentationGuard();
+    await cancelExclusivePresentation();
+    if (!currentIntent()) return;
     // The hotkey toggles: pressing it while the launcher is the active window
     // dismisses it, instead of re-reading the selection and wiping typed text.
     const current = ctx.windows.get("launcher");
@@ -142,7 +155,76 @@ export function createLauncherRuntime(
     return selectionLauncher.open();
   }
   function launcherPresentationGuard(): () => boolean {
-    return () => true;
+    const context = windowOpenContext.getStore();
+    return () => {
+      try {
+        context?.assertActive?.();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  }
+
+  async function beginExclusiveTask(
+    cancel: () => Promise<StopDecision>,
+    nativePid: () => number | undefined,
+  ) {
+    windowOpenContext.getStore()?.assertActive?.();
+    if (!windowOpenContext.getStore()?.presentation) supersedePresentation();
+    const current = presentationGuard();
+    const fromLauncher = ctx.launcherExecutions.getStore()?.active === true;
+    let stopped = false;
+    let sampling = false;
+    let ownedForeground = false;
+    let focusChanged = false;
+    let externalForeground: number | undefined;
+    const timer = setInterval(() => {
+      const pid = nativePid();
+      if (stopped || sampling || !pid) return;
+      sampling = true;
+      void getReader()
+        .observeForeground(pid)
+        .then((foreground) => {
+          if (stopped) return;
+          if (foreground.pid === pid) ownedForeground = true;
+          else if (foreground.ownerVisible && foreground.window) {
+            if (ownedForeground || (externalForeground && externalForeground !== foreground.window))
+              focusChanged = true;
+            externalForeground ??= foreground.window;
+          }
+        })
+        .catch(console.error)
+        .finally(() => {
+          sampling = false;
+        });
+    }, 100);
+    const stop = () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+    const release = registerExclusivePresentation(async () => {
+      stop();
+      return cancel();
+    });
+    const target = fromLauncher ? 0 : await captureExternalFocus();
+    if (!current()) {
+      stop();
+      release();
+      throw new AppError("cancelled", "任务已被新的操作替代");
+    }
+    const launcher = ctx.windows.get("launcher");
+    if (launcher) hideHostWindow(launcher);
+    return {
+      async finish(outcome: { resultPresented: boolean }) {
+        stop();
+        release();
+        if (!current() || outcome.resultPresented || focusChanged || ctx.lifecycle.shellBlocked)
+          return;
+        if (fromLauncher) await ctx.launcherExecutions.exit(() => presentLauncher());
+        else await restoreExternalFocus(target);
+      },
+    };
   }
 
   function endLauncherExecutionQuery(): void {
@@ -179,7 +261,7 @@ export function createLauncherRuntime(
     )
       ctx.launcherHides.set(id, { caller, ...execution.query });
     else ctx.launcherHides.delete(id);
-    if (ctx.windows.get("launcher") !== win || !ctx.ready.has(id)) {
+    if (ctx.windows.get("launcher") !== win || !ctx.ready.has(win.id)) {
       win.hide();
       return;
     }
@@ -191,6 +273,7 @@ export function createLauncherRuntime(
     ctx.emit("launcher-reset", undefined, win);
     win.webContents.setBackgroundThrottling(false);
     const settle = () => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
       win.webContents.setBackgroundThrottling(true);
       if (presentationCount(win) !== presented) return;
       win.hide();
@@ -230,15 +313,21 @@ export function createLauncherRuntime(
     cancelSelection();
     if (ctx.workspaceRequests.get("launcher")?.kind === "launcher-input")
       ctx.workspaceRequests.delete("launcher");
-    return (ctx.launcherShow ??= presentLauncher().finally(() => {
-      ctx.launcherShow = undefined;
-    }));
+    if (!ctx.launcherShow) supersedePresentation();
+    return (ctx.launcherShow ??= windowOpenContext
+      .exit(() => presentLauncher())
+      .finally(() => {
+        ctx.launcherShow = undefined;
+      }));
   }
 
   /** Show first: the panel never waits for a pending close, clipboard capture
    * or UIA work. Those settle in the background with their own diagnostics. */
-  function presentLauncher(): Promise<BrowserWindow> {
+  async function presentLauncher(): Promise<BrowserWindow> {
     assertHostAvailable();
+    const current = presentationGuard();
+    await cancelExclusivePresentation();
+    if (!current()) throw new AppError("cancelled", "启动器展示已被新的操作替代");
     const started = performance.now();
     // Fire the paste-target capture before showing; awaiting it (150 ms cap)
     // would delay the panel, and after show() the captured target would be the
@@ -262,11 +351,6 @@ export function createLauncherRuntime(
   }
 
   function assertHostAvailable(): void {
-    if (ctx.maintenance)
-      throw new AppError(
-        "maintenance",
-        ctx.ui("正在备份或恢复，请稍后重试", "A backup or restore is running. Try again shortly."),
-      );
     if (ctx.hostShutdown.isQuitting)
       throw new AppError(
         "hostStopping",
@@ -336,7 +420,7 @@ export function createLauncherRuntime(
   }
 
   function preloadLauncher(): void {
-    if (ctx.windows.has("launcher") || ctx.lifecycle.blocked) return;
+    if (ctx.windows.has("launcher") || ctx.lifecycle.shellBlocked) return;
     const layout: Layout = {
       ...(ctx.layouts.get("launcher") ?? {
         label: "launcher",
@@ -351,14 +435,30 @@ export function createLauncherRuntime(
   }
 
   async function activateHostCommand(pluginId: string, commandId: string): Promise<unknown> {
+    supersedePresentation();
     assertHostAvailable();
+    if (ctx.lifecycle.blocked) throw new AppError("maintenance", "正在备份或恢复，请稍后重试");
     const manager = ctx.pluginHost?.manager;
     const entry = manager
       ?.commands()
       .find((item) => item.pluginId === pluginId && item.command.id === commandId);
     if (!manager || !entry) throw new AppError("pluginDisabled", "插件操作当前不可用");
-    if (!entry.command.mode || entry.command.window)
-      return manager.activate(pluginId, { commandId });
+    if (!entry.command.mode || entry.command.window) {
+      const parent = windowOpenContext.getStore();
+      const presentation = presentationGuard();
+      return windowOpenContext.run(
+        {
+          ...parent,
+          environment: parent?.environment ?? "desktop",
+          presentation,
+          assertActive: () => {
+            parent?.assertActive?.();
+            if (!presentation()) throw new AppError("cancelled", "操作已被新的展示意图替代");
+          },
+        },
+        () => manager.activate(pluginId, { commandId }),
+      );
+    }
     if (!commandMatchesSourceApplication(entry.command))
       throw new AppError("pluginSourceUnavailable", "此操作需要来源程序上下文");
     const metadata = manager.describe(pluginId);
@@ -383,6 +483,7 @@ export function createLauncherRuntime(
   }
 
   return {
+    beginExclusiveTask,
     launcherPresentationGuard,
     endLauncherExecutionQuery,
     launcherCaller,

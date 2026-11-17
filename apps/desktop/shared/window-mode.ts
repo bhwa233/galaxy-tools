@@ -15,9 +15,11 @@ export interface WindowModeState {
 
 /** Status bar state the host pushes to a plugin window's trusted shell page. */
 export interface PluginShellState extends WindowModeState {
+  chrome?: "host" | "none";
   title: string;
   maximized: boolean;
   maximizable: boolean;
+  minimizable?: boolean;
   locale: string;
   theme: { effective: "light" | "dark"; accent?: string };
   /** Plugin-provided plain-text context (Host API 1.7 window.status). */

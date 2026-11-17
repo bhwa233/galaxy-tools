@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutGrid, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { LayoutGrid, LocateFixed, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import type { LayerInstanceSummary, LayerTemplateSummary } from "../../../shared/layer-contract";
 import { invoke, listen } from "../../platform/desktop";
 import { Button } from "../../components/ui/button";
@@ -236,10 +236,11 @@ export function DesktopWidgetManager({
             const canRetry =
               instance.status === "fault" &&
               enabled &&
-              instance.visible &&
-              (screenshot ||
-                instance.widgetDefinitionId === "utools-main" ||
-                (!!template && (template.kind !== "web" || webEnabled)));
+              (instance.canRetry ??
+                ((instance.visible || instance.pendingCreation) &&
+                  (screenshot ||
+                    instance.widgetDefinitionId === "utools-main" ||
+                    (!!template && (template.kind !== "web" || webEnabled)))));
             const details = instance as LayerInstanceSummary & {
               group?: "normal" | "top";
               inputMode?: "passive" | "interactive";
@@ -258,9 +259,31 @@ export function DesktopWidgetManager({
                     <CardTitle>{title(instance)}</CardTitle>
                     <Badge variant="secondary">{statuses[instance.status]}</Badge>
                   </div>
+                  {instance.environment && (
+                    <CardDescription>
+                      {instance.environment === "card-desktop"
+                        ? text("卡片桌面", "Card desktop")
+                        : text("普通桌面", "Desktop")}
+                    </CardDescription>
+                  )}
                   {instance.reason && <CardDescription>{instance.reason}</CardDescription>}
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-center gap-3">
+                  {instance.canLocate && enabled && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={blocked}
+                      aria-label={text(`定位 ${title(instance)}`, `Locate ${title(instance)}`)}
+                      onClick={() =>
+                        void perform(id, () => invoke("layer_locate", { widgetInstanceId: id }))
+                      }
+                    >
+                      <LocateFixed data-icon="inline-start" />
+                      {text("定位", "Locate")}
+                    </Button>
+                  )}
                   {canRetry && (
                     <Button
                       type="button"
@@ -276,60 +299,66 @@ export function DesktopWidgetManager({
                       {t(busy === retryId ? "desktopSettings.retrying" : "desktopSettings.retry")}
                     </Button>
                   )}
-                  <ToggleGroup
-                    size="sm"
-                    variant="outline"
-                    value={[details.group ?? "normal"]}
-                    disabled={blocked}
-                    aria-label={text("置顶设置", "Stacking")}
-                    onValueChange={(values) => {
-                      const group = values[0];
-                      if (group === "normal" || group === "top")
+                  {!instance.pendingCreation && instance.environment !== "card-desktop" && (
+                    <ToggleGroup
+                      size="sm"
+                      variant="outline"
+                      value={[details.group ?? "normal"]}
+                      disabled={blocked}
+                      aria-label={text("置顶设置", "Stacking")}
+                      onValueChange={(values) => {
+                        const group = values[0];
+                        if (group === "normal" || group === "top")
+                          void perform(id, () =>
+                            invoke("layer_update", { widgetInstanceId: id, patch: { group } }),
+                          );
+                      }}
+                    >
+                      <ToggleGroupItem value="normal">{text("普通", "Normal")}</ToggleGroupItem>
+                      <ToggleGroupItem value="top">{text("置顶", "On top")}</ToggleGroupItem>
+                    </ToggleGroup>
+                  )}
+                  {!instance.environment && (
+                    <ToggleGroup
+                      size="sm"
+                      variant="outline"
+                      value={[details.inputMode ?? "passive"]}
+                      disabled={blocked}
+                      aria-label={text("鼠标行为", "Mouse behavior")}
+                      onValueChange={(values) => {
+                        const inputMode = values[0];
+                        if (inputMode === "passive" || inputMode === "interactive")
+                          void perform(id, () =>
+                            invoke("layer_update", { widgetInstanceId: id, patch: { inputMode } }),
+                          );
+                      }}
+                    >
+                      <ToggleGroupItem value="passive">
+                        {text("点击穿透", "Click through")}
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="interactive">
+                        {text("允许交互", "Interactive")}
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  )}
+                  {!instance.pendingCreation && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={blocked}
+                      onClick={() =>
                         void perform(id, () =>
-                          invoke("layer_update", { widgetInstanceId: id, patch: { group } }),
-                        );
-                    }}
-                  >
-                    <ToggleGroupItem value="normal">{text("普通", "Normal")}</ToggleGroupItem>
-                    <ToggleGroupItem value="top">{text("置顶", "On top")}</ToggleGroupItem>
-                  </ToggleGroup>
-                  <ToggleGroup
-                    size="sm"
-                    variant="outline"
-                    value={[details.inputMode ?? "passive"]}
-                    disabled={blocked}
-                    aria-label={text("鼠标行为", "Mouse behavior")}
-                    onValueChange={(values) => {
-                      const inputMode = values[0];
-                      if (inputMode === "passive" || inputMode === "interactive")
-                        void perform(id, () =>
-                          invoke("layer_update", { widgetInstanceId: id, patch: { inputMode } }),
-                        );
-                    }}
-                  >
-                    <ToggleGroupItem value="passive">
-                      {text("点击穿透", "Click through")}
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="interactive">
-                      {text("允许交互", "Interactive")}
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={blocked}
-                    onClick={() =>
-                      void perform(id, () =>
-                        invoke("layer_update", {
-                          widgetInstanceId: id,
-                          patch: { visible: !instance.visible },
-                        }),
-                      )
-                    }
-                  >
-                    {instance.visible ? text("隐藏", "Hide") : text("显示", "Show")}
-                  </Button>
+                          invoke("layer_update", {
+                            widgetInstanceId: id,
+                            patch: { visible: !instance.visible },
+                          }),
+                        )
+                      }
+                    >
+                      {instance.visible ? text("隐藏", "Hide") : text("显示", "Show")}
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     size="sm"
@@ -340,7 +369,9 @@ export function DesktopWidgetManager({
                     }
                   >
                     <Trash2 data-icon="inline-start" />
-                    {text("移除", "Remove")}
+                    {instance.pendingCreation
+                      ? text("移除记录", "Remove record")
+                      : text("关闭", "Close")}
                   </Button>
                   {busy === id && <Spinner />}
                 </CardContent>

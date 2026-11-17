@@ -39,6 +39,9 @@ function controlledPinCapture(pid: number) {
   const started = Promise.withResolvers<TrustedNativeOptions>();
   const exited = Promise.withResolvers<NativeProcessExit>();
   const requestId = randomUUID();
+  const terminate = vi.fn(async () =>
+    exited.resolve({ owner, requestId, code: null, signal: "SIGTERM" }),
+  );
   const controller: PluginNativeController = {
     owner,
     requestId,
@@ -48,7 +51,7 @@ function controlledPinCapture(pid: number) {
     dispose: async () => {},
   };
   vi.mocked(createTrustedNativeProcess).mockImplementationOnce(async (options) => {
-    options.scope.own("process", controller);
+    options.scope.own("process", { ...controller, forceTerminate: terminate });
     started.resolve(options);
     return controller;
   });
@@ -66,6 +69,7 @@ function controlledPinCapture(pid: number) {
     root,
     scope,
     started,
+    terminate,
     options,
     exit: () => exited.resolve({ owner, requestId, code: 0, signal: null }),
     pin: (sessionId: string, attempt: number) => {
@@ -94,6 +98,35 @@ function controlledPinCapture(pid: number) {
     },
   };
 }
+
+it("reclaims only the current capture process when cooperative cancellation stalls", async () => {
+  vi.useFakeTimers();
+  const fixture = controlledPinCapture(7321);
+  const unrelated = vi.fn();
+  fixture.scope.own("process", { dispose: () => {}, forceTerminate: unrelated });
+  const completed = vi.fn();
+  const runtime = await createCaptureRuntime({
+    ...fixture.options,
+    timeoutMs: 20,
+    onComplete: completed,
+  });
+  const active = runtime.activate({ commandId: "capture" });
+  const started = await fixture.started.promise;
+  const sessionId = runtime.activeSession!;
+  const cancellation = runtime.cancel();
+  const directory = path.join(fixture.options.cacheDir, "sessions", sessionId);
+  expect(fs.readFileSync(path.join(directory, "cancel.request"), "utf8")).toBe(
+    `${sessionId}:7321:cancel`,
+  );
+  await vi.advanceTimersByTimeAsync(20);
+  await expect(cancellation).resolves.toEqual({ ok: true });
+  await expect(active).resolves.toMatchObject({ status: "closed" });
+  expect(fixture.terminate).toHaveBeenCalledOnce();
+  expect(unrelated).not.toHaveBeenCalled();
+  expect(started.scope.owner).toEqual(fixture.scope.owner);
+  expect(completed).toHaveBeenCalledWith({ sessionId, resultPresented: false });
+  expect(runtime.activeSession).toBeUndefined();
+});
 
 it("follows OCR off/on/off within one capture session and rechecks availability before dispatch", async () => {
   // Regression: an initial --spark233-ocr-enabled=false permanently blocked

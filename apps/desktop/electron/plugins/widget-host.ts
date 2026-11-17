@@ -14,6 +14,7 @@ import {
   parseWidgetEnvelope,
   parseWidgetData,
   sameWidgetBinding,
+  pluginWidgetDefinitions,
   type JsonValue,
   type PluginOwner,
   type PluginPackageMetadata,
@@ -41,6 +42,8 @@ import {
   type LayerQuotaCard,
 } from "../layer-layout-store.js";
 import { AppError, confined } from "../persistence.js";
+import { pluginWindowCatalog } from "../host/plugin-window-catalog.js";
+import { windowOpenContext } from "../host/plugin-window-routing.js";
 import type { DesktopPluginHost } from "./desktop-host.js";
 import { samePluginOwner } from "./resources.js";
 import type { ResolvedWidgetEntry } from "./manifest.js";
@@ -148,6 +151,11 @@ interface RuntimeCard {
   providerRetryAt: number;
 }
 export interface WidgetHostOptions {
+  closeWorkspace?: (instanceId: string) => Promise<boolean>;
+  workspaceCards?: () => Array<
+    WidgetLayoutCard & { cardDesktopOnly?: boolean; cardDesktopMember?: boolean }
+  >;
+  updateWorkspace?: (instanceId: string, patch: Partial<WidgetLayoutCard>) => Promise<boolean>;
   layer: DesktopLayer;
   store: LayerLayoutStore;
   pluginHost: () => DesktopPluginHost | undefined;
@@ -161,6 +169,8 @@ export interface WidgetHostOptions {
   trustedCards?: () => readonly LayerCard[];
   resolveScreenshotImage?: (handle: string) => Promise<Buffer | undefined>;
   diagnostic: (code: string, detail: JsonValue) => void;
+  openWindow?: (pluginId: string, windowId: string, input?: JsonValue) => Promise<void>;
+  presentWindow?: (instanceId: string, environment: "desktop" | "card-desktop") => Promise<void>;
 }
 
 /** The existing plugin manager owns permission and process lifetime. This adapter
@@ -323,9 +333,18 @@ export class WidgetHost {
     });
     // Existing notes keep their view. Over-budget widgets suspend without
     // deleting either domain's layout, including after displays are merged.
-    const allocation = allocateLayerCards([...reservations, ...candidates]);
+    const workspace = new Set(
+      this.options.workspaceCards?.().map((card) => "widget:" + card.widgetInstanceId) ?? [],
+    );
+    const allocation = allocateLayerCards([
+      ...reservations,
+      ...candidates.filter((value) => !workspace.has(value.id)),
+    ]);
     return {
-      active: allocation.active.filter((id) => id.startsWith("widget:")),
+      active: [
+        ...allocation.active.filter((id) => id.startsWith("widget:")),
+        ...candidates.filter((value) => workspace.has(value.id)).map((value) => value.id),
+      ],
       suspended: Object.fromEntries(
         Object.entries(allocation.suspended).filter(([id]) => id.startsWith("widget:")),
       ),
@@ -349,7 +368,7 @@ export class WidgetHost {
           described = host.manager.describe(stored.pluginId, true);
           metadata.set(stored.pluginId, described);
         }
-        const definition = described.spark233.ui?.widgets?.[stored.widgetDefinitionId];
+        const definition = pluginWidgetDefinitions(described.spark233)[stored.widgetDefinitionId];
         if (!definition || (definition.kind === "web" && !this.options.flags().webEnabled))
           return [];
         const card = constrainLayerCard(
@@ -376,7 +395,7 @@ export class WidgetHost {
       if (!installed.enabled || installed.lastError) continue;
       try {
         for (const [widgetDefinitionId, d] of Object.entries(
-          host!.manager.describe(installed.pluginId).spark233.ui?.widgets ?? {},
+          pluginWidgetDefinitions(host!.manager.describe(installed.pluginId).spark233),
         ))
           templates.push({
             pluginId: installed.pluginId,
@@ -392,7 +411,14 @@ export class WidgetHost {
           });
       } catch {}
     }
-    const instances = Object.values(state.cards)
+    const cards = new Map(
+      Object.values(state.cards)
+        .filter((card): card is WidgetLayoutCard => card.kind === "widget")
+        .map((card) => [card.widgetInstanceId, card]),
+    );
+    for (const card of this.options.workspaceCards?.() ?? [])
+      cards.set(card.widgetInstanceId, card);
+    const instances = [...cards.values()]
       .filter((c): c is WidgetLayoutCard => c.kind === "widget")
       .map((c) => {
         const r = this.records.get(c.widgetInstanceId);
@@ -458,7 +484,7 @@ export class WidgetHost {
       }
       return value;
     };
-    const definition = describe(pluginId).spark233.ui?.widgets?.[definitionId];
+    const definition = pluginWidgetDefinitions(describe(pluginId).spark233)[definitionId];
     if (!definition) throw new AppError("widget.notDeclared", "Unknown widget template");
     if (definition.kind === "web" && !this.options.flags().webEnabled)
       throw new AppError("widget.webDisabled", "Enable isolated Web cards first");
@@ -501,7 +527,9 @@ export class WidgetHost {
           !installed.some((p) => p.pluginId === card.pluginId && p.enabled && !p.lastError)
         )
           return [];
-        const candidate = describe(card.pluginId).spark233.ui?.widgets?.[card.widgetDefinitionId];
+        const candidate = pluginWidgetDefinitions(describe(card.pluginId).spark233)[
+          card.widgetDefinitionId
+        ];
         if (!candidate || (candidate.kind === "web" && !this.options.flags().webEnabled)) return [];
         return [{ id: cardId, card, renderKind: candidate.kind }];
       }),
@@ -516,6 +544,10 @@ export class WidgetHost {
     return instance;
   }
   async remove(instance: string): Promise<void> {
+    if (await this.options.closeWorkspace?.(instance)) {
+      await this.sync();
+      return;
+    }
     const record = this.records.get(instance);
     await this.options.store.removeWidget(instance);
     if (record) {
@@ -544,12 +576,16 @@ export class WidgetHost {
       >
     >,
   ): Promise<void> {
+    if (await this.options.updateWorkspace?.(instance, patch)) {
+      await this.sync();
+      return;
+    }
     const layout = this.options.store.load(),
       id = "widget:" + instance,
       old = layout.cards[id];
     if (!old || old.kind !== "widget")
       throw new AppError("widget.notDeclared", "Unknown widget instance");
-    const definition = this.host().manager.describe(old.pluginId).spark233.ui?.widgets?.[
+    const definition = pluginWidgetDefinitions(this.host().manager.describe(old.pluginId).spark233)[
       old.widgetDefinitionId
     ];
     if (patch.inputMode === "interactive" && !definition?.interactive)
@@ -604,6 +640,9 @@ export class WidgetHost {
     if (this.disposed || !this.options.pluginHost()) return;
     const host = this.host(),
       layout = this.options.store.load();
+    const workspace = this.options.workspaceCards?.() ?? [];
+    const workspaceIds = new Set(workspace.map((card) => card.widgetInstanceId));
+    for (const card of workspace) layout.cards["widget:" + card.widgetInstanceId] = card;
     const installed = host.manager.list();
     const metadata = new Map<string, PluginPackageMetadata>();
     const describe = (id: string) => {
@@ -616,11 +655,17 @@ export class WidgetHost {
     };
     let migrated = false;
     for (const [id, card] of Object.entries(layout.cards)) {
-      if (card.kind !== "widget" || !installed.some((entry) => entry.pluginId === card.pluginId))
+      if (
+        card.kind !== "widget" ||
+        workspaceIds.has(card.widgetInstanceId) ||
+        !installed.some((entry) => entry.pluginId === card.pluginId)
+      )
         continue;
       let definition: PluginWidget | undefined;
       try {
-        definition = describe(card.pluginId).spark233.ui?.widgets?.[card.widgetDefinitionId];
+        definition = pluginWidgetDefinitions(describe(card.pluginId).spark233)[
+          card.widgetDefinitionId
+        ];
       } catch {
         continue;
       }
@@ -657,6 +702,7 @@ export class WidgetHost {
       migrated = true;
     }
     if (migrated) {
+      for (const card of workspace) delete layout.cards["widget:" + card.widgetInstanceId];
       const revision = layout.revision++;
       try {
         await this.options.store.commit(layout, revision);
@@ -666,6 +712,7 @@ export class WidgetHost {
         if (error instanceof AppError && error.code === "layer.layoutConflict") return;
         throw error;
       }
+      for (const card of workspace) layout.cards["widget:" + card.widgetInstanceId] = card;
     }
     const stored = Object.values(layout.cards)
       .filter((card): card is WidgetLayoutCard => card.kind === "widget")
@@ -681,7 +728,9 @@ export class WidgetHost {
       const installation = installed.find((p) => p.pluginId === card.pluginId);
       if (!card.visible || !installation?.enabled || installation.lastError) return [];
       try {
-        const definition = describe(card.pluginId).spark233.ui?.widgets?.[card.widgetDefinitionId];
+        const definition = pluginWidgetDefinitions(describe(card.pluginId).spark233)[
+          card.widgetDefinitionId
+        ];
         if (!definition || (definition.kind === "web" && !this.options.flags().webEnabled))
           return [];
         return [{ id: "widget:" + card.widgetInstanceId, card, renderKind: definition.kind }];
@@ -738,11 +787,15 @@ export class WidgetHost {
         continue;
       }
       try {
-        const definition = describe(card.pluginId).spark233.ui?.widgets?.[card.widgetDefinitionId];
+        const definition = pluginWidgetDefinitions(describe(card.pluginId).spark233)[
+          card.widgetDefinitionId
+        ];
         if (!definition || (definition.kind === "web" && !this.options.flags().webEnabled))
           continue;
         const owner = await host.manager.ensureWidgetOwner(card.pluginId);
-        const latest = this.options.store.load().cards["widget:" + card.widgetInstanceId];
+        const latest =
+          workspace.find((value) => value.widgetInstanceId === card.widgetInstanceId) ??
+          this.options.store.load().cards["widget:" + card.widgetInstanceId];
         if (
           this.disposed ||
           !this.options.flags().enabled ||
@@ -849,12 +902,35 @@ export class WidgetHost {
         const intrinsicHeight = r.definition.kind === "declarative" && !!r.definition.contentHeight;
         const bounds = r.interaction?.bounds ? this.contentBounds(r) : this.presentedBounds(r);
         const main = {
+          primaryAction: interactions?.primaryAction,
+          resize: r.definition.resizable
+            ? {
+                minSize: r.definition.minSize ?? { width: 80, height: 32 },
+                maxSize: r.definition.maxSize ?? { width: 1200, height: 900 },
+              }
+            : undefined,
+          chrome: pluginWindowCatalog(
+            this.host().manager.describe(r.stored.pluginId, true).spark233,
+            this.options.locale(),
+          ).find((value) => value.windowId === r.stored.widgetDefinitionId)?.chrome,
+          unifiedWindow: !!this.options
+            .workspaceCards?.()
+            .some((value) => value.widgetInstanceId === r.stored.widgetInstanceId),
           id: r.id,
           consumerId: "widgets",
           widget: r.binding,
           renderKind: r.definition.kind,
           renderRef: r.stored.widgetDefinitionId,
           ...r.stored,
+          cardDesktopOnly: this.options
+            .workspaceCards?.()
+            .find((value) => value.widgetInstanceId === r.stored.widgetInstanceId)?.cardDesktopOnly,
+          cardDesktopMember: this.options
+            .workspaceCards?.()
+            .find((value) => value.widgetInstanceId === r.stored.widgetInstanceId)
+            ?.cardDesktopMember,
+          pluginId: r.binding.pluginId,
+          pluginTitle: this.host().manager.describe(r.stored.pluginId, true).spark233.displayName,
           bounds,
           transientGeometry: !!interactions || intrinsicHeight,
           desktopInteractive: !!interactions,
@@ -1270,12 +1346,35 @@ export class WidgetHost {
         );
     };
     const menu: MenuItemConstructorOptions[] = [
-      {
-        label: zh ? "窗口置顶显示" : "Always on top",
-        type: "checkbox",
-        checked: r.stored.group === "top",
-        click: (item) => update({ group: item.checked ? "top" : "normal" }),
-      },
+      ...(this.options.presentWindow
+        ? [
+            {
+              label: this.options.layer.overlayActive
+                ? zh
+                  ? "独立窗口打开"
+                  : "Open independent window"
+                : zh
+                  ? "添加到卡片桌面"
+                  : "Add to card desktop",
+              click: () =>
+                void this.options.presentWindow!(
+                  r.stored.widgetInstanceId,
+                  this.options.layer.overlayActive ? "desktop" : "card-desktop",
+                ).catch((error) => this.diagnostic("widget.desktopMenu", error)),
+            },
+          ]
+        : []),
+      ...(!this.options.layer.overlayActive
+        ? [
+            {
+              label: zh ? "窗口置顶显示" : "Always on top",
+              type: "checkbox" as const,
+              checked: r.stored.group === "top",
+              click: (item: Electron.MenuItem) =>
+                update({ group: item.checked ? "top" : "normal" }),
+            },
+          ]
+        : []),
       {
         label: zh ? "贴边自动隐藏" : "Auto-hide at screen edge",
         type: "checkbox",
@@ -1298,7 +1397,15 @@ export class WidgetHost {
             );
         },
       },
-      { label: config.menu.hideLabel, click: () => update({ visible: false }) },
+      {
+        label: zh ? "关闭" : "Close",
+        click: () => {
+          if (current())
+            void this.remove(r.stored.widgetInstanceId).catch((error) =>
+              this.diagnostic("widget.desktopMenu", error),
+            );
+        },
+      },
     ];
     state.menu = Menu.buildFromTemplate(menu);
     state.menu.popup({
@@ -1645,6 +1752,14 @@ export class WidgetHost {
           "widget.commandDenied",
           "Use the trusted host card button to open the main window",
         );
+      if (this.options.layer.overlayActive && this.options.openWindow) {
+        const command = this.host()
+          .manager.describe(r.binding.pluginId)
+          .spark233.commands.find((value) => value.id === action.commandId);
+        if (!command?.window) throw new Error("Widget action has no declared window");
+        await this.options.openWindow(r.binding.pluginId, command.window, input);
+        return;
+      }
       return this.host().manager.activateOwned(
         r.binding.pluginId,
         {
@@ -1907,16 +2022,20 @@ export class WidgetHost {
         await confirmed;
         controller.signal.throwIfAborted();
         if (!current()) throw new Error("widget.staleBinding");
-        const result = await this.host().manager.activateOwned(
-          captured.pluginId,
-          {
-            commandId: action.commandId,
-            parameters: { widgetInstanceId: captured.widgetInstanceId, input: null },
-          },
-          () => {
-            controller.signal.throwIfAborted();
-            if (!current()) throw new Error("widget.staleBinding");
-          },
+        const result = await windowOpenContext.run(
+          { environment: this.options.layer.overlayActive ? "card-desktop" : "desktop" },
+          () =>
+            this.host().manager.activateOwned(
+              captured.pluginId,
+              {
+                commandId: action.commandId,
+                parameters: { widgetInstanceId: captured.widgetInstanceId, input: null },
+              },
+              () => {
+                controller.signal.throwIfAborted();
+                if (!current()) throw new Error("widget.staleBinding");
+              },
+            ),
         );
         controller.signal.throwIfAborted();
         if (current() && samePluginOwner(result.owner, captured.owner))

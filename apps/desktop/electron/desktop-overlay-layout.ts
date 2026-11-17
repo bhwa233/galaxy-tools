@@ -92,6 +92,7 @@ const layoutSchema = z.strictObject({
 });
 
 export function overlayPanelKind(card: LayerCard): DesktopOverlayPanel["kind"] | undefined {
+  if (card.cardDesktopMember === false) return;
   if (card.presentationOnly || card.presentationHidden) return;
   if (card.renderKind === "notes") {
     const payload = card.payload as { items?: Array<{ master?: boolean }> } | undefined;
@@ -100,6 +101,7 @@ export function overlayPanelKind(card: LayerCard): DesktopOverlayPanel["kind"] |
   if (card.renderKind === "screenshot") return "screenshot";
   if (card.renderKind === "utools") return "utools";
   if (card.renderKind === "window") return "window";
+  if (card.cardDesktopOnly || card.cardDesktopMember) return "window";
   if (card.renderKind === "declarative" && card.widget?.pluginId === "spark233.traffic")
     return "traffic";
 }

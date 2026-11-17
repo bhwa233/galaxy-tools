@@ -1,4 +1,5 @@
 import { screen } from "electron";
+import { unifiedWindowControl } from "../host/plugin-window-adapters.js";
 import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
 import { text } from "./arguments.js";
@@ -25,9 +26,16 @@ export function createWindowCommands(
     | "publishNoteStates"
     | "workspaceRequests"
     | "windowModes"
+    | "desktopLayer"
   >,
 ) {
   async function run({ win, command, args, layout }: CommandInvocation): Promise<unknown> {
+    const mayPresent = () =>
+      (ctx.windowPresentations.get(win)?.() ?? true) &&
+      !(
+        ctx.desktopLayer?.overlayInputBlocked &&
+        unifiedWindowControl(win)?.state().environment === "card-desktop"
+      );
     switch (command) {
       case "desktop_ready": {
         ctx.ready.add(win.id);
@@ -42,7 +50,7 @@ export function createWindowCommands(
           ctx.pendingManagerOpen = undefined;
           ctx.emit("open-note", payload, win);
         }
-        if (layout.visible && !win.isVisible() && (ctx.windowPresentations.get(win)?.() ?? true)) {
+        if (layout.visible && !win.isVisible() && mayPresent()) {
           win.show();
           win.focus();
         }
@@ -75,12 +83,18 @@ export function createWindowCommands(
       }
       case "window_control": {
         switch (args.action) {
+          case "menu":
+            unifiedWindowControl(win)?.menu();
+            return;
+          case "collapseWorkspace":
+            await unifiedWindowControl(win)?.collapse();
+            return;
           case "show":
-            if (!(ctx.windowPresentations.get(win)?.() ?? true)) return;
+            if (!mayPresent()) return;
             win.show();
             return;
           case "focus":
-            if (!(ctx.windowPresentations.get(win)?.() ?? true)) return;
+            if (!mayPresent()) return;
             // A hidden window must not pull itself forward; showing goes through "show".
             if (!win.isVisible()) return;
             win.focus();
@@ -89,6 +103,17 @@ export function createWindowCommands(
             await ctx.hideAndRelease(win);
             return;
           case "modeState": {
+            const unified = unifiedWindowControl(win)?.state();
+            if (unified)
+              return {
+                mode:
+                  unified.environment === "card-desktop"
+                    ? "desktop"
+                    : win.isAlwaysOnTop()
+                      ? "topmost"
+                      : "normal",
+                desktopAvailable: false,
+              };
             const modes = ctx.windowModes.get(win.id);
             return modes
               ? modes.state()
@@ -101,6 +126,13 @@ export function createWindowCommands(
             return;
           }
           case "mode": {
+            const unified = unifiedWindowControl(win);
+            if (unified) {
+              if (args.value === "desktop" || !unified.state().capabilities.topmost)
+                throw new AppError("permissionDenied", "当前环境不支持此窗口操作");
+              unified.setAlwaysOnTop(args.value === "topmost");
+              return;
+            }
             const modes = ctx.windowModes.get(win.id);
             if (!modes) throw new AppError("invalidCommand", "此窗口不支持窗口模式");
             if (args.value !== "normal" && args.value !== "topmost" && args.value !== "desktop")
@@ -109,6 +141,7 @@ export function createWindowCommands(
             return;
           }
           case "close":
+            if (unifiedWindowControl(win)) return unifiedWindowControl(win)!.close();
             // On the desktop, close means "remove from desktop"; the page stays.
             if (ctx.windowModes.get(win.id)?.mode === "desktop") {
               await ctx.windowModes.get(win.id)!.removeFromDesktop();
@@ -128,6 +161,11 @@ export function createWindowCommands(
             else await ctx.foldAndRelease(win);
             return;
           case "minimize":
+            if (
+              !win.isMinimizable() ||
+              unifiedWindowControl(win)?.state().capabilities.minimizable === false
+            )
+              return;
             win.minimize();
             return;
           case "toggleMaximize":
@@ -138,11 +176,14 @@ export function createWindowCommands(
           case "isMaximized":
             return win.isMaximized();
           case "isAlwaysOnTop":
-            return layout.topmost;
+            return unifiedWindowControl(win) ? win.isAlwaysOnTop() : layout.topmost;
           case "alwaysOnTop":
+            if (unifiedWindowControl(win)?.state().capabilities.topmost === false)
+              throw new AppError("permissionDenied", "卡片桌面不支持置顶");
             if (typeof args.value !== "boolean")
               throw new AppError("invalidPayload", "置顶参数不合法");
-            if (layout.noteId) ctx.setNotePinned(layout.noteId, args.value);
+            if (unifiedWindowControl(win)) unifiedWindowControl(win)!.setAlwaysOnTop(args.value);
+            else if (layout.noteId) await ctx.setNotePinned(layout.noteId, args.value);
             else {
               layout.topmost = args.value;
               ctx.applyNoteTopmost(win, layout);

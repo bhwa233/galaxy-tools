@@ -50,7 +50,12 @@ describe("host command boundary", () => {
       expect(syncDesktopLayer).toHaveBeenCalledTimes(2);
       expect(
         new HostConfigStore(directory, path.join(directory, "notes")).value.desktopLayer,
-      ).toEqual({ enabled: false, webEnabled: false, notesEnabled: false });
+      ).toEqual({
+        enabled: false,
+        webEnabled: false,
+        notesEnabled: false,
+        topTriggerEnabled: true,
+      });
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

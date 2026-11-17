@@ -6,6 +6,7 @@ import semver from "semver";
 import { z } from "zod";
 import {
   pluginPackageSchema,
+  pluginDevelopmentBuildSchema,
   localizePluginManifest,
   type PluginTheme,
   type PluginPackageMetadata,
@@ -65,6 +66,16 @@ export interface WidgetSourceEvent {
 }
 
 export interface DesktopPluginHostOptions {
+  onUninstallBegin?: (pluginId: string) => string;
+  onUninstallCommitted?: (receipt: string) => void;
+  onWindowAttach?: (instanceId: string, window: BrowserWindow) => () => void;
+  openOfficialWindow?: (
+    pluginId: string,
+    instanceId: string,
+    binding: import("@spark233/sdk").WindowBinding,
+  ) => Promise<void>;
+  prepareOfficialWindowClose?: (instanceId: string) => Promise<{ ok: boolean; reason?: string }>;
+  closeOfficialWindow?: (instanceId: string) => Promise<void>;
   utoolsDesktop?: import("./utools-desktop.js").UToolsDesktopHost;
   windowDesktop?: import("./window-desktop.js").PluginWindowDesktopHost;
   utoolsFetch?: typeof fetch;
@@ -136,6 +147,7 @@ const pendingSchema = z.strictObject({
         })
         .transform(({ registry, channel, ...identity }) => ({
           ...identity,
+          development: undefined,
           integrity: undefined,
           installedSource: undefined,
           source: { registry, channel, kind: undefined as "registry" | undefined },
@@ -144,6 +156,7 @@ const pendingSchema = z.strictObject({
         pluginId: z.string(),
         name: z.string(),
         version: z.string(),
+        development: pluginDevelopmentBuildSchema.optional(),
         integrity: z.string().optional(),
         installedSource: sourceSchema.optional(),
         source: z
@@ -200,6 +213,7 @@ const bundledEntrySchema = z.strictObject({
   pluginId: z.string().min(1).max(80),
   name: z.string().min(1).max(214),
   version: z.string().refine((value) => !!semver.valid(value)),
+  development: pluginDevelopmentBuildSchema.optional(),
   file: z.string().regex(/^[a-z0-9][a-z0-9.-]*\.tgz$/),
   integrity: z.string().transform(requirePackageIntegrity),
   displayName: z.string().min(1).max(160).optional(),
@@ -291,6 +305,8 @@ export class DesktopPluginHost {
       packages: this.paths,
       environment: this.environment,
       onChange: () => this.changed(),
+      onUninstallBegin: options.onUninstallBegin,
+      onUninstallCommitted: options.onUninstallCommitted,
       onDiagnostic: (event) => this.diagnostic(event),
       resolveDataDirectory: options.resolveDataDirectory,
       migrateData: (installation, metadata, migration) =>
@@ -393,6 +409,7 @@ export class DesktopPluginHost {
       this.paths,
       staged.metadata.spark233.id,
       staged.metadata.version,
+      staged.metadata.spark233.development,
     );
     if (canonical(expected) !== canonical(staged.directory))
       throw new Error("Preview code directory does not match its package identity");
@@ -404,6 +421,7 @@ export class DesktopPluginHost {
       name: record.staged.metadata.name,
       version: record.staged.metadata.version,
       pluginId: record.staged.metadata.spark233.id,
+      development: record.staged.metadata.spark233.development ?? null,
     });
     if (JSON.stringify(metadata) !== JSON.stringify(record.staged.metadata))
       throw new Error("Pending plugin manifest changed; cancel and import it again");
@@ -421,6 +439,11 @@ export class DesktopPluginHost {
   private preview(record: PendingPackage): InstallPreview {
     const { metadata, source, integrity, releaseNotes, warnings } = record.staged;
     const task = this.taskForPreview(record.previewId);
+    const installed = this.manager.list().find((item) => item.pluginId === metadata.spark233.id);
+    const currentVersion = record.updateFrom?.version ?? installed?.version;
+    const currentDevelopment = record.updateFrom
+      ? record.updateFrom.development
+      : installed?.development;
     let change: InstallPreview["change"];
     if (source.kind === "utools" && record.updateFrom) {
       try {
@@ -446,7 +469,8 @@ export class DesktopPluginHost {
       ...(releaseNotes ? { releaseNotes } : {}),
       ...(warnings ? { warnings } : {}),
       ...(task ? { taskId: task.snapshot.taskId } : {}),
-      ...(record.updateFrom ? { currentVersion: record.updateFrom.version } : {}),
+      ...(currentVersion ? { currentVersion } : {}),
+      ...(currentDevelopment ? { currentDevelopment } : {}),
       ...(change ? { change } : {}),
       requiresNativeTrust:
         !!metadata.spark233.compatibility ||
@@ -604,6 +628,17 @@ export class DesktopPluginHost {
     this.changed();
   }
 
+  private bundledUpdateAvailable(
+    entry: BundledEntry,
+    installed: Pick<PluginInstallation, "version" | "development">,
+  ): boolean {
+    if (this.options.developmentBundledUpdates && entry.development)
+      return (
+        entry.version !== installed.version ||
+        entry.development.buildId !== installed.development?.buildId
+      );
+    return semver.gt(entry.version, installed.version);
+  }
   private async installBundled(): Promise<void> {
     if (!this.options.bundledRoot) return;
     const indexFile = confined(this.options.bundledRoot, "index.json");
@@ -653,11 +688,27 @@ export class DesktopPluginHost {
             semver.gte(entry.version, officialMinimumVersions[entry.pluginId]!)));
       if (consumed.includes(entry.pluginId) && !development && !repair) continue;
       try {
-        if (!installed || repair || (development && installed.version !== entry.version)) {
-          const candidate = getPluginVersionDirectory(this.paths, entry.pluginId, entry.version);
+        if (
+          !installed ||
+          repair ||
+          (development && this.bundledUpdateAvailable(entry, installed))
+        ) {
+          const candidate = getPluginVersionDirectory(
+            this.paths,
+            entry.pluginId,
+            entry.version,
+            entry.development,
+          );
           if (fs.existsSync(candidate)) {
-            if (this.used(candidate))
-              throw new Error("Bundled package is still owned by a pending recovery");
+            if (
+              this.used(candidate) ||
+              [...this.pending.values()].some(
+                (item) => canonical(item.staged.directory) === canonical(candidate),
+              )
+            )
+              throw new Error(
+                "Bundled package is still owned by an installation preview or recovery",
+              );
             fs.rmSync(candidate, { recursive: true, force: true });
           }
           const staged = await stageLocalPluginPackage(
@@ -666,18 +717,28 @@ export class DesktopPluginHost {
             this.paths,
             {
               integrity: entry.integrity,
-              expected: { name: entry.name, version: entry.version, pluginId: entry.pluginId },
+              expected: {
+                name: entry.name,
+                version: entry.version,
+                pluginId: entry.pluginId,
+                development: entry.development ?? null,
+              },
             },
           );
           await this.manager.install(staged, {
             capabilities: staged.metadata.spark233.capabilities,
             native: true,
           });
-          if (development && installed && /^\d+\.\d+\.\d{13,15}$/.test(installed.version)) {
-            const previous = confined(
-              this.paths.versionsRoot,
-              encodeURIComponent(installed.pluginId),
-              encodeURIComponent(installed.version),
+          if (
+            development &&
+            installed &&
+            (installed.development || /^\d+\.\d+\.\d{13,15}$/.test(installed.version))
+          ) {
+            const previous = getPluginVersionDirectory(
+              this.paths,
+              installed.pluginId,
+              installed.version,
+              installed.development,
             );
             if (
               canonical(previous) === canonical(installed.directory) &&
@@ -810,6 +871,7 @@ export class DesktopPluginHost {
         icon: this.options.getPluginIcon?.(record.pluginId),
         iconMonochrome,
         version: record.version,
+        ...(record.development ? { development: record.development } : {}),
         enabled: record.enabled,
         status: lastError ? "error" : record.status,
         source: record.source,
@@ -834,12 +896,14 @@ export class DesktopPluginHost {
           pluginId: entry.pluginId,
           packageName: entry.name,
           version: entry.version,
+          ...(entry.development ? { development: entry.development } : {}),
           displayName: entry.translations?.[locale]?.displayName ?? entry.displayName ?? entry.name,
           icon: installed?.icon ?? entry.icon,
           iconMonochrome: installed?.iconMonochrome ?? entry.iconMonochrome,
           ...(installed ? { installedVersion: installed.version } : {}),
+          ...(installed?.development ? { installedDevelopment: installed.development } : {}),
           pending,
-          canPrepare: !pending && (!installed || semver.gt(entry.version, installed.version)),
+          canPrepare: !pending && (!installed || this.bundledUpdateAvailable(entry, installed)),
         };
       }),
       pending: [...this.pending.values()]
@@ -914,6 +978,7 @@ export class DesktopPluginHost {
       pluginId: installed.pluginId,
       name: installed.packageName,
       version: installed.version,
+      ...(installed.development ? { development: installed.development } : {}),
       integrity: installed.integrity,
       installedSource: installed.source,
       source: this.updateSource(installed),
@@ -930,6 +995,7 @@ export class DesktopPluginHost {
       !installed ||
       installed.packageName !== update.name ||
       installed.version !== update.version ||
+      installed.development?.buildId !== update.development?.buildId ||
       (update.integrity !== undefined && installed.integrity !== update.integrity) ||
       (update.installedSource &&
         JSON.stringify(installed.source) !== JSON.stringify(update.installedSource)) ||
@@ -1503,7 +1569,7 @@ export class DesktopPluginHost {
           if (!entry || !this.options.bundledRoot)
             throw new Error("Official offline plugin is not in the bundled catalog");
           const installed = this.manager.list().find((item) => item.pluginId === pluginId);
-          if (installed && !semver.gt(entry.version, installed.version))
+          if (installed && !this.bundledUpdateAvailable(entry, installed))
             throw new Error("This bundled plugin version or a newer version is already installed");
           if (
             [...this.pending.values()].some((item) => item.staged.metadata.spark233.id === pluginId)
@@ -1516,7 +1582,12 @@ export class DesktopPluginHost {
               this.paths,
               {
                 integrity: entry.integrity,
-                expected: { name: entry.name, version: entry.version, pluginId },
+                expected: {
+                  name: entry.name,
+                  version: entry.version,
+                  pluginId,
+                  development: entry.development ?? null,
+                },
                 signal: this.abort.signal,
               },
             ),

@@ -8,12 +8,15 @@ export interface HostWindowOptions {
   icon: string | NativeImage;
   minWidth: number;
   minHeight: number;
+  maxWidth?: number;
+  maxHeight?: number;
   skipTaskbar: boolean;
   alwaysOnTop: boolean;
   hasShadow: boolean;
   label: string;
   resizable?: boolean;
   maximizable?: boolean;
+  minimizable?: boolean;
 }
 
 /** Reuse the host's Electron window setup without exposing security overrides. */
@@ -34,8 +37,11 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     show: false,
     resizable: options.resizable ?? true,
     maximizable: options.maximizable ?? true,
+    minimizable: options.minimizable ?? true,
     minWidth: options.minWidth,
     minHeight: options.minHeight,
+    maxWidth: options.maxWidth,
+    maxHeight: options.maxHeight,
     skipTaskbar: options.skipTaskbar,
     alwaysOnTop: options.alwaysOnTop,
     hasShadow: options.hasShadow,
@@ -51,6 +57,24 @@ export function createHostWindow(options: HostWindowOptions): BrowserWindow {
     },
   });
   win.setMenu(null);
+  if (process.env.ELECTRON_RENDERER_URL) {
+    win.webContents.on("console-message", (details) => {
+      if (details.level === "error")
+        console.error(
+          "renderer-console",
+          options.label,
+          details.message,
+          details.sourceId,
+          details.lineNumber,
+        );
+    });
+    win.webContents.on("did-fail-load", (_event, code, description, url, mainFrame) => {
+      if (mainFrame) console.error("renderer-load-failed", options.label, code, description, url);
+    });
+    win.webContents.on("preload-error", (_event, preload, error) => {
+      console.error("renderer-preload-failed", options.label, preload, error);
+    });
+  }
   win.on("page-title-updated", (event) => event.preventDefault());
   bindDevToolsShortcut(win);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

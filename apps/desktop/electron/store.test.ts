@@ -21,6 +21,18 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 describe("Electron persistence boundary", () => {
+  test("replays a note creation receipt after restart without duplicating or resurrecting content", async () => {
+    const { root, store } = fixture();
+    const creationId = "d2a01911-d6bf-47d8-9d30-9b3ce8717b4d";
+    const input = { title: "新便签", content: "保留内容", category: "" };
+    const first = store.createIdempotent(creationId, input);
+    const restarted = new NoteStore(path.join(root, "config"), store.dataDir, async () => {});
+    expect(restarted.createIdempotent(creationId, input).id).toBe(first.id);
+    expect(restarted.list()).toHaveLength(1);
+    await restarted.delete(first.id);
+    expect(() => restarted.createIdempotent(creationId, input)).toThrow(/找不到便签/);
+    expect(restarted.list()).toHaveLength(0);
+  });
   test("persists each note's editing mode without rewriting its Markdown or touching another note", () => {
     const { root, store } = fixture();
     const source = "# 原文\n\n![](images/n/a.png){width=75%}\n";

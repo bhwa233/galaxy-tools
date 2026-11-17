@@ -1,10 +1,8 @@
 export type HostPhase = "starting" | "running" | "maintenance" | "quitting" | "exiting";
 
 /**
- * One place that answers "may ordinary interaction reach host services now?".
- * The underlying flags stay with their owners (backup maintenance, the shutdown
- * coordinator, the exit path); this derives a single phase from them so IPC,
- * shortcuts, tray and window creation stop re-deriving it ad hoc.
+ * Shell presentation remains available while business data is in maintenance.
+ * The owners retain their flags; callers choose shell or business availability.
  */
 export class HostLifecycle {
   constructor(
@@ -26,5 +24,9 @@ export class HostLifecycle {
   /** Backup/restore maintenance or a shutdown in progress: new user work is refused. */
   get blocked(): boolean {
     return this.state.maintenance() || this.state.quitting() || this.state.exiting();
+  }
+
+  get shellBlocked(): boolean {
+    return this.state.quitting() || this.state.exiting();
   }
 }

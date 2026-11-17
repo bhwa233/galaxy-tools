@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { getCurrentWindow } from "../../platform/desktop";
+import { getCurrentWindow, invoke } from "../../platform/desktop";
 import { useWindowMode } from "./useWindowMode";
 import { usePluginWindow } from "./PluginWindowContext";
 import { StatusBar, type RunState } from "./StatusBar";
@@ -66,7 +66,9 @@ export function WorkspaceTitleBar({
   // local owns the key: an open dialog or menu, IME composition, or a text field
   // that still holds text. A desktop card is not closed by Esc.
   const closeOnEscape = useEffectEvent(() => {
-    if (windowMode.mode !== "desktop") void perform(onClose);
+    if (windowMode.mode === "desktop")
+      void perform(() => invoke("window_control", { action: "collapseWorkspace" }));
+    else void perform(onClose);
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -108,6 +110,8 @@ export function WorkspaceTitleBar({
   };
   const onDesktop = windowMode.mode === "desktop";
 
+  if (windowInfo?.chrome === "none") return null;
+
   return (
     <StatusBar
       title={windowInfo?.title ?? title}
@@ -118,6 +122,14 @@ export function WorkspaceTitleBar({
       onModeChange={
         windowMode.onModeChange && ((next) => void perform(() => windowMode.onModeChange!(next)))
       }
+      nativeMenus={
+        windowInfo
+          ? {
+              mode: () => void perform(() => invoke("window_control", { action: "menu" })),
+              more: () => void perform(() => invoke("window_control", { action: "menu" })),
+            }
+          : undefined
+      }
       locked={windowMode.locked}
       hint={windowMode.hint}
       highlighted={windowMode.highlighted}
@@ -126,6 +138,8 @@ export function WorkspaceTitleBar({
       }
       maximized={isMaximized}
       maximizable={windowInfo?.maximizable !== false}
+      minimizable={windowInfo?.minimizable !== false}
+      collapsed={windowInfo ? false : undefined}
       onMouseDown={onMouseDown}
       onMinimize={() => void perform(minimizeCurrentWindow)}
       onToggleMaximize={() => void perform(toggleMaximizeCurrentWindow)}

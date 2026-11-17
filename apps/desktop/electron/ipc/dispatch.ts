@@ -1,6 +1,8 @@
 import { BrowserWindow } from "electron";
 import type { CommandName } from "../../shared/command-policies.js";
 import { notesCommandAllowed } from "../host/ipc-policy.js";
+import { unifiedWindowControl } from "../host/plugin-window-adapters.js";
+import { runWindowTask, windowOpenContext } from "../host/plugin-window-routing.js";
 import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
 import { createApplicationCommands } from "./application-commands.js";
@@ -56,6 +58,7 @@ export function createDispatch(ctx: RuntimeContext) {
       "diagnostics_unsubscribe",
       "backup_selection_release",
       "launcher_state",
+      "settings_open",
       "plugin_window_info",
       "plugin_window_take_activation",
       "notes_get",
@@ -71,12 +74,16 @@ export function createDispatch(ctx: RuntimeContext) {
       ["bounds", "position", "size", "isMaximized", "isAlwaysOnTop"].includes(String(args.action));
     const restoredSurface =
       command === "surface_state" && ctx.layouts.get(ctx.labelOf(win))?.noteId === args.noteId;
+    const closingWindow =
+      command === "launcher_hide" ||
+      (command === "window_control" && ["close", "hide"].includes(String(args.action)));
     if (
       ctx.lifecycle.blocked &&
       !readOnly.includes(command) &&
       !(command === "backup_schedule" && args.action === "get") &&
       !windowRead &&
       !restoredSurface &&
+      !closingWindow &&
       !preparationWrite
     )
       throw new AppError(
@@ -141,15 +148,40 @@ export function createDispatch(ctx: RuntimeContext) {
     }
     const handler = handlers[command as keyof typeof handlers];
     if (!handler) throw new AppError("invalidCommand", "Unknown host command");
-    return handler({
-      win,
-      command,
-      args,
-      layout,
-      grants,
-      preparationWrite,
-      label,
-    } as CommandInvocation);
+    const control = unifiedWindowControl(win);
+    const temporary =
+      (command === "text_action" && args.target !== "notes") ||
+      command === "clipboard_image_ocr" ||
+      (command === "translation_action" &&
+        ["search", "detail", "translate"].includes(String(args.action)));
+    const run = () =>
+      handler({
+        win,
+        command,
+        args,
+        layout,
+        grants,
+        preparationWrite,
+        label,
+      } as CommandInvocation);
+    return windowOpenContext.run(
+      {
+        environment: control?.state().environment ?? "desktop",
+        ...(control && command === "text_action" && args.target === "notes"
+          ? {
+              assertActive: () => {
+                if (
+                  !ctx.pluginWindowLayouts
+                    ?.load()
+                    .placements.some((placement) => placement.instanceId === control.instanceId)
+                )
+                  throw new AppError("cancelled", "来源窗口已关闭");
+              },
+            }
+          : {}),
+      },
+      () => (temporary && control ? runWindowTask(control.instanceId, run) : run()),
+    );
   }
   return { handle };
 }

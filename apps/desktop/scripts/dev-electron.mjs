@@ -1,4 +1,5 @@
 import { spawn, execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync, lstatSync, realpathSync, unlinkSync, watch } from "node:fs";
 import { createServer } from "node:net";
@@ -71,7 +72,7 @@ function buildPlugins() {
       // A development machine without the MSVC toolchain still starts; plugins
       // whose prebuilt payload is absent stay out instead of failing the run.
       SPARK233_DEV_SKIP_MISSING_NATIVE: "1",
-      SPARK233_DEV_PLUGIN_BUILD: String(Date.now()),
+      SPARK233_DEV_PLUGIN_BUILD: `${Date.now()}-${randomUUID()}`,
     },
   });
 }
@@ -241,10 +242,19 @@ compiler.on("exit", async (code) => {
     const keep = new Set(index.plugins.map((entry) => entry.file));
     const names = readdirSync(root);
     const publishing = () =>
-      building || readdirSync(root).some((name) => /^\.dev-build-\d+-\d+\.active$/.test(name));
+      building ||
+      readdirSync(root).some((name) =>
+        /^\.dev-build-\d+-[a-z0-9]+(?:[.-][a-z0-9]+)*\.active$/.test(name),
+      );
     if (publishing()) return;
     for (const name of names) {
-      if (!/^[a-z0-9-]+-\d+\.\d+\.\d{13,15}\.tgz$/.test(name) || keep.has(name)) continue;
+      if (
+        !/^[a-z0-9-]+-\d+\.\d+\.(?:\d{13,15}|\d+(?:-[a-z0-9.-]+)?-dev-[a-z0-9]+(?:[.-][a-z0-9]+)*)\.tgz$/.test(
+          name,
+        ) ||
+        keep.has(name)
+      )
+        continue;
       // Fail closed if another publisher starts or replaces the index while
       // this old Electron exit is being handled. Cleanup can wait a restart.
       if (publishing() || readFileSync(indexFile, "utf8") !== indexText) return;
@@ -337,6 +347,11 @@ compiler.on("exit", async (code) => {
       if (dirty && !restarting) schedule();
     }
   }
+  const ignoredSource = (file) =>
+    /(^|\/)(node_modules|native|legal|data|licenses|dist)(\/|$)/.test(file) ||
+    /(?:^|\/)backend-resources\.json$/.test(file) ||
+    /(?:^|\/)(notes|clipboard|traffic|quicklinks|search)\/backend\.mjs$/.test(file) ||
+    /(?:\.test\.[cm]?[jt]sx?|\.map|\.tsbuildinfo)$/.test(file);
   for (const relative of [
     "packages/official",
     "packages/sdk/src",
@@ -349,16 +364,41 @@ compiler.on("exit", async (code) => {
     "scripts/native-applications",
   ]) {
     const directory = path.join(projectRoot, relative);
+    const fingerprints = new Map();
+    const remember = (folder, prefix = "") => {
+      for (const entry of readdirSync(folder, { withFileTypes: true })) {
+        const name = prefix + entry.name;
+        if (ignoredSource(name)) continue;
+        if (entry.isDirectory()) remember(path.join(folder, entry.name), name + "/");
+        else if (entry.isFile())
+          fingerprints.set(
+            name,
+            createHash("sha256")
+              .update(readFileSync(path.join(directory, name)))
+              .digest("hex"),
+          );
+      }
+    };
+    remember(directory);
     const watcher = watch(directory, { recursive: true }, (_event, filename) => {
       if (!filename) return;
       const file = String(filename).replaceAll("\\", "/");
-      if (
-        /(^|\/)(node_modules|native|legal|data|licenses|dist)(\/|$)/.test(file) ||
-        /(?:^|\/)backend-resources\.json$/.test(file) ||
-        /(?:^|\/)(notes|clipboard|traffic|quicklinks)\/backend\.mjs$/.test(file) ||
-        /\.test\.[cm]?[jt]sx?$/.test(file)
-      )
-        return;
+      if (ignoredSource(file)) return;
+      let fingerprint;
+      try {
+        const target = path.join(directory, file);
+        if (!lstatSync(target).isFile()) return;
+        fingerprint = createHash("sha256").update(readFileSync(target)).digest("hex");
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          console.error("Development source read failed", file, error);
+          return;
+        }
+      }
+      if (fingerprints.get(file) === fingerprint) return;
+      if (fingerprint === undefined) fingerprints.delete(file);
+      else fingerprints.set(file, fingerprint);
+      console.log("Development source changed:", relative + "/" + file);
       if (relative === "native/capture" || relative === "scripts/native-capture")
         captureDirty = true;
       schedule();

@@ -9,6 +9,8 @@ for (const name of [
   "tray-light.png",
   "tray-dark.png",
   "FullscreenWatcher.cs",
+  "WindowTransitions.cs",
+  "DesktopTrigger.cs",
   "SelectionReader.cs",
   "host-windows.json",
 ])

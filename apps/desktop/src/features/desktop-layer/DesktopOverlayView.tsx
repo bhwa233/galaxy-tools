@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent,
@@ -9,17 +10,16 @@ import {
 } from "react";
 import {
   AppWindow,
+  Check,
   ExternalLink,
   GripHorizontal,
   Image,
   LayoutGrid,
-  MousePointer2,
+  MoreHorizontal,
   Network,
   Puzzle,
-  Pin,
   Plus,
   Settings,
-  Star,
   SlidersHorizontal,
   StickyNote,
   X,
@@ -36,7 +36,6 @@ import { Button } from "../../components/ui/button";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -44,6 +43,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+} from "../../components/ui/context-menu";
 import {
   Command,
   CommandDialog,
@@ -72,47 +77,137 @@ const kindIcons = {
 export function DesktopOverlayView({
   snapshot,
   client,
+  active = true,
 }: {
   snapshot: LayerSnapshot;
   client: LayerClient;
+  active?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string>();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState<string>();
   const [addOpen, setAddOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [selectedLauncher, setSelectedLauncher] = useState<string>();
+  const transient = useRef<{ id: string; kind: "modal" | "menu"; key: string } | undefined>(
+    undefined,
+  );
+  const addingRef = useRef(false);
+  const addButton = useRef<HTMLButtonElement>(null);
   const panels = snapshot.overlay?.panels ?? [];
   const launchers = snapshot.overlay?.launchers;
-  const favorites = (launchers ?? []).filter((item) => item.favorite).slice(0, 6);
   const zh = snapshot.locale.startsWith("zh");
   const text = (cn: string, en: string) => (zh ? cn : en);
   const epoch = snapshot.overlay?.epoch;
+  const session = useRef({ epoch, active });
+  useLayoutEffect(() => {
+    session.current = { epoch, active };
+    transient.current = undefined;
+    addingRef.current = false;
+    // eslint-disable-next-line react/set-state-in-effect -- Reset transient UI before revealing a new session while preserving its management chrome.
+    setError(undefined);
+    setMenuOpen(undefined);
+    setAddOpen(false);
+    setAdding(false);
+    setSelectedLauncher(undefined);
+  }, [epoch, active]);
   const send: Send = useCallback(
     async (request) => {
       setError(undefined);
       try {
-        return await client.request({
+        const result = await client.request({
           ...request,
           ...(epoch === undefined ? {} : { overlayEpoch: epoch }),
         });
+        if (session.current.epoch !== epoch || !session.current.active)
+          throw new Error("Card desktop session ended");
+        return result;
       } catch (value) {
-        setError(getErrorMessage(value));
+        if (session.current.epoch === epoch && session.current.active)
+          setError(getErrorMessage(value));
         throw value;
       }
     },
     [client, epoch],
   );
   const act = (request: LayerClientRequest) => void send(request).catch(() => {});
+  const openTransient = async (key: string, kind: "modal" | "menu") => {
+    if (transient.current?.key === key) return;
+    const current = { id: crypto.randomUUID(), kind, key };
+    transient.current = current;
+    try {
+      await send({ type: "overlay-transient", id: current.id, kind, open: true });
+      if (transient.current !== current) return;
+      if (kind === "modal") {
+        setSelectedLauncher(undefined);
+        setAddOpen(true);
+      } else setMenuOpen(key);
+    } catch {
+      if (transient.current === current) transient.current = undefined;
+    }
+  };
+  const closeTransient = async (key: string, activateCardId?: string) => {
+    const current = transient.current;
+    if (current?.key !== key) return;
+    transient.current = undefined;
+    if (current.kind === "modal") setAddOpen(false);
+    else setMenuOpen(undefined);
+    let focusHost = false;
+    try {
+      const result = (await send({
+        type: "overlay-transient",
+        ...current,
+        open: false,
+        activateCardId,
+      })) as { focusHost?: boolean } | undefined;
+      focusHost = result?.focusHost === true;
+    } catch {
+      // The host clears constraints before acknowledging a failed restoration.
+    }
+    if (focusHost && current.kind === "modal" && !activateCardId && !transient.current)
+      addButton.current?.focus();
+  };
+  const changeMenu = (key: string, open: boolean) => {
+    if (open) void openTransient(key, "menu");
+    else void closeTransient(key);
+  };
+  const launch = async (pluginId: string, commandId: string) => {
+    const current = transient.current;
+    if (addingRef.current || current?.kind !== "modal") return;
+    addingRef.current = true;
+    setAdding(true);
+    setSelectedLauncher(pluginId + "/" + commandId);
+    try {
+      const result = (await send({
+        type: "overlay-launch",
+        pluginId,
+        commandId,
+        transientId: current.id,
+      })) as { cardId?: string } | undefined;
+      if (transient.current === current) await closeTransient(current.key, result?.cardId);
+    } catch {
+      // Keep both the dialog and its durable create intent for an explicit retry.
+    } finally {
+      if (session.current.epoch === epoch && session.current.active) {
+        addingRef.current = false;
+        setAdding(false);
+      }
+    }
+  };
   useEffect(() => {
+    if (!active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [active]);
   useEffect(() => {
+    if (!active) return;
     const escape = (event: KeyboardEvent) => {
       if (
         event.key !== "Escape" ||
         event.defaultPrevented ||
         event.isComposing ||
         menuOpen ||
+        transient.current ||
         document.querySelector('[data-overlay-moving], [role="menu"], [role="dialog"]')
       )
         return;
@@ -121,75 +216,119 @@ export function DesktopOverlayView({
     };
     document.addEventListener("keydown", escape);
     return () => document.removeEventListener("keydown", escape);
-  }, [menuOpen, send]);
-  const toggleKind = async (kind: DesktopOverlayPanel["kind"]) => {
-    const matching = panels.filter((panel) => panel.kind === kind);
-    const show = !matching.some((panel) => panel.selected);
+  }, [active, menuOpen, send]);
+  const showGroup = async (pluginId: string, show: boolean) => {
+    const matching = panels.filter((panel) => (panel.pluginId ?? panel.kind) === pluginId);
     for (const panel of matching)
       await send({ type: "overlay-panel", cardId: panel.cardId, action: show ? "show" : "hide" });
   };
   const categories = [
-    { kind: "notes" as const, title: text("便签", "Notes") },
-    { kind: "traffic" as const, title: text("流量", "Traffic") },
-    { kind: "screenshot" as const, title: text("截图图钉", "Pinned images") },
-    { kind: "utools" as const, title: "uTools" },
+    ...new Map(
+      panels.map((panel) => [
+        panel.pluginId ?? panel.kind,
+        {
+          pluginId: panel.pluginId ?? panel.kind,
+          title: panel.pluginTitle ?? panel.title,
+          icon: panel.pluginIcon,
+          kind: panel.kind,
+        },
+      ]),
+    ).values(),
   ];
   return (
     <main
+      hidden={!active}
       className="desktop-overlay"
       data-desktop-overlay="true"
       onPointerDown={(event) => {
+        if (transient.current || menuOpen || addOpen) return;
         if (event.target === event.currentTarget && event.button === 0)
           act({ type: "overlay-close" });
       }}
     >
-      <nav
-        className="desktop-overlay-toolbar"
-        aria-label={text("桌面插件栏", "Desktop plugin bar")}
-      >
+      <nav className="desktop-overlay-toolbar" aria-label={text("卡片桌面", "Card desktop")}>
         <div className="desktop-overlay-brand">
           <LayoutGrid aria-hidden />
           <span>spark233</span>
         </div>
         <div className="desktop-overlay-divider" />
-        {categories.map(({ kind, title }) => {
+        {categories.slice(0, 6).map(({ pluginId, kind, title, icon }) => {
           const Icon = kindIcons[kind];
-          const group = panels.filter((panel) => panel.kind === kind);
+          const group = panels.filter((panel) => (panel.pluginId ?? panel.kind) === pluginId);
           return (
-            <Button
-              key={kind}
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="desktop-overlay-tool"
-              title={title}
-              aria-label={title}
-              aria-pressed={group.some((panel) => panel.selected)}
-              disabled={!group.length}
-              onClick={() => void toggleKind(kind).catch(() => {})}
+            <ContextMenu
+              key={pluginId}
+              open={menuOpen === pluginId}
+              onOpenChange={(open) => changeMenu(pluginId, open)}
             >
-              <Icon />
-            </Button>
+              <ContextMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="desktop-overlay-tool"
+                    title={title}
+                    aria-label={title}
+                    aria-pressed={group.some((panel) => panel.selected)}
+                    disabled={!group.length}
+                    onClick={() => void showGroup(pluginId, true).catch(() => {})}
+                  />
+                }
+              >
+                {icon ? <img src={icon} alt="" className="size-5" /> : <Icon />}
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onSelect={() => void showGroup(pluginId, false).catch(() => {})}>
+                  {text("收起这一组", "Hide this group")}
+                </ContextMenuItem>
+                {group.map((panel) => (
+                  <ContextMenuItem
+                    key={panel.cardId}
+                    onSelect={() =>
+                      act({ type: "overlay-panel", cardId: panel.cardId, action: "show" })
+                    }
+                  >
+                    {panel.title}
+                  </ContextMenuItem>
+                ))}
+              </ContextMenuContent>
+            </ContextMenu>
           );
         })}
-        <div className="desktop-overlay-divider" />
-        {favorites.map((item) => (
-          <Button
-            key={`${item.pluginId}/${item.commandId}`}
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="desktop-overlay-tool desktop-overlay-favorite"
-            title={item.title}
-            aria-label={item.title}
-            data-launcher={`${item.pluginId}/${item.commandId}`}
-            onClick={() =>
-              act({ type: "overlay-launch", pluginId: item.pluginId, commandId: item.commandId })
-            }
+        {categories.length > 6 && (
+          <DropdownMenu
+            open={menuOpen === "more"}
+            onOpenChange={(open) => changeMenu("more", open)}
           >
-            <span aria-hidden>{Array.from(item.title)[0]}</span>
-          </Button>
-        ))}
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="desktop-overlay-tool"
+                  title={text("更多插件", "More plugins")}
+                  aria-label={text("更多插件", "More plugins")}
+                />
+              }
+            >
+              <MoreHorizontal />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="desktop-overlay-menu">
+              <DropdownMenuGroup>
+                {categories.slice(6).map(({ pluginId, title }) => (
+                  <DropdownMenuItem
+                    key={pluginId}
+                    onSelect={() => void showGroup(pluginId, true).catch(() => {})}
+                  >
+                    {title}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        <div className="desktop-overlay-divider" />
         {launchers && (
           <Button
             type="button"
@@ -198,12 +337,16 @@ export function DesktopOverlayView({
             className="desktop-overlay-tool"
             title={text("添加插件", "Add plugin")}
             aria-label={text("添加插件", "Add plugin")}
-            onClick={() => setAddOpen(true)}
+            ref={addButton}
+            onClick={() => void openTransient("add", "modal")}
           >
             <Plus />
           </Button>
         )}
-        <DropdownMenu onOpenChange={setMenuOpen}>
+        <DropdownMenu
+          open={menuOpen === "panels"}
+          onOpenChange={(open) => changeMenu("panels", open)}
+        >
           <DropdownMenuTrigger
             render={
               <Button
@@ -223,6 +366,19 @@ export function DesktopOverlayView({
             className="desktop-overlay-menu desktop-overlay-panel-list"
           >
             <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={() => act({ type: "overlay-arrange" })}>
+                <LayoutGrid />
+                {text("整理布局", "Arrange panels")}
+              </DropdownMenuItem>
+              {categories.map((category) => (
+                <DropdownMenuItem
+                  key={category.pluginId}
+                  onSelect={() => void showGroup(category.pluginId, false).catch(() => {})}
+                >
+                  {text("收起", "Hide")} {category.title}
+                </DropdownMenuItem>
+              ))}
+              {!!categories.length && <DropdownMenuSeparator />}
               <DropdownMenuLabel>
                 {text("已有桌面面板", "Existing desktop panels")}
               </DropdownMenuLabel>
@@ -234,23 +390,33 @@ export function DesktopOverlayView({
               {panels.map((panel) => {
                 const Icon = kindIcons[panel.kind];
                 return (
-                  <DropdownMenuCheckboxItem
+                  <DropdownMenuItem
                     key={panel.cardId}
-                    checked={panel.selected}
-                    closeOnClick={false}
-                    onCheckedChange={(value) =>
+                    onSelect={() =>
                       act({
                         type: "overlay-panel",
                         cardId: panel.cardId,
-                        action: value ? "show" : "hide",
+                        action: "show",
                       })
                     }
                   >
                     <Icon />
                     <span className="desktop-overlay-menu-title">{panel.title}</span>
-                  </DropdownMenuCheckboxItem>
+                    {panel.selected && <Check className="ml-auto size-3" />}
+                  </DropdownMenuItem>
                 );
               })}
+              {panels.map((panel) => (
+                <DropdownMenuItem
+                  key={"close:" + panel.cardId}
+                  onSelect={() =>
+                    act({ type: "overlay-panel", cardId: panel.cardId, action: "close" })
+                  }
+                >
+                  <X />
+                  {text("关闭", "Close")} {panel.title}
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -284,93 +450,71 @@ export function DesktopOverlayView({
           <X />
         </Button>
       </nav>
-      {!panels.some((panel) => panel.selected) && (
-        <div className="desktop-overlay-empty">
-          <LayoutGrid aria-hidden />
-          <h1>
-            {panels.length
-              ? text("所有面板已收起", "All panels are hidden")
-              : text("暂无桌面插件", "No desktop panels")}
-          </h1>
-          <p>
-            {panels.length
-              ? text("从面板列表重新显示。", "Show panels from the panel list.")
-              : text(
-                  "先添加桌面便签、流量窗或截图图钉。",
-                  "Add a desktop note, traffic widget or pinned image.",
-                )}
-          </p>
-          <Button variant="outline" onClick={() => act({ type: "overlay-settings" })}>
-            {text("打开设置", "Open settings")}
-          </Button>
-        </div>
-      )}
       <CommandDialog
         open={addOpen}
-        onOpenChange={setAddOpen}
+        onOpenChange={(open) => {
+          if (!open) void closeTransient("add");
+        }}
         title={text("添加插件", "Add plugin")}
-        description={text("打开一个插件窗口", "Open a plugin window")}
+        description={text("添加插件支持的业务窗口", "Add a supported plugin window")}
         className="desktop-overlay-launcher"
       >
-        <Command>
-          <CommandInput placeholder={text("搜索插件", "Search plugins")} />
+        <Command
+          onKeyDownCapture={(event) => {
+            if (event.key === "Escape" && event.nativeEvent.isComposing) event.stopPropagation();
+          }}
+        >
+          <CommandInput
+            autoFocus
+            disabled={adding}
+            placeholder={text("搜索插件", "Search plugins")}
+          />
+          {adding && (
+            <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+              {text("正在打开窗口…", "Opening window…")}
+            </p>
+          )}
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
           <CommandList>
             <CommandEmpty>{text("没有可打开的插件窗口", "No plugin windows")}</CommandEmpty>
-            <CommandGroup heading={text("插件窗口", "Plugin windows")}>
-              {(launchers ?? []).map((item) => (
-                <CommandItem
-                  key={`${item.pluginId}/${item.commandId}`}
-                  value={`${item.title} ${item.plugin} ${item.pluginId}/${item.commandId}`}
-                  data-launcher={`${item.pluginId}/${item.commandId}`}
-                  onSelect={() => {
-                    setAddOpen(false);
-                    act({
-                      type: "overlay-launch",
-                      pluginId: item.pluginId,
-                      commandId: item.commandId,
-                    });
-                  }}
-                >
-                  <AppWindow />
-                  <span className="desktop-overlay-menu-title">{item.title}</span>
-                  {item.plugin !== item.title && (
-                    <span className="desktop-overlay-menu-title text-xs text-muted-foreground">
-                      {item.plugin}
-                    </span>
-                  )}
-                  <span className="flex-1" />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="-mr-6"
-                    aria-pressed={item.favorite}
-                    title={
-                      item.favorite ? text("取消收藏", "Unstar") : text("收藏到插件栏", "Star")
-                    }
-                    aria-label={
-                      item.favorite ? text("取消收藏", "Unstar") : text("收藏到插件栏", "Star")
-                    }
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      act({
-                        type: "overlay-favorite",
-                        pluginId: item.pluginId,
-                        commandId: item.commandId,
-                        value: !item.favorite,
-                      });
-                    }}
-                  >
-                    <Star className={item.favorite ? "fill-current" : undefined} />
-                  </Button>
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {[...new Set((launchers ?? []).map((item) => item.pluginId))].map((pluginId) => (
+              <CommandGroup
+                key={pluginId}
+                heading={launchers?.find((item) => item.pluginId === pluginId)?.plugin}
+              >
+                {(launchers ?? [])
+                  .filter((item) => item.pluginId === pluginId)
+                  .map((item) => (
+                    <CommandItem
+                      key={`${item.pluginId}/${item.commandId}`}
+                      value={`${item.title} ${item.plugin} ${item.pluginId}/${item.commandId}`}
+                      data-launcher={`${item.pluginId}/${item.commandId}`}
+                      disabled={
+                        adding ||
+                        (!!selectedLauncher &&
+                          selectedLauncher !== `${item.pluginId}/${item.commandId}`)
+                      }
+                      onSelect={() => void launch(item.pluginId, item.commandId)}
+                    >
+                      <AppWindow />
+                      <span className="desktop-overlay-menu-title">{item.title}</span>
+                      {item.plugin !== item.title && (
+                        <span className="desktop-overlay-menu-title text-xs text-muted-foreground">
+                          {item.plugin}
+                        </span>
+                      )}
+                    </CommandItem>
+                  ))}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </CommandDialog>
-      {error && (
+      {error && !addOpen && (
         <Alert variant="destructive" className="desktop-overlay-error">
           <AlertDescription>{error}</AlertDescription>
           <Button
@@ -407,6 +551,7 @@ export function LayerCardFrame({
 } & HTMLAttributes<HTMLElement>) {
   const moveFrame = useRef<number | undefined>(undefined);
   const gesture = useRef<number | undefined>(undefined);
+  const contentPress = useRef<{ x: number; y: number; dragged: boolean } | undefined>(undefined);
   const [moving, setMoving] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -420,7 +565,10 @@ export function LayerCardFrame({
   const zh = snapshot.locale.startsWith("zh");
   const text = (cn: string, en: string) => (zh ? cn : en);
   const Icon = panel ? kindIcons[panel.kind] : StickyNote;
-  const action = (operation: "show" | "hide" | "pin" | "passthrough" | "open", value?: boolean) =>
+  const action = (
+    operation: "show" | "hide" | "pin" | "passthrough" | "open" | "close",
+    value?: boolean,
+  ) =>
     send({
       type: "overlay-panel",
       cardId: card.id,
@@ -434,6 +582,7 @@ export function LayerCardFrame({
     y: Math.max(area.y + 110, Math.min(bounds.y, area.y + area.height - bounds.height - 16)),
   });
   const cancel = useCallback(() => {
+    contentPress.current = undefined;
     const id = gesture.current;
     gesture.current = undefined;
     if (moveFrame.current !== undefined) cancelAnimationFrame(moveFrame.current);
@@ -475,7 +624,7 @@ export function LayerCardFrame({
       () => {},
     );
   }, [previewVisible, managed, overlayEpoch, send, card.id]);
-  const start = (event: PointerEvent<HTMLElement>) => {
+  const start = (event: PointerEvent<HTMLElement>, mode: "move" | "resize" = "move") => {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
     event.preventDefault();
     event.stopPropagation();
@@ -487,10 +636,16 @@ export function LayerCardFrame({
       cardId: card.id,
       pointerId: event.pointerId,
       phase: "start",
+      mode,
       clientPoint: { x: event.clientX, y: event.clientY },
     }).catch(cancel);
   };
   const move = (event: PointerEvent<HTMLElement>) => {
+    if (
+      contentPress.current &&
+      Math.hypot(event.clientX - contentPress.current.x, event.clientY - contentPress.current.y) > 4
+    )
+      contentPress.current.dragged = true;
     if (gesture.current !== event.pointerId || moveFrame.current !== undefined) return;
     moveFrame.current = requestAnimationFrame(() => {
       moveFrame.current = undefined;
@@ -538,6 +693,43 @@ export function LayerCardFrame({
         setHovered(false);
         props.onPointerLeave?.(event);
       }}
+      onPointerDown={(event) => {
+        if (panel) {
+          void action("show").catch(() => {});
+          if (
+            card.chrome === "none" &&
+            card.renderKind === "declarative" &&
+            !(event.target as HTMLElement).closest('button, input, textarea, a, [role="button"]')
+          ) {
+            contentPress.current = { x: event.clientX, y: event.clientY, dragged: false };
+            start(event);
+          }
+        }
+        props.onPointerDown?.(event);
+      }}
+      onPointerMove={(event) => {
+        move(event);
+        props.onPointerMove?.(event);
+      }}
+      onPointerUp={(event) => {
+        const press = contentPress.current;
+        contentPress.current = undefined;
+        const active = gesture.current === event.pointerId;
+        finish(event);
+        if (active && press && !press.dragged && card.primaryAction)
+          void send({ type: "widget-invoke", cardId: card.id, actionId: card.primaryAction }).catch(
+            () => {},
+          );
+        props.onPointerUp?.(event);
+      }}
+      onPointerCancel={(event) => {
+        cancel();
+        props.onPointerCancel?.(event);
+      }}
+      onLostPointerCapture={(event) => {
+        if (gesture.current !== undefined) cancel();
+        props.onLostPointerCapture?.(event);
+      }}
       style={{
         left: card.bounds.x - origin.x,
         top: card.bounds.y - origin.y,
@@ -554,12 +746,13 @@ export function LayerCardFrame({
           : card.order,
       }}
     >
-      {panel && (
+      {panel && card.chrome !== "none" && (
         <DesktopPanelToolbar
           locale={snapshot.locale}
           pinned={panel.pinned}
+          canPin={false}
           onPin={() => void action("pin", !panel.pinned).catch(() => {})}
-          onHide={() => void action("hide").catch(() => {})}
+          onHide={() => void action("close").catch(() => {})}
           style={
             card.overlayControls
               ? {
@@ -572,7 +765,7 @@ export function LayerCardFrame({
                 ? { left: "auto", right: 0 }
                 : undefined
           }
-          onPointerDown={start}
+          onPointerDown={(event) => start(event)}
           onPointerMove={move}
           onPointerUp={finish}
           onPointerCancel={cancel}
@@ -642,21 +835,6 @@ export function LayerCardFrame({
             <DropdownMenuContent align="end" className="desktop-overlay-menu">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>{panel.title}</DropdownMenuLabel>
-                <DropdownMenuCheckboxItem
-                  checked={panel.pinned}
-                  onCheckedChange={(value) => void action("pin", value).catch(() => {})}
-                >
-                  <Pin />
-                  {text("退出后保持置顶", "Keep on top after closing")}
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem
-                  checked={panel.inputMode === "passive"}
-                  onCheckedChange={(value) => void action("passthrough", value).catch(() => {})}
-                >
-                  <MousePointer2 />
-                  {text("常驻时鼠标穿透", "Click through outside the bar")}
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => void action("open").catch(() => {})}>
                   <ExternalLink />
                   {panel.kind === "screenshot"
@@ -668,13 +846,19 @@ export function LayerCardFrame({
           </DropdownMenu>
         </DesktopPanelToolbar>
       )}
-      <div
-        key="content"
-        className={panel ? "desktop-overlay-panel-content" : "layer-card-content"}
-        onClick={panel?.kind === "traffic" ? () => void action("open").catch(() => {}) : undefined}
-      >
+      <div key="content" className={panel ? "desktop-overlay-panel-content" : "layer-card-content"}>
         {children}
       </div>
+      {panel && card.resize && (
+        <div
+          className="absolute bottom-0 right-0 size-4 cursor-se-resize touch-none"
+          aria-hidden="true"
+          onPointerDown={(event) => start(event, "resize")}
+          onPointerMove={move}
+          onPointerUp={finish}
+          onPointerCancel={cancel}
+        />
+      )}
       {card.hover && previewVisible && (
         <div
           className={

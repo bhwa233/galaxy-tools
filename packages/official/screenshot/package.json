@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-screenshot",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "spark233 native screenshot and optional OCR transfer",
   "license": "MIT",
   "files": [
@@ -31,8 +31,8 @@
     "schemaVersion": 1,
     "id": "spark233.screenshot",
     "displayName": "截图",
-    "api": "^1.1.0",
-    "host": ">=0.0.1 <1",
+    "api": "^1.8.0",
+    "host": ">=0.1.7 <1",
     "platforms": [
       "win32"
     ],
@@ -223,7 +223,12 @@
           "presentation": "standard",
           "legacyLabels": [
             "screenshot-history"
-          ]
+          ],
+          "cardDesktop": true,
+          "chrome": "host",
+          "restore": {
+            "parameterVersion": 1
+          }
         }
       }
     }

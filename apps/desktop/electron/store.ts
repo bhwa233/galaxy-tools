@@ -150,11 +150,31 @@ export class NoteStore {
       }
     };
     scan("");
-    this.commit(notes);
+    // A rebuild follows a preserved corrupt index and cannot read its receipts.
+    this.commit(notes, {});
     return notes;
   }
-  commit(notes: NoteMetadata[]): void {
-    atomicWrite(path.join(this.dataDir, "metadata.json"), JSON.stringify({ notes }, null, 2));
+  private creationReceipts(): Record<string, string> {
+    const file = path.join(this.dataDir, "metadata.json");
+    if (!fs.existsSync(file)) return {};
+    const value = readJson<{ creations?: unknown }>(file).creations;
+    return value === undefined ? {} : z.record(z.uuid(), z.string().min(1).max(100)).parse(value);
+  }
+  commit(notes: NoteMetadata[], creations = this.creationReceipts()): void {
+    atomicWrite(
+      path.join(this.dataDir, "metadata.json"),
+      JSON.stringify({ version: 2, notes, creations }, null, 2),
+    );
+  }
+  /** Creation receipts share the note-index commit. A lost response or restart
+   * cannot create another note; deletion does not recycle a creation ID. */
+  createIdempotent(creationId: string, value: SaveNoteRequest): Note {
+    z.uuid().parse(creationId);
+    const creations = this.creationReceipts();
+    if (creations[creationId]) return this.get(creations[creationId]);
+    if (Object.keys(creations).length >= 16384)
+      throw new AppError("noteCreationLimit", "便签创建记录达到上限");
+    return this.save(value, undefined, creationId);
   }
   list(): NoteMetadata[] {
     return this.metadata()
@@ -246,7 +266,7 @@ export class NoteStore {
       if (!kept.some((item) => item.versionId === entry.versionId))
         fs.rmSync(confined(this.revisionRoot(id), entry.versionId + ".json"), { force: true });
   }
-  save(value: SaveNoteRequest, id?: string): Note {
+  save(value: SaveNoteRequest, id?: string, creationId?: string): Note {
     const req = request(value),
       notes = this.metadata(),
       old = id ? notes.find((note) => note.id === id) : undefined;
@@ -277,7 +297,12 @@ export class NoteStore {
     const previous = fs.existsSync(target) ? fs.readFileSync(target) : undefined;
     atomicWrite(target, req.content);
     try {
-      this.commit(old ? notes.map((note) => (note.id === id ? meta : note)) : [...notes, meta]);
+      const creations = this.creationReceipts();
+      if (creationId) creations[creationId] = id;
+      this.commit(
+        old ? notes.map((note) => (note.id === id ? meta : note)) : [...notes, meta],
+        creations,
+      );
     } catch (error) {
       // The index still owns the old note. Reuse the same atomic writer to undo
       // this body's write, without leaving a second Markdown for the same ID.

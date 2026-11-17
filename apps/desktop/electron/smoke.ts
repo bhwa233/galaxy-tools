@@ -15,6 +15,854 @@ import type { Capsules } from "./capsules.js";
 import { contains } from "./capsule-layout.js";
 import type { NotesDataClient } from "./plugins/official/notes-data-client.js";
 import type { AppConfig } from "../src/features/settings/types.js";
+import type { DesktopLayer } from "./desktop-layer.js";
+import type { PluginWindowCoordinator } from "./host/plugin-window-coordinator.js";
+import type { PluginWindowLayoutStore } from "./host/plugin-window-state.js";
+import type { PluginManager } from "./plugins/manager.js";
+import type { LayerManagementState } from "../shared/layer-contract.js";
+
+/** Uses the real Electron presentation acknowledgements and note backend. */
+export async function runPluginWindowSmoke(context: {
+  output: string;
+  layer: DesktopLayer;
+  coordinator: PluginWindowCoordinator;
+  store: PluginWindowLayoutStore;
+  notes: NotesDataClient;
+  manager: PluginManager;
+  configDir: string;
+  management(): LayerManagementState;
+  quit(): void;
+}): Promise<void> {
+  const checks: Record<string, unknown> = {};
+  const assert = (condition: unknown, message: string) => {
+    if (!condition) throw new Error(message);
+  };
+  try {
+    await context.layer.openOverlay();
+    const placement = await context.coordinator.open({
+      pluginId: "spark233.notes",
+      windowId: "tile",
+      environment: "card-desktop",
+      action: "create",
+    });
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const value = context.layer.externalPresentation("placement:" + placement.id);
+      if (value?.visible) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert(context.layer.overlayActive, "Adding a note collapsed the card desktop");
+    assert(
+      context.layer.externalPresentation("placement:" + placement.id)?.visible,
+      "Note was not presented in the card desktop",
+    );
+    const instance = context.store
+      .load()
+      .instances.find((value) => value.id === placement.instanceId)!;
+    assert(instance.binding.contentId, "New note has no stable content ID");
+    const note = await context.notes.get(instance.binding.contentId!);
+    checks.createdNote = note.id;
+    await context.layer.closeOverlay(false);
+    assert(
+      context.store.load().placements.some((value) => value.id === placement.id),
+      "Collapsing removed the panel",
+    );
+    await context.layer.openOverlay();
+    assert(
+      (await context.notes.list()).filter((value) => value.id === note.id).length === 1,
+      "Reopening duplicated the note",
+    );
+    checks.reopenedWithoutCreatingContent = true;
+    const fixture = path.join(path.dirname(context.output), "utools-fixture");
+    fs.mkdirSync(fixture, { recursive: true });
+    fs.writeFileSync(
+      path.join(fixture, "plugin.json"),
+      JSON.stringify({
+        name: "spark-window-smoke",
+        version: "1.0.0",
+        main: "index.html",
+        preload: "preload.js",
+        features: [
+          { code: "first", cmds: ["Smoke first"] },
+          { code: "second", cmds: ["Smoke second"] },
+        ],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(fixture, "index.html"),
+      '<!doctype html><html><body><textarea id="draft">kept draft</textarea></body></html>',
+    );
+    fs.writeFileSync(
+      path.join(fixture, "preload.js"),
+      `const pageToken = require('node:crypto').randomUUID();
+      const record = (type, feature) => {
+        const trace = utools.dbStorage.getItem('window-smoke-trace') || [];
+        trace.push({type, feature, pageToken, pid:process.pid, draft:document.querySelector('#draft')?.value});
+        utools.dbStorage.setItem('window-smoke-trace', trace);
+      };
+      utools.onPluginEnter(action => {
+        record('enter', action.code);
+        if (action.code === 'first') document.querySelector('#draft').value = 'unsaved uTools draft';
+      });
+      utools.onPluginOut(() => record('out'));`,
+    );
+    const { stageDevelopmentPluginPackage } = await import("./plugins/package-installer.js");
+    const { defaultHostEnvironment } = await import("./plugins/manifest.js");
+    const staged = await stageDevelopmentPluginPackage(
+      fixture,
+      defaultHostEnvironment(app.getVersion()),
+      {
+        stagingRoot: path.join(context.configDir, "plugins/staging"),
+        versionsRoot: path.join(context.configDir, "plugins/versions"),
+        cacheRoot: path.join(context.configDir, "plugins/cache"),
+      },
+    );
+    await context.manager.install(staged, {
+      capabilities: staged.metadata.spark233.capabilities,
+      native: true,
+    });
+    const compat = await context.coordinator.open({
+      pluginId: staged.metadata.spark233.id,
+      windowId: "utools-main",
+      environment: "card-desktop",
+      action: "create",
+    });
+    for (
+      let attempt = 0;
+      attempt < 100 && !context.layer.externalPresentation("utools:" + compat.instanceId)?.visible;
+      attempt++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    assert(
+      context.layer.externalPresentation("utools:" + compat.instanceId)?.visible,
+      "uTools window did not appear",
+    );
+    const { windowOpenContext } = await import("./host/plugin-window-routing.js");
+    const { utoolsCommandId } = await import("./plugins/utools-manifest.js");
+    const compatRuntimeId = context.manager
+      .list()
+      .find((value) => value.pluginId === staged.metadata.spark233.id)?.instanceId;
+    assert(compatRuntimeId, "uTools runner has no runtime identity");
+    await windowOpenContext.run({ environment: "card-desktop" }, () =>
+      context.manager.activate(staged.metadata.spark233.id, {
+        commandId: utoolsCommandId("second"),
+      }),
+    );
+    await windowOpenContext.run({ environment: "card-desktop" }, () =>
+      context.manager.activate(staged.metadata.spark233.id, {
+        commandId: utoolsCommandId("first"),
+      }),
+    );
+    await context.layer.closeOverlay(false);
+    await context.layer.openOverlay();
+    assert(
+      context.store
+        .load()
+        .instances.filter((value) => value.pluginId === staged.metadata.spark233.id).length === 1,
+      "uTools created separate runner windows for one plugin",
+    );
+    assert(
+      context.manager.list().find((value) => value.pluginId === staged.metadata.spark233.id)
+        ?.instanceId === compatRuntimeId,
+      "uTools feature changes or collapse replaced the runner",
+    );
+    const { UToolsStore } = await import("./plugins/utools-store.js");
+    const compatData = new UToolsStore(context.manager.dataDirectory(staged.metadata.spark233.id));
+    try {
+      const trace = compatData.get("window-smoke-trace")?.value as Array<{
+        type: string;
+        feature?: string;
+        pageToken: string;
+        pid: number;
+        draft: string;
+      }>;
+      assert(
+        Array.isArray(trace) && trace.length,
+        "uTools fixture recorded no lifecycle callbacks",
+      );
+      const second = trace.findIndex(
+        (value) => value.type === "enter" && value.feature === "second",
+      );
+      assert(
+        second > 0 &&
+          trace[second - 1].type === "out" &&
+          trace[second].draft === "unsaved uTools draft" &&
+          trace
+            .slice(second + 1)
+            .some((value) => value.type === "enter" && value.feature === "first"),
+        "uTools feature switch skipped lifecycle callbacks or discarded the draft",
+      );
+      assert(
+        new Set(trace.map((value) => value.pageToken)).size === 1 &&
+          new Set(trace.map((value) => value.pid)).size === 1,
+        "uTools feature switch or collapse recreated the page or runner process",
+      );
+      checks.utoolsFeatureSwitch = {
+        runtimeId: compatRuntimeId,
+        pageToken: trace[0].pageToken,
+        pid: trace[0].pid,
+        enters: trace.filter((value) => value.type === "enter").map((value) => value.feature),
+      };
+    } finally {
+      compatData.close();
+    }
+    checks.utoolsSingletonRetained = true;
+    const webFixture = path.join(path.dirname(context.output), "web-fixture");
+    fs.mkdirSync(webFixture, { recursive: true });
+    fs.writeFileSync(
+      path.join(webFixture, "package.json"),
+      JSON.stringify({
+        name: "@fixture/window-smoke",
+        version: "1.0.0",
+        spark233: {
+          schemaVersion: 1,
+          id: "fixture.window-smoke",
+          displayName: "Window smoke",
+          api: "^1.8.0",
+          host: ">=0.1.7",
+          platforms: ["win32"],
+          architectures: ["x64"],
+          entry: "index.html",
+          backend: { entry: "backend.mjs" },
+          capabilities: ["node.backend"],
+          commands: [
+            { id: "open", title: "Open", window: "main" },
+            { id: "background-open", title: "Background open" },
+            { id: "background-dialog", title: "Background dialog" },
+            { id: "open-secondary", title: "Open secondary", window: "secondary" },
+            { id: "backend-state", title: "Backend state" },
+          ],
+          ui: {
+            theme: "^1.0.0",
+            windows: {
+              main: { entry: "index.html", cardDesktop: true },
+              dialog: { entry: "index.html", title: "Window smoke dialog", purpose: "dialog" },
+              secondary: {
+                entry: "index.html",
+                title: "Window smoke secondary",
+                cardDesktop: false,
+              },
+              multiple: {
+                entry: "index.html",
+                title: "Window smoke multiple",
+                cardDesktop: true,
+                reuse: "multiple",
+              },
+            },
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(webFixture, "index.html"),
+      '<!doctype html><html><body><textarea>kept</textarea><script src="main.js"></script></body></html>',
+    );
+    fs.writeFileSync(
+      path.join(webFixture, "backend.mjs"),
+      `import fs from 'node:fs';
+      import path from 'node:path';
+      export default lifetime => {
+        if (!lifetime.startupCheckOnly) fs.appendFileSync(path.join(lifetime.dataDir, 'window-smoke-starts.log'), process.pid + '\\n');
+        return {
+          prepareStop: () => ({ok:true}), activate: async (activation, context) => {
+            if (activation.commandId === 'backend-state') return {pid:process.pid, owner:context.owner.instanceId};
+            if(activation.commandId === 'background-open') await context.callHost({operation:'window.open',
+              binding:{windowId:'main',parameterVersion:1}, action:'open'});
+            if(activation.commandId === 'background-dialog') await context.callHost({operation:'window.open',
+              binding:{windowId:'dialog',parameterVersion:1}, action:'open'});
+          }
+        };
+      };`,
+    );
+    fs.writeFileSync(
+      path.join(webFixture, "main.js"),
+      `
+      window.spark233.subscribe(event => { if(event.type === 'prepareStop') window.spark233.request('lifecycle.result', {requestId:event.requestId,decision:{ok:true}}); });
+      window.spark233.request('context.get');
+    `,
+    );
+    const webStaged = await stageDevelopmentPluginPackage(
+      webFixture,
+      defaultHostEnvironment(app.getVersion()),
+      {
+        stagingRoot: path.join(context.configDir, "plugins/staging"),
+        versionsRoot: path.join(context.configDir, "plugins/versions"),
+        cacheRoot: path.join(context.configDir, "plugins/cache"),
+      },
+    );
+    await context.manager.install(webStaged, {
+      capabilities: webStaged.metadata.spark233.capabilities,
+      native: true,
+    });
+    const webPlacement = await context.coordinator.open({
+      pluginId: "fixture.window-smoke",
+      windowId: "main",
+      environment: "card-desktop",
+      action: "create",
+    });
+    for (
+      let attempt = 0;
+      attempt < 100 && !context.layer.externalPresentation("placement:" + webPlacement.id)?.visible;
+      attempt++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    assert(
+      context.layer.externalPresentation("placement:" + webPlacement.id)?.visible,
+      "Isolated Web window did not appear",
+    );
+    const { unifiedWindowControl } = await import("./host/plugin-window-adapters.js");
+    const { BrowserWindow: NativeWindow } = await import("electron");
+    const webWindow = NativeWindow.getAllWindows().find(
+      (value) => value.getTitle() === "Window smoke" && unifiedWindowControl(value),
+    );
+    assert(webWindow, "Web window native carrier is missing");
+    const page = webWindow!.contentView.children.find(
+      (child) => "webContents" in child,
+    ) as Electron.WebContentsView;
+    const pageId = page.webContents.id;
+    await context.layer.locateWindow(webPlacement.instanceId);
+    assert(webWindow!.isFocused(), "Locating a Web panel did not focus its native carrier");
+    assert(page.webContents.id === pageId, "Locating replaced the existing Web page");
+    checks.locatedExistingWebWindow = true;
+    await page.webContents.executeJavaScript(
+      "document.querySelector('textarea').value = 'unsaved retained draft'",
+    );
+    // The regression spans separate HWNDs: a DOM z-index alone cannot block a
+    // native plugin carrier or keep the workspace's add dialog above it.
+    const placementBeforeTransient = JSON.stringify(
+      context.store.load().placements.find((value) => value.id === webPlacement.id),
+    );
+    const focusableBeforeTransient = webWindow!.isFocusable();
+    let overlayHost: BrowserWindow | undefined;
+    for (const candidate of context.layer.windows()) {
+      if (!candidate.isVisible() || !context.layer.isOverlayWindow(candidate)) continue;
+      if (
+        await candidate.webContents.executeJavaScript(`(() => {
+        const button = document.querySelector('[data-desktop-overlay] button[aria-label="添加插件"], [data-desktop-overlay] button[aria-label="Add plugin"]');
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`)
+      ) {
+        overlayHost = candidate;
+        break;
+      }
+    }
+    assert(overlayHost, "Workspace add button is missing from its real host renderer");
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        context.layer.overlayInputBlocked &&
+        !webWindow!.isFocusable() &&
+        overlayHost!.isFocused() &&
+        (await overlayHost!.webContents.executeJavaScript(
+          "!!document.querySelector('[role=dialog]')",
+        ))
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    context.layer.restackOverlay();
+    assert(
+      context.layer.overlayInputBlocked &&
+        !webWindow!.isFocusable() &&
+        overlayHost!.isFocused() &&
+        context.layer.externalPresentation("placement:" + webPlacement.id)?.inputBlocked &&
+        context.layer.externalPresentation("utools:" + compat.instanceId)?.inputBlocked &&
+        (await overlayHost!.webContents.executeJavaScript(
+          "!!document.querySelector('[role=dialog]')",
+        )),
+      "Add dialog did not block native Web/uTools cards and retain host focus",
+    );
+    const noteCard = NativeWindow.getAllWindows().find(
+      (value) =>
+        value.webContents.getURL().includes("noteId=" + note.id) && unifiedWindowControl(value),
+    );
+    assert(noteCard, "Official note carrier is missing during the add dialog probe");
+    await noteCard!.webContents.executeJavaScript(
+      "(async () => {for (const action of ['show', 'focus']) await window.spark233Desktop.invoke('window_control', {action});})()",
+    );
+    assert(
+      overlayHost!.isFocused() && !noteCard!.isFocused(),
+      "Official card show/focus IPC raised the card over the add dialog",
+    );
+    overlayHost!.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+    overlayHost!.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        !context.layer.overlayInputBlocked &&
+        webWindow!.isFocusable() === focusableBeforeTransient &&
+        webWindow!.isFocused() &&
+        (await overlayHost!.webContents.executeJavaScript(
+          "!document.querySelector('[role=dialog]')",
+        ))
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const closedDialogVisible = await overlayHost!.webContents.executeJavaScript(
+      "!!document.querySelector('[role=dialog]')",
+    );
+    checks.nativeCloseDialogState = {
+      overlayActive: context.layer.overlayActive,
+      inputBlocked: context.layer.overlayInputBlocked,
+      focusableBefore: focusableBeforeTransient,
+      focusableAfter: webWindow!.isFocusable(),
+      webFocused: webWindow!.isFocused(),
+      hostFocused: overlayHost!.isFocused(),
+      focusedTitle: NativeWindow.getFocusedWindow()?.getTitle(),
+      presentationBlocked: context.layer.externalPresentation("placement:" + webPlacement.id)
+        ?.inputBlocked,
+      dialogVisible: closedDialogVisible,
+    };
+    assert(
+      context.layer.overlayActive &&
+        !context.layer.overlayInputBlocked &&
+        webWindow!.isFocusable() === focusableBeforeTransient &&
+        webWindow!.isFocused() &&
+        !closedDialogVisible &&
+        !context.layer.externalPresentation("placement:" + webPlacement.id)?.inputBlocked,
+      "Closing add dialog did not restore the native card's input and focus",
+    );
+    assert(
+      JSON.stringify(
+        context.store.load().placements.find((value) => value.id === webPlacement.id),
+      ) === placementBeforeTransient,
+      "Transient add dialog changed the durable placement or stacking order",
+    );
+    checks.nativeAddDialogPriority = true;
+    // Both sources must open a real owned transient HWND without creating a
+    // durable business binding, placement, or pending creation intent.
+    for (const source of ["renderer", "backend"] as const) {
+      const layoutBeforeDialog = JSON.stringify(context.store.load());
+      if (source === "renderer") {
+        await page.webContents.executeJavaScript(
+          "window.spark233.request('windows.open', {binding:{windowId:'dialog',parameterVersion:1},action:'open'})",
+        );
+      } else {
+        await windowOpenContext.run(
+          { environment: "card-desktop", instanceId: webPlacement.instanceId },
+          () =>
+            context.manager.activate("fixture.window-smoke", { commandId: "background-dialog" }),
+        );
+      }
+      const dialogWindow = NativeWindow.getAllWindows().find(
+        (value) => value.getTitle() === "Window smoke dialog",
+      );
+      assert(
+        dialogWindow?.isVisible() &&
+          dialogWindow.getParentWindow() === webWindow &&
+          !unifiedWindowControl(dialogWindow) &&
+          context.layer.overlayActive,
+        source + " dialog did not open as an independent transient owned by its source window",
+      );
+      assert(
+        JSON.stringify(context.store.load()) === layoutBeforeDialog,
+        source + " dialog incorrectly acquired a durable window binding or placement",
+      );
+      const dialogPage = dialogWindow!.contentView.children.find(
+        (child) => "webContents" in child,
+      ) as Electron.WebContentsView;
+      await dialogPage.webContents
+        .executeJavaScript("window.spark233.request('window.close')")
+        .catch((error: unknown) => {
+          // The real close can destroy its own frame before its JavaScript
+          // result is returned. The native lifetime assertions below remain
+          // the completion proof; other errors still fail this probe.
+          if (!dialogWindow!.isDestroyed() || !String(error).includes("Render frame was disposed"))
+            throw error;
+        });
+      for (let attempt = 0; attempt < 100 && !dialogWindow!.isDestroyed(); attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      assert(
+        dialogWindow!.isDestroyed() && !webWindow!.isDestroyed() && context.layer.overlayActive,
+        source + " dialog close damaged its business parent or collapsed the workspace",
+      );
+    }
+    checks.transientDialogsAvoidPersistentState = ["renderer", "backend"];
+    const cardBounds = context.store
+      .load()
+      .placements.find((value) => value.id === webPlacement.id)!.bounds;
+    await context.layer.closeOverlay(false);
+    const desktopPlacement = await context.coordinator.open({
+      pluginId: "fixture.window-smoke",
+      windowId: "main",
+      environment: "desktop",
+      action: "open",
+      instanceId: webPlacement.instanceId,
+    });
+    const ordinaryBounds = { x: 120, y: 140, width: 640, height: 480 };
+    webWindow!.setBounds(ordinaryBounds);
+    unifiedWindowControl(webWindow!)!.setAlwaysOnTop(true);
+    assert(webWindow!.isAlwaysOnTop(), "Ordinary topmost did not reach the native window");
+    const acceptedOrdinaryBounds = webWindow!.getBounds();
+    const geometryRoundTrips: Electron.Rectangle[] = [];
+    const topmostRoundTrips: Array<{ before: boolean; overlay: boolean; restored: boolean }> = [];
+    checks.borrowedWindowGeometry = {
+      requested: ordinaryBounds,
+      accepted: acceptedOrdinaryBounds,
+      roundTrips: geometryRoundTrips,
+      topmostRoundTrips,
+    };
+    for (let round = 0; round < 3; round++) {
+      const before = webWindow!.isAlwaysOnTop();
+      await context.layer.openOverlay();
+      const overlay = webWindow!.isAlwaysOnTop();
+      await context.layer.closeOverlay(false);
+      topmostRoundTrips.push({ before, overlay, restored: webWindow!.isAlwaysOnTop() });
+      const restored = webWindow!.getBounds();
+      geometryRoundTrips.push(restored);
+      assert(
+        JSON.stringify(restored) === JSON.stringify(acceptedOrdinaryBounds),
+        "Borrowed window did not return its accepted native geometry",
+      );
+    }
+    checks.borrowedWindowState = {
+      topmost: webWindow!.isAlwaysOnTop(),
+      visible: webWindow!.isVisible(),
+      placements: context.store
+        .load()
+        .placements.filter((value) => value.instanceId === webPlacement.instanceId),
+    };
+    assert(
+      webWindow!.isAlwaysOnTop() && webWindow!.isVisible(),
+      "Borrowed window did not return visibility/topmost",
+    );
+    assert(
+      await page.webContents.executeJavaScript(
+        "document.querySelector('textarea').value === 'unsaved retained draft'",
+      ),
+      "Collapsing reloaded the live Web editor",
+    );
+    assert(
+      JSON.stringify(
+        context.store.load().placements.find((value) => value.id === webPlacement.id)!.bounds,
+      ) === JSON.stringify(cardBounds),
+      "Ordinary geometry changed the shared card layout",
+    );
+    await context.layer.openOverlay();
+    await page.webContents.executeJavaScript(`window.spark233.request('windows.open', {
+      binding:{windowId:'secondary',parameterVersion:1},action:'open'
+    })`);
+    const secondaryInstance = context.store
+      .load()
+      .instances.find(
+        (value) =>
+          value.pluginId === "fixture.window-smoke" && value.binding.windowId === "secondary",
+      );
+    const secondaryPlacements = context.store
+      .load()
+      .placements.filter((value) => value.instanceId === secondaryInstance?.id);
+    const secondaryWindow = NativeWindow.getAllWindows().find(
+      (value) => value.getTitle() === "Window smoke secondary" && unifiedWindowControl(value),
+    );
+    for (let attempt = 0; attempt < 100 && !secondaryWindow?.isFocused(); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    assert(
+      secondaryInstance &&
+        secondaryPlacements.length === 1 &&
+        secondaryPlacements[0].environment === "desktop" &&
+        secondaryWindow?.isVisible() &&
+        secondaryWindow.isFocused() &&
+        unifiedWindowControl(secondaryWindow)?.state().environment === "desktop" &&
+        !context.layer.overlayActive,
+      "Card-internal unsupported business window did not open on the ordinary desktop and receive focus",
+    );
+    await context.coordinator.close(secondaryPlacements[0].id);
+    checks.unsupportedBusinessWindowUsesDesktop = true;
+    await context.layer.openOverlay();
+    await context.coordinator.close(webPlacement.id);
+    assert(webWindow!.isVisible(), "Closing card membership hid the remaining ordinary display");
+    await context.coordinator.close(desktopPlacement.id);
+    checks.webSaveAndClose = true;
+    checks.webDraftAndBorrowedState = true;
+    await windowOpenContext.run({ environment: "card-desktop" }, () =>
+      context.manager.activate("fixture.window-smoke", { commandId: "background-open" }),
+    );
+    const background = context.store
+      .load()
+      .placements.find(
+        (value) =>
+          value.environment === "card-desktop" &&
+          context.store
+            .load()
+            .instances.some(
+              (candidate) =>
+                candidate.id === value.instanceId && candidate.pluginId === "fixture.window-smoke",
+            ),
+      );
+    assert(background, "Backend window call lost its originating environment");
+    await context.coordinator.close(background!.id);
+    checks.backendWindowRouting = true;
+    const multipleFirst = await context.coordinator.open({
+      pluginId: "fixture.window-smoke",
+      windowId: "multiple",
+      environment: "card-desktop",
+      action: "create",
+    });
+    const multipleSecond = await context.coordinator.open({
+      pluginId: "fixture.window-smoke",
+      windowId: "multiple",
+      environment: "card-desktop",
+      action: "create",
+    });
+    await context.layer.closeOverlay(false);
+    const multipleDesktop = await context.coordinator.open({
+      pluginId: "fixture.window-smoke",
+      windowId: "multiple",
+      environment: "desktop",
+      action: "open",
+    });
+    const multipleReused = await context.coordinator.open({
+      pluginId: "fixture.window-smoke",
+      windowId: "multiple",
+      environment: "card-desktop",
+      action: "open",
+    });
+    assert(
+      multipleFirst.instanceId !== multipleSecond.instanceId &&
+        ![multipleFirst.instanceId, multipleSecond.instanceId].includes(
+          multipleDesktop.instanceId,
+        ) &&
+        [multipleFirst.id, multipleSecond.id].includes(multipleReused.id),
+      "Multiple-instance open did not prefer an existing window in the requested environment",
+    );
+    const multipleWindows = NativeWindow.getAllWindows().filter(
+      (value) => value.getTitle() === "Window smoke multiple" && unifiedWindowControl(value),
+    );
+    assert(
+      multipleWindows.length === 3 &&
+        new Set(
+          multipleWindows
+            .map(
+              (value) =>
+                value.contentView.children.find(
+                  (child) => "webContents" in child,
+                ) as Electron.WebContentsView,
+            )
+            .map((view) => view.webContents.id),
+        ).size === 3,
+      "Distinct window instances unexpectedly shared a native carrier or page",
+    );
+    for (const value of [multipleFirst, multipleSecond, multipleDesktop])
+      await context.coordinator.close(value.id);
+    checks.multipleInstancesPreferTargetEnvironment = true;
+    const backendState = (await context.manager.activate("fixture.window-smoke", {
+      commandId: "backend-state",
+    })) as { pid: number; owner: string };
+    const backendStarts = fs
+      .readFileSync(
+        path.join(context.manager.dataDirectory("fixture.window-smoke"), "window-smoke-starts.log"),
+        "utf8",
+      )
+      .trim()
+      .split(/\r?\n/);
+    assert(
+      backendStarts.length === 1 &&
+        Number(backendStarts[0]) === backendState.pid &&
+        context.manager.list().find((value) => value.pluginId === "fixture.window-smoke")
+          ?.instanceId === backendState.owner,
+      "Opening, borrowing or collapsing windows duplicated the background runtime",
+    );
+    checks.backgroundRuntimeStartedOnce = backendState;
+    await context.layer.openOverlay();
+    const hud = await context.coordinator.open({
+      pluginId: "spark233.traffic",
+      windowId: "hud",
+      environment: "card-desktop",
+      action: "create",
+    });
+    assert(context.layer.overlayActive, "Adding HUD collapsed the card desktop");
+    for (
+      let attempt = 0;
+      attempt < 100 && !context.layer.isCardVisible("widget:" + hud.instanceId);
+      attempt++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    assert(context.layer.isCardVisible("widget:" + hud.instanceId), "HUD did not become visible");
+    checks.hud = hud.id;
+    await context.layer.closeOverlay(false);
+    assert(
+      !context.layer.isCardVisible("widget:" + hud.instanceId),
+      "Card-only HUD leaked onto the ordinary desktop",
+    );
+    await context.layer.openOverlay();
+    await context.coordinator.close(placement.id);
+    assert(context.layer.overlayActive, "Closing one panel collapsed the workspace");
+    assert(
+      !context.store.load().placements.some((value) => value.id === placement.id),
+      "Closed panel retained its membership",
+    );
+    assert(
+      (await context.notes.get(note.id)).id === note.id,
+      "Closing a note display deleted its content",
+    );
+    const notePlacement = await context.coordinator.open({
+      pluginId: "spark233.notes",
+      windowId: "notepad",
+      environment: "card-desktop",
+      action: "open",
+      binding: { windowId: "notepad", contentId: note.id, parameterVersion: 1 },
+    });
+    const invalidContentId = "00000000-0000-4000-8000-000000000001";
+    const noteCount = (await context.notes.list()).length;
+    try {
+      await context.coordinator.open({
+        pluginId: "spark233.notes",
+        windowId: "notepad",
+        environment: "card-desktop",
+        action: "open",
+        binding: { windowId: "notepad", contentId: invalidContentId, parameterVersion: 1 },
+      });
+      throw new Error("Missing content was unexpectedly restored");
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "noteNotFound")
+        throw error;
+      const failedInstance = context.store
+        .load()
+        .instances.find((value) => value.binding.contentId === invalidContentId);
+      assert(failedInstance, "Failed restore lost its stable binding");
+      const failedPlacement = context.store
+        .load()
+        .placements.find((value) => value.instanceId === failedInstance!.id)!;
+      const summary = context
+        .management()
+        .instances.find((value) => value.widgetInstanceId === failedPlacement.id);
+      assert(
+        summary?.status === "fault" && summary.canRetry && summary.reason,
+        "Management did not expose the failed restore and retry action",
+      );
+      assert(
+        (await context.notes.list()).length === noteCount,
+        "Failed restore created replacement content",
+      );
+      await context.coordinator.close(failedPlacement.id);
+      checks.restoreFailureVisibleInManagement = true;
+    }
+    let noteWindow: BrowserWindow | undefined;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      noteWindow = NativeWindow.getAllWindows().find(
+        (value) =>
+          value.webContents.getURL().includes("noteId=" + note.id) && unifiedWindowControl(value),
+      );
+      if (noteWindow) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert(noteWindow, "Reopened note editor carrier is missing");
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        await noteWindow!.webContents.executeJavaScript(
+          "!!document.querySelector('[data-note-ready=true] textarea:not(:disabled)')",
+        )
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const dirtyText = "保存拒绝后仍保留的草稿";
+    assert(
+      await noteWindow!.webContents.executeJavaScript(
+        "!!document.querySelector('[data-note-ready=true] textarea:not(:disabled)')",
+      ),
+      "Note editor was not ready for input",
+    );
+    await noteWindow!.webContents.executeJavaScript(`(() => {
+      const area = document.querySelector('textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, ${JSON.stringify(dirtyText)});
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const metadataFile = path.join(
+      context.manager.dataDirectory("spark233.notes"),
+      "metadata.json",
+    );
+    const savedMetadata = metadataFile + ".window-smoke-backup";
+    fs.renameSync(metadataFile, savedMetadata);
+    fs.mkdirSync(metadataFile);
+    let refused = false;
+    try {
+      // Save preparation still protects backup operations, but no longer runs
+      // as a veto when the user closes a placement.
+      refused = !(
+        await context.manager.prepareWindowClose("spark233.notes", notePlacement.instanceId)
+      ).ok;
+    } catch {
+      refused = true;
+    } finally {
+      fs.rmdirSync(metadataFile);
+      fs.renameSync(savedMetadata, metadataFile);
+    }
+    assert(
+      refused &&
+        !noteWindow!.isDestroyed() &&
+        context.store.load().placements.some((value) => value.id === notePlacement.id),
+      "Save refusal removed the live note or its card placement",
+    );
+    assert(
+      await noteWindow!.webContents.executeJavaScript(
+        `document.querySelector('textarea').value === ${JSON.stringify(dirtyText)}`,
+      ),
+      "Save refusal lost the note draft",
+    );
+    checks.noteSavePreparationRetainedDraft = true;
+    await context.coordinator.open({
+      pluginId: "spark233.notes",
+      windowId: "main",
+      environment: "card-desktop",
+      action: "open",
+    });
+    let noteManager: BrowserWindow | undefined;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      noteManager = NativeWindow.getAllWindows().find(
+        (value) => value.webContents.getURL().includes("view=main") && unifiedWindowControl(value),
+      );
+      if (noteManager) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert(noteManager, "Note manager did not open");
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        await noteManager!.webContents.executeJavaScript(
+          "!!document.querySelector('textarea')?.readOnly",
+        )
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert(
+      await noteManager!.webContents.executeJavaScript(
+        "!!document.querySelector('textarea')?.readOnly",
+      ),
+      "Manager did not relinquish the active note editor",
+    );
+    checks.noteManagerSingleEditor = true;
+    await noteManager!.webContents.executeJavaScript(
+      `window.spark233Desktop.invoke('notes_delete', {id:${JSON.stringify(note.id)}})`,
+    );
+    assert(
+      !context.store.load().instances.some((value) => value.binding.contentId === note.id),
+      "Deleting a note retained its window binding",
+    );
+    assert(
+      !(await context.notes.list()).some((value) => value.id === note.id),
+      "Note deletion did not commit",
+    );
+    checks.noteDeletionCoordinatedSave = true;
+    await context.layer.closeOverlay(false);
+    checks.retainedPlacements = context.store.load().placements.length;
+    fs.mkdirSync(path.dirname(context.output), { recursive: true });
+    fs.writeFileSync(context.output, JSON.stringify({ ok: true, checks }, null, 2));
+  } catch (error) {
+    fs.mkdirSync(path.dirname(context.output), { recursive: true });
+    fs.writeFileSync(
+      context.output,
+      JSON.stringify(
+        { ok: false, checks, error: error instanceof Error ? error.stack : String(error) },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    context.quit();
+  }
+}
 
 export interface SmokeContext {
   output: string;
@@ -97,7 +945,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     throw new Error("Renderer did not hydrate");
   }
   // A completed backup restored commands but left its rejected query banner.
-  // Exercise the real renderer and maintenance gate, including action errors.
+  // Exercise the real renderer and maintenance gate, including disabled actions.
   async function verifyLauncherMaintenance() {
     const launcher = await context.showLauncher();
     const settledCommands = `document.querySelector('[data-slot="command-list"]')?.getAttribute('aria-busy') === 'false' && !!document.querySelector('[role="option"][data-result-key]')`;
@@ -135,6 +983,39 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     let resume: (() => void) | undefined;
     try {
       resume = await context.pauseForBackup();
+      maintenance.launcherShown = (await context.showLauncher()).isVisible();
+      const settingsOpened = await launcher.webContents.executeJavaScript(
+        `window.spark233Desktop.invoke('settings_open', {page:'general'})`,
+      );
+      if (!settingsOpened.ok) throw new Error("Maintenance prevented opening settings");
+      const settings = context.windows.get("settings");
+      if (!settings) throw new Error("Maintenance did not create the settings window");
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (
+          await settings.webContents
+            .executeJavaScript("!!document.querySelector('fieldset:disabled')")
+            .catch(() => false)
+        )
+          break;
+        await wait(100);
+      }
+      maintenance.settingsDisabled = await settings.webContents.executeJavaScript(
+        "!!document.querySelector('fieldset:disabled')",
+      );
+      maintenance.settingsShown = settings.isVisible();
+      settings.close();
+      for (let attempt = 0; attempt < 100 && !settings.isDestroyed(); attempt++) await wait(20);
+      maintenance.settingsClosed = settings.isDestroyed();
+      if (
+        !maintenance.launcherShown ||
+        !maintenance.settingsShown ||
+        !maintenance.settingsDisabled ||
+        !maintenance.settingsClosed
+      )
+        throw new Error(
+          "Maintenance must preserve shell display/close while disabling configuration writes",
+        );
+      await context.showLauncher();
       const reads = await launcher.webContents.executeJavaScript(`(async () => ({
           state: await window.spark233Desktop.invoke('launcher_state'),
           query: await window.spark233Desktop.invoke('launcher_query', {query:'',sessionId:crypto.randomUUID()})
@@ -181,6 +1062,9 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       const modeAvailable = `Array.from(document.querySelectorAll('[role="option"][data-result-key]')).some(node => node.getAttribute('aria-disabled') !== 'true' && node.textContent.includes(${JSON.stringify(modeCommand.title)}))`;
       await untilRenderer(modeAvailable, "Notes search mode did not appear for its explicit query");
       resume = await context.pauseForBackup();
+      const modeDisabled = `Array.from(document.querySelectorAll('[role="option"][data-result-key]')).some(node => node.getAttribute('aria-disabled') === 'true' && node.textContent.includes(${JSON.stringify(modeCommand.title)}))`;
+      await untilRenderer(modeDisabled, "Maintenance left a dependent action enabled");
+      maintenance.actionDisabled = true;
       const clicked = await launcher.webContents.executeJavaScript(`(() => {
           const item = Array.from(document.querySelectorAll('[role="option"][data-result-key]')).find(node => node.textContent.includes(${JSON.stringify(modeCommand.title)}));
           if (!item) return false;
@@ -199,18 +1083,19 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
         errorVisible,
         "Maintenance action rejection was not shown by the renderer",
       );
-      maintenance.actionErrorShown = true;
+      maintenance.disabledActionIgnored = await launcher.webContents.executeJavaScript(
+        `document.querySelector('[role="combobox"]')?.value === ${JSON.stringify(modeCommand.title)}`,
+      );
+      if (!maintenance.disabledActionIgnored)
+        throw new Error("A disabled command entered its mode");
       resume();
       resume = undefined;
       context.emit("plugins-changed", undefined, launcher);
       await untilRenderer(
         settledCommands,
-        "Notes query did not recover after the rejected mode action",
+        "Notes query did not recover after the disabled mode action",
       );
-      maintenance.businessErrorPreserved =
-        await launcher.webContents.executeJavaScript(errorVisible);
-      if (!maintenance.businessErrorPreserved)
-        throw new Error("Successful background reads erased a business action error");
+      await untilRenderer(`!(${errorVisible})`, "Maintenance error remained after recovery");
     } finally {
       resume?.();
     }
@@ -443,11 +1328,14 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
       area.dispatchEvent(new Event('input', { bubbles: true }));
     })()`);
     await wait(80);
+    // Explicit save and close are separate operations; closing no longer
+    // promises to flush a draft that has not reached autosave yet.
+    if (!(await context.prepare(win))) throw new Error("Explicit note save failed");
     await context.hideAndRelease(win);
     if (!win.isDestroyed() || (await notes.get(note.id)).content !== dirtyText)
       throw new Error("Close/release lost unsaved content");
     await expectNotePresence(main, note.id, "hidden");
-    checks.durableClose = true;
+    checks.savedContentSurvivesClose = true;
     checks.rendererReleased = true;
     const reopened = windows.get(await openNote(note.id))!;
     await hydrated(reopened);
@@ -491,7 +1379,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     if (!(await reopened.webContents.executeJavaScript("!!document.querySelector('textarea')")))
       throw new Error("Tile edit button did not return to the note editor");
     checks.tileReturnViaContextMenuAndButton = true;
-    // A real filesystem failure must keep the renderer and its dirty text alive.
+    // Explicit backup/save preparation still reports real filesystem failures.
     const failureText = "保存失败时保留这段中文\n";
     await reopened.webContents.executeJavaScript(`(() => {
       const area = document.querySelector('textarea');
@@ -505,7 +1393,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     fs.mkdirSync(metadataFile);
     let refused = false;
     try {
-      await context.foldAndRelease(reopened);
+      refused = !(await context.prepare(reopened));
     } catch {
       refused = true;
     } finally {
@@ -541,6 +1429,7 @@ export async function runSmoke(context: SmokeContext): Promise<void> {
     if (checks.image !== 1 || checks.protocolDenied !== 403)
       throw new Error("Asset protocol boundary failed");
     const expandedBounds = reopened.getBounds();
+    if (!(await context.prepare(reopened))) throw new Error("Explicit note save failed");
     await context.foldAndRelease(reopened);
     await expectNotePresence(main, note.id, "capsule");
     const layout = context.layouts.get(label)!;

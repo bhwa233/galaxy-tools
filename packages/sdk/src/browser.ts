@@ -8,6 +8,7 @@ import type {
   StopReason,
   PluginLauncherPage,
 } from "./index.js";
+import type { WindowEnvironment, WindowCapabilities, WindowBinding } from "./window.js";
 
 export type PluginWindowStopReason = StopReason | "window-close";
 /** A refusal reason is limited to 1000 characters on the wire. */
@@ -15,9 +16,15 @@ export type PluginSaveDecision = { ok: true } | { ok: false; reason: string };
 export interface PluginWebContext extends PluginSessionContext {
   activationId?: string;
 }
+export interface PluginWindowState {
+  environment: WindowEnvironment;
+  chrome: "host" | "none";
+  capabilities: WindowCapabilities;
+}
 export type PluginWebEvent = { owner: PluginOwner } & (
   | { type: "activation"; activationId: string; activation: PluginActivation }
   | { type: "theme"; theme: PluginTheme }
+  | { type: "window-state"; state: PluginWindowState }
   | { type: "query"; requestId: string; activation: PluginActivation }
   | { type: "query-cancel"; requestId: string }
   | { type: "prepareStop"; requestId: string; reason: PluginWindowStopReason }
@@ -33,6 +40,12 @@ export type PluginWebOperation =
   | "window.toggleMaximize"
   | "window.isMaximized"
   | "window.status"
+  | "window.state"
+  | "window.setAlwaysOnTop"
+  | "window.showMenu"
+  | "windows.open"
+  | "window.addToCardDesktop"
+  | "window.openIndependent"
   | "capability.invoke"
   | "lifecycle.result"
   | "query.result";
@@ -70,6 +83,16 @@ export interface PluginBrowserClient {
   ): Promise<JsonValue | undefined>;
   close(): Promise<void>;
   window: {
+    setAlwaysOnTop(value: boolean): Promise<void>;
+    onState(handler: (state: PluginWindowState) => void): () => void;
+    addToCardDesktop(): Promise<void>;
+    openIndependent(): Promise<void>;
+    state(): Promise<{
+      environment: WindowEnvironment;
+      chrome: "host" | "none";
+      capabilities: WindowCapabilities;
+    }>;
+    showMenu(anchor?: { x: number; y: number }): Promise<void>;
     minimize(): Promise<void>;
     toggleMaximize(): Promise<void>;
     isMaximized(): Promise<boolean>;
@@ -83,6 +106,7 @@ export interface PluginBrowserClient {
       runState?: "unsaved" | "busy" | "error";
     }): Promise<void>;
   };
+  windows: { open(binding: WindowBinding, action?: "open" | "create"): Promise<void> };
   dispose(): void;
 }
 
@@ -96,6 +120,7 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
   const queued: PluginWebEvent[] = [];
   const activations = new Map<(activation: PluginActivation) => void, string | undefined>();
   const themes = new Set<(theme: PluginTheme) => void>();
+  const windowStates = new Set<(state: PluginWindowState) => void>();
   const saves = new Set<
     (reason: PluginWindowStopReason) => PluginSaveDecision | Promise<PluginSaveDecision>
   >();
@@ -143,6 +168,8 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
     } else if (event.type === "theme") {
       current.theme = event.theme;
       for (const handler of themes) handler(event.theme);
+    } else if (event.type === "window-state") {
+      for (const handler of windowStates) handler(event.state);
     } else if (event.type === "query-cancel") {
       pendingQueries.get(event.requestId)?.abort();
       pendingQueries.delete(event.requestId);
@@ -294,6 +321,30 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
       await request("window.close");
     },
     window: {
+      setAlwaysOnTop: async (value) => {
+        await request("window.setAlwaysOnTop", value);
+      },
+      onState: (handler) => {
+        windowStates.add(handler);
+        return () => {
+          windowStates.delete(handler);
+        };
+      },
+      addToCardDesktop: async () => {
+        await request("window.addToCardDesktop");
+      },
+      openIndependent: async () => {
+        await request("window.openIndependent");
+      },
+      state: async () =>
+        (await request("window.state")) as unknown as {
+          environment: WindowEnvironment;
+          chrome: "host" | "none";
+          capabilities: WindowCapabilities;
+        },
+      showMenu: async (anchor) => {
+        await request("window.showMenu", anchor);
+      },
       minimize: async () => {
         await request("window.minimize");
       },
@@ -308,12 +359,18 @@ export function createPluginClient(bridge?: PluginBrowserBridge): PluginBrowserC
         });
       },
     },
+    windows: {
+      open: async (binding, action = "open") => {
+        await request("windows.open", { binding: binding as unknown as JsonValue, action });
+      },
+    },
     dispose: () => {
       active = false;
       unsubscribe();
       queued.length = 0;
       activations.clear();
       themes.clear();
+      windowStates.clear();
       saves.clear();
       commands.clear();
       queries.clear();

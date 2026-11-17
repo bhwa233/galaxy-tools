@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-traffic",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "description": "Desktop traffic monitor with process ETW collection and history",
   "license": "MIT",
@@ -42,8 +42,8 @@
         "displayName": "Traffic monitor"
       }
     },
-    "api": ">=1.7.0 <2.0.0",
-    "host": ">=0.0.1 <1",
+    "api": "^1.8.0",
+    "host": ">=0.1.7 <1",
     "platforms": [
       "win32"
     ],
@@ -231,134 +231,150 @@
           "maximizable": true,
           "taskbar": true,
           "reuse": "singleton",
-          "presentation": "standard"
-        }
-      },
-      "widgets": {
+          "presentation": "standard",
+          "cardDesktop": true,
+          "chrome": "host",
+          "restore": {
+            "parameterVersion": 1
+          }
+        },
         "hud": {
-          "kind": "declarative",
-          "template": "widgets/hud.json",
-          "contentHeight": true,
           "title": "桌面流量窗",
-          "translations": {
-            "en-US": {
-              "title": "Desktop traffic monitor"
-            }
-          },
-          "size": {
-            "width": 110,
-            "height": 52
-          },
-          "minSize": {
-            "width": 110,
-            "height": 32
-          },
-          "maxSize": {
-            "width": 110,
-            "height": 52
-          },
-          "resizable": false,
-          "group": "top",
-          "clickThrough": false,
-          "interactive": true,
-          "desktopInteractions": {
-            "primaryAction": "open",
-            "hover": {
-              "template": "widgets/traffic-hover.json",
-              "size": {
-                "width": 260,
-                "height": 300
+          "content": {
+            "kind": "declarative",
+            "template": "widgets/hud.json",
+            "contentHeight": true,
+            "title": "桌面流量窗",
+            "translations": {
+              "en-US": {
+                "title": "Desktop traffic monitor"
               }
             },
-            "menu": {
-              "openLabel": "查看流量详情",
-              "hideLabel": "关闭流量提示"
+            "size": {
+              "width": 110,
+              "height": 52
             },
-            "edgeAutoHide": false,
-            "fullscreenAutoHide": true
-          },
-          "refreshMs": 1000,
-          "commands": [
-            "subscribe",
-            "open"
-          ],
-          "actions": {
-            "open": {
-              "mode": "open-main",
-              "commandId": "open"
+            "minSize": {
+              "width": 110,
+              "height": 32
             },
-            "subscribe": {
-              "mode": "query",
-              "commandId": "subscribe"
+            "maxSize": {
+              "width": 110,
+              "height": 52
+            },
+            "resizable": false,
+            "group": "top",
+            "clickThrough": false,
+            "interactive": true,
+            "desktopInteractions": {
+              "primaryAction": "open",
+              "hover": {
+                "template": "widgets/traffic-hover.json",
+                "size": {
+                  "width": 260,
+                  "height": 300
+                }
+              },
+              "menu": {
+                "openLabel": "查看流量详情",
+                "hideLabel": "关闭流量提示"
+              },
+              "edgeAutoHide": false,
+              "fullscreenAutoHide": true
+            },
+            "refreshMs": 1000,
+            "commands": [
+              "subscribe",
+              "open"
+            ],
+            "actions": {
+              "open": {
+                "mode": "open-main",
+                "commandId": "open"
+              },
+              "subscribe": {
+                "mode": "query",
+                "commandId": "subscribe"
+              }
+            },
+            "data": {
+              "upload-top": {
+                "source": "backend",
+                "format": "rows",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "download-top": {
+                "source": "backend",
+                "format": "rows",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "process-status": {
+                "source": "backend",
+                "format": "text",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "rx": {
+                "source": "backend",
+                "format": "number",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "tx": {
+                "source": "backend",
+                "format": "number",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "rx-text": {
+                "source": "backend",
+                "format": "text",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "tx-text": {
+                "source": "backend",
+                "format": "text",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "rx-series": {
+                "source": "backend",
+                "format": "series",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "tx-series": {
+                "source": "backend",
+                "format": "series",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "status": {
+                "source": "backend",
+                "format": "text",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              },
+              "scope": {
+                "source": "backend",
+                "format": "text",
+                "event": "traffic.snapshot",
+                "subscriptionAction": "subscribe"
+              }
             }
           },
-          "data": {
-            "upload-top": {
-              "source": "backend",
-              "format": "rows",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "download-top": {
-              "source": "backend",
-              "format": "rows",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "process-status": {
-              "source": "backend",
-              "format": "text",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "rx": {
-              "source": "backend",
-              "format": "number",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "tx": {
-              "source": "backend",
-              "format": "number",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "rx-text": {
-              "source": "backend",
-              "format": "text",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "tx-text": {
-              "source": "backend",
-              "format": "text",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "rx-series": {
-              "source": "backend",
-              "format": "series",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "tx-series": {
-              "source": "backend",
-              "format": "series",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "status": {
-              "source": "backend",
-              "format": "text",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            },
-            "scope": {
-              "source": "backend",
-              "format": "text",
-              "event": "traffic.snapshot",
-              "subscriptionAction": "subscribe"
-            }
+          "cardDesktop": true,
+          "chrome": "none",
+          "reuse": "multiple",
+          "minimizable": false,
+          "maximizable": false,
+          "taskbar": false,
+          "restore": {
+            "parameterVersion": 1,
+            "autoOpen": true
           }
         }
       }

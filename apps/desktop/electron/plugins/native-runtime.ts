@@ -61,7 +61,7 @@ export interface NativePluginRuntimeOptions {
 export interface NativePluginRuntime {
   readonly pid: number | undefined;
   checkStartup(): Promise<void>;
-  activate(activation: PluginActivation): Promise<JsonValue | undefined>;
+  activate(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   query(activation: PluginActivation, signal?: AbortSignal): Promise<JsonValue | undefined>;
   request(
     entryId: string,
@@ -463,8 +463,8 @@ export async function createNativePluginRuntime(
     async checkStartup() {
       await processFor(defaultEntry());
     },
-    async activate(activation) {
-      return this.request(defaultEntry(), activation);
+    async activate(activation, signal) {
+      return this.request(defaultEntry(), activation, signal);
     },
     async query(activation, signal) {
       signal?.throwIfAborted();

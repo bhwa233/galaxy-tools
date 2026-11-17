@@ -13,6 +13,7 @@ import {
 } from "../layer-layout-store.js";
 import { AppError } from "../persistence.js";
 import { contains } from "../capsule-layout.js";
+import { prepareInstantWindow } from "../window-transitions.js";
 
 type WindowCard = Extract<StoredLayerCard, { kind: "window" }>;
 
@@ -26,6 +27,7 @@ interface Session {
   profile: string;
   title: () => string;
   present(value: PluginWindowPresentation): void | Promise<void>;
+  reveal?(): void;
   release?: () => void;
   revision: number;
   focused: boolean;
@@ -190,7 +192,11 @@ export class PluginWindowDesktopHost {
       },
       focus: (focused) => {
         session.focused = focused;
-        if (focused) this.options.layer.restackOverlay();
+        if (focused) {
+          const cardId = this.find(input.pluginId, input.profile)?.[0];
+          if (cardId) this.options.layer.noteOverlayFocus(cardId);
+          this.options.layer.restackOverlay();
+        }
       },
       bounds: async (bounds) => {
         const stored = this.find(input.pluginId, input.profile);
@@ -212,6 +218,7 @@ export class PluginWindowDesktopHost {
     if (!entry) return;
     const [id] = entry;
     session.release = this.options.layer.registerExternal(id, {
+      ...(session.reveal ? { reveal: session.reveal } : {}),
       present: async (value) => {
         const revision = ++session.revision;
         try {
@@ -226,7 +233,7 @@ export class PluginWindowDesktopHost {
       focus: () => session.focused,
       restack: () => {
         const current = this.options.layer.externalPresentation(id);
-        if (current && this.options.layer.overlayActive)
+        if (current && !current.inputBlocked && this.options.layer.overlayActive)
           void Promise.resolve(session.present({ ...current, revision: session.revision })).catch(
             () => {},
           );
@@ -343,6 +350,7 @@ export class WindowModeController {
   private ordinaryMinSize?: [number, number];
   private ordinaryResizable = true;
   private disposed = false;
+  private pendingReveal?: () => void;
   /** Card locked in place (no move/resize). */
   locked = false;
   /** A one-time hint (the overlay shortcut) shown for a few seconds. */
@@ -374,6 +382,11 @@ export class WindowModeController {
         profile: o.profile,
         title: o.title,
         present: (value) => this.present(value),
+        reveal: () => {
+          const show = this.pendingReveal;
+          this.pendingReveal = undefined;
+          show?.();
+        },
       });
     window.on("moved", () => this.report());
     window.on("resized", () => this.report());
@@ -392,9 +405,16 @@ export class WindowModeController {
     if (this.o.setTopmost) this.o.setTopmost(value);
     else this.o.window.setAlwaysOnTop(value);
   }
-  private present(value: PluginWindowPresentation): void {
+  private async present(value: PluginWindowPresentation): Promise<void> {
     const window = this.o.window;
+    await prepareInstantWindow(window);
     if (this.disposed || window.isDestroyed()) return;
+    this.pendingReveal = undefined;
+    if (value?.deferReveal) {
+      this.pendingReveal = () => {
+        if (!this.disposed && !window.isDestroyed() && value.visible) window.showInactive();
+      };
+    }
     if (!value) {
       const wasDesktop = !!this.presented;
       this.presented = undefined;
@@ -441,16 +461,22 @@ export class WindowModeController {
       }
     }
     this.locked = !!value.locked;
+    if (value.deferReveal) window.hide();
     window.setMovable(!this.locked);
     window.setResizable(!this.locked && this.ordinaryResizable);
     if (window.isMaximized()) window.unmaximize();
     this.presented = value;
     this.mode = "desktop";
     window.setSkipTaskbar(true);
-    window.setFocusable(value.mode === "overlay" || value.card.inputMode === "interactive");
-    window.setIgnoreMouseEvents(value.mode === "desktop" && value.card.inputMode === "passive", {
-      forward: true,
-    });
+    window.setFocusable(
+      !value.inputBlocked && (value.mode === "overlay" || value.card.inputMode === "interactive"),
+    );
+    window.setIgnoreMouseEvents(
+      !!value.inputBlocked || (value.mode === "desktop" && value.card.inputMode === "passive"),
+      {
+        forward: true,
+      },
+    );
     window.setAlwaysOnTop(
       value.mode === "overlay" || value.card.group === "top",
       process.platform === "win32" ? "pop-up-menu" : "floating",
@@ -462,24 +488,11 @@ export class WindowModeController {
       width: Math.round(b.width),
       height: Math.round(b.height),
     });
-    if (value.visible) {
+    if (value.visible && !value.deferReveal) {
       if (!window.isVisible()) window.showInactive();
-      if (value.mode === "overlay") window.moveTop();
-      // A short fade marks the move onto the desktop.
-      if (entering) this.fadeIn();
+      if (value.mode === "overlay" && !value.inputBlocked) window.moveTop();
     } else window.hide();
     this.o.onChange();
-  }
-  private fadeIn(): void {
-    const window = this.o.window;
-    let step = 0;
-    window.setOpacity(0.55);
-    const timer = setInterval(() => {
-      step++;
-      if (window.isDestroyed()) return clearInterval(timer);
-      window.setOpacity(Math.min(1, 0.55 + step * 0.075));
-      if (step >= 6) clearInterval(timer);
-    }, 30);
   }
   /** Lock or unlock the card in place. */
   async setLocked(locked: boolean): Promise<void> {
@@ -499,7 +512,7 @@ export class WindowModeController {
   /** Raises an existing desktop card and briefly highlights it. */
   locate(): void {
     const window = this.o.window;
-    if (this.mode !== "desktop" || window.isDestroyed()) return;
+    if (this.mode !== "desktop" || this.presented?.inputBlocked || window.isDestroyed()) return;
     if (!window.isVisible()) window.showInactive();
     window.moveTop();
     window.focus();

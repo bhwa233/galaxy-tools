@@ -2,6 +2,7 @@ export * from "./manifest.js";
 export * from "./native-protocol.js";
 export * from "./widget.js";
 export * from "./widget-schema.js";
+export * from "./window.js";
 
 export type JsonValue =
   | null

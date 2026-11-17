@@ -22,6 +22,8 @@ class SelectionReader {
     [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+    delegate bool WindowCallback(IntPtr window,IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumWindows(WindowCallback callback,IntPtr data);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
@@ -193,6 +195,19 @@ class SelectionReader {
                 if(request.Count==3) {
                     if(!request.TryGetValue("targetWindow",out targetValue)) return 1;
                     try { target=Convert.ToInt64(targetValue); } catch { return 1; }
+                }
+                if(Object.Equals(operation,"observe")) {
+                    IntPtr window=GetForegroundWindow();
+                    uint pid; GetWindowThreadProcessId(window,out pid);
+                    bool visible=false;
+                    EnumWindows(delegate(IntPtr candidate,IntPtr data) {
+                        uint candidatePid; GetWindowThreadProcessId(candidate,out candidatePid);
+                        if(candidatePid==(uint)target && IsWindowVisible(candidate)) {visible=true;return false;}
+                        return true;
+                    },IntPtr.Zero);
+                    Console.WriteLine(serializer.Serialize(new {id=(string)idValue,window=window.ToInt64(),pid=pid,ownerVisible=visible}));
+                    Console.Out.Flush();
+                    continue;
                 }
                 if(Object.Equals(operation,"foreground")) {
                     captured=null;

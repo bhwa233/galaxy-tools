@@ -20,6 +20,7 @@ export interface NotesDataParameters {
   "note.revision": { id: string; versionId: string };
   "note.restore": { id: string; versionId: string; expectedRevision: string };
   "note.save": { request: SaveNoteRequest; id?: string };
+  "note.create": { creationId: string; request: SaveNoteRequest };
   "note.append": { id: string; content: string };
   "note.delete": { id: string };
   "note.setEditorMode": { id: string; mode: NoteEditorMode };
@@ -54,6 +55,7 @@ export interface NotesDataResults {
   "note.revision": SaveNoteRequest;
   "note.restore": Note;
   "note.save": Note;
+  "note.create": Note;
   "note.append": Note;
   "note.delete": null;
   "note.setEditorMode": NoteMetadata;

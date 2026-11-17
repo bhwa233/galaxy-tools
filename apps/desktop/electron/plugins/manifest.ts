@@ -5,10 +5,12 @@ import {
   HOST_API_VERSION,
   THEME_API_VERSION,
   pluginPackageSchema,
+  pluginWindowPageEntry,
   parseDeclarativeTemplate,
   declarativeResourceIds,
   type DeclarativeTemplate,
   type PluginPackageMetadata,
+  type PluginDevelopmentBuild,
 } from "@spark233/sdk";
 import { AppError, canonical, confined, inside } from "../persistence.js";
 import { compatibilityManifest } from "./utools-manifest.js";
@@ -23,6 +25,8 @@ export interface PluginExpectation {
   name?: string;
   version?: string;
   pluginId?: string;
+  /** null means a release package, undefined leaves the build unconstrained. */
+  development?: PluginDevelopmentBuild | null;
 }
 export interface ResolvedPluginEntries {
   web?: string;
@@ -67,6 +71,25 @@ export function validatePluginMetadata(
   }
   const metadata = parsed.data;
   const manifest = metadata.spark233;
+  if (
+    Object.values(manifest.ui?.windows ?? {}).some(
+      (window) =>
+        window.content !== undefined ||
+        window.cardDesktop !== undefined ||
+        window.chrome !== undefined ||
+        window.purpose !== undefined ||
+        window.minimizable !== undefined ||
+        window.maxSize !== undefined ||
+        window.create !== undefined ||
+        window.restore !== undefined ||
+        window.reuse === "multiple" ||
+        [window.size, window.minSize, window.desktopMinSize].some(
+          (size) => size && (size.width < 160 || size.height < 60),
+        ),
+    ) &&
+    !semver.subset(manifest.api, ">=1.8.0 <2.0.0")
+  )
+    throw new AppError("incompatiblePlugin", "统一窗口声明要求最低 API 1.8.0");
   if (manifest.compatibility && !semver.subset(manifest.api, ">=1.6.0 <2.0.0"))
     throw new AppError("incompatiblePlugin", "uTools 兼容运行时要求最低 API 1.6.0");
   if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(metadata.name)) {
@@ -79,7 +102,11 @@ export function validatePluginMetadata(
   if (
     (expected.name !== undefined && metadata.name !== expected.name) ||
     (expected.version !== undefined && metadata.version !== expected.version) ||
-    (expected.pluginId !== undefined && manifest.id !== expected.pluginId)
+    (expected.pluginId !== undefined && manifest.id !== expected.pluginId) ||
+    (expected.development !== undefined &&
+      (manifest.development?.buildId !== expected.development?.buildId ||
+        manifest.development?.builtAt !== expected.development?.builtAt ||
+        manifest.development?.commit !== expected.development?.commit))
   )
     throw new AppError("pluginIdentityMismatch", "插件包名、版本或插件身份与预期不一致");
 
@@ -183,11 +210,15 @@ export function resolvePluginEntries(
   };
   if (metadata.spark233.ui?.icon) icon(metadata.spark233.ui.icon);
   for (const window of Object.values(metadata.spark233.ui?.windows ?? {})) {
-    entry(window.entry, /\.html$/i);
+    const page = pluginWindowPageEntry(window);
+    if (page) entry(page, /\.html$/i);
     if (window.icon) icon(window.icon);
   }
   const widgets: Record<string, ResolvedWidgetEntry> = {};
-  for (const [id, widget] of Object.entries(metadata.spark233.ui?.widgets ?? {})) {
+  const definitions = { ...metadata.spark233.ui?.widgets };
+  for (const [id, window] of Object.entries(metadata.spark233.ui?.windows ?? {}))
+    if (window.content && window.content.kind !== "page") definitions[id] = window.content;
+  for (const [id, widget] of Object.entries(definitions)) {
     const relative = widget.kind === "web" ? widget.entry : widget.template;
     const file = entry(relative, widget.kind === "web" ? /\.html$/i : /\.json$/i);
     // Resources are confined to this widget's package directory, including links.

@@ -46,6 +46,7 @@ export interface PluginSummary {
   icon?: string;
   iconMonochrome?: boolean;
   version: string;
+  development?: PluginPackageMetadata["spark233"]["development"];
   enabled: boolean;
   status: string;
   source: PluginPackageSource;
@@ -69,6 +70,7 @@ export interface InstallPreview {
   createdAt: number;
   taskId?: string;
   currentVersion?: string;
+  currentDevelopment?: PluginPackageMetadata["spark233"]["development"];
   releaseNotes?: PluginReleaseNotes;
 }
 export interface UpdateSummary {
@@ -101,7 +103,9 @@ export interface BundledPluginCatalogItem {
   icon?: string;
   iconMonochrome?: boolean;
   version: string;
+  development?: PluginPackageMetadata["spark233"]["development"];
   installedVersion?: string;
+  installedDevelopment?: PluginPackageMetadata["spark233"]["development"];
   pending: boolean;
   canPrepare: boolean;
 }

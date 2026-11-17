@@ -5668,12 +5668,14 @@ var trayMenuSchema = strictObject({
 var desktopLayerPreferencesSchema = strictObject({
 	enabled: boolean(),
 	webEnabled: boolean(),
-	notesEnabled: boolean()
+	notesEnabled: boolean(),
+	topTriggerEnabled: boolean().optional()
 });
 var DEFAULT_DESKTOP_LAYER_PREFERENCES = {
 	enabled: true,
 	webEnabled: true,
-	notesEnabled: true
+	notesEnabled: true,
+	topTriggerEnabled: true
 };
 var configPatchSchema = strictObject({
 	locale: _enum(SUPPORTED_LOCALES).optional(),
@@ -5821,11 +5823,6 @@ field("paused", "boolean", { label: "pluginConfig.fields.paused" }), field("excl
 	options: ["cursor", "edge"],
 	label: "pluginConfig.fields.compactPosition"
 });
-field("excludedRoots", "lines", { label: "pluginConfig.fields.excludedRoots" }), field("extensions", "lines", { label: "pluginConfig.fields.extensions" }), field("maxFileMiB", "number", {
-	min: 1,
-	max: 64,
-	label: "pluginConfig.fields.maxFileMiB"
-}), field("includeHidden", "boolean", { label: "pluginConfig.fields.includeHidden" });
 field("endpoint", "text", { label: "translation.endpoint" }), field("model", "text", { label: "translation.model" }), field("key", "secret", { label: "translation.key" });
 // apps/desktop/electron/persistence.ts
 var AppError = class extends Error {
@@ -5847,10 +5844,27 @@ function atomicWrite(file, value) {
 		fs.fsyncSync(fd);
 		fs.closeSync(fd);
 		fd = void 0;
-		fs.renameSync(temp, file);
+		renameWithRetry(temp, file);
 	} finally {
 		if (fd !== void 0) fs.closeSync(fd);
 		if (fs.existsSync(temp)) fs.unlinkSync(temp);
+	}
+}
+/** Windows refuses to replace a file that Defender, the search indexer or a
+* backup tool holds open for a moment. Retry briefly instead of failing the save. */
+function renameWithRetry(from, to) {
+	const transient = /* @__PURE__ */ new Set([
+		"EPERM",
+		"EBUSY",
+		"EACCES"
+	]);
+	for (let attempt = 0;; attempt++) try {
+		fs.renameSync(from, to);
+		return;
+	} catch (error) {
+		const code = error.code ?? "";
+		if (process.platform !== "win32" || !transient.has(code) || attempt >= 4) throw error;
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10 * 2 ** attempt);
 	}
 }
 function readJson(file) {
@@ -6124,11 +6138,30 @@ var NoteStore = class {
 			}
 		};
 		scan("");
-		this.commit(notes);
+		this.commit(notes, {});
 		return notes;
 	}
-	commit(notes) {
-		atomicWrite(path.join(this.dataDir, "metadata.json"), JSON.stringify({ notes }, null, 2));
+	creationReceipts() {
+		const file = path.join(this.dataDir, "metadata.json");
+		if (!fs.existsSync(file)) return {};
+		const value = readJson(file).creations;
+		return value === void 0 ? {} : record(uuid(), string().min(1).max(100)).parse(value);
+	}
+	commit(notes, creations = this.creationReceipts()) {
+		atomicWrite(path.join(this.dataDir, "metadata.json"), JSON.stringify({
+			version: 2,
+			notes,
+			creations
+		}, null, 2));
+	}
+	/** Creation receipts share the note-index commit. A lost response or restart
+	* cannot create another note; deletion does not recycle a creation ID. */
+	createIdempotent(creationId, value) {
+		uuid().parse(creationId);
+		const creations = this.creationReceipts();
+		if (creations[creationId]) return this.get(creations[creationId]);
+		if (Object.keys(creations).length >= 16384) throw new AppError("noteCreationLimit", "便签创建记录达到上限");
+		return this.save(value, void 0, creationId);
 	}
 	list() {
 		return this.metadata().filter((note) => fs.existsSync(this.notePath(note))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -6214,7 +6247,7 @@ var NoteStore = class {
 		atomicWrite(confined(this.revisionRoot(id), "index.json"), JSON.stringify(kept));
 		for (const entry of entries) if (!kept.some((item) => item.versionId === entry.versionId)) fs.rmSync(confined(this.revisionRoot(id), entry.versionId + ".json"), { force: true });
 	}
-	save(value, id) {
+	save(value, id, creationId) {
 		const req = request(value), notes = this.metadata(), old = id ? notes.find((note) => note.id === id) : void 0;
 		if (id && !old) throw new AppError("noteNotFound", "找不到便签", { noteId: id });
 		id ??= randomUUID();
@@ -6238,7 +6271,9 @@ var NoteStore = class {
 		const previous = fs.existsSync(target) ? fs.readFileSync(target) : void 0;
 		atomicWrite(target, req.content);
 		try {
-			this.commit(old ? notes.map((note) => note.id === id ? meta : note) : [...notes, meta]);
+			const creations = this.creationReceipts();
+			if (creationId) creations[creationId] = id;
+			this.commit(old ? notes.map((note) => note.id === id ? meta : note) : [...notes, meta], creations);
 		} catch (error) {
 			try {
 				if (previous === void 0) fs.rmSync(target, { force: true });
@@ -6637,6 +6672,10 @@ var schemas = {
 		request: save,
 		id: id.optional()
 	}),
+	"note.create": object({
+		creationId: uuid(),
+		request: save
+	}),
 	"note.append": object({
 		id,
 		content: text
@@ -6784,6 +6823,7 @@ function notesBackend(lifetime) {
 			case "note.restore": return store.restoreRevision(request.id, request.versionId, request.expectedRevision);
 			case "note.get": return store.get(request.id);
 			case "note.save": return store.save(request.request, request.id);
+			case "note.create": return store.createIdempotent(request.creationId, request.request);
 			case "note.append": {
 				const note = store.get(request.id);
 				return store.save({
@@ -6911,6 +6951,27 @@ function notesBackend(lifetime) {
 	return {
 		async activate(activation, context) {
 			if (!activation.commandId) return;
+			if (activation.commandId === "window-create") {
+				if (lifetime.startupCheckOnly) throw new AppError("pluginDisabled", "Startup validation cannot create notes");
+				const input = strictObject({
+					creationId: uuid(),
+					windowId: _enum(["notepad", "tile"])
+				}).parse(activation.parameters);
+				const note = await enqueue(context, () => store.createIdempotent(input.creationId, {
+					title: "",
+					content: "",
+					category: ""
+				}));
+				context.emit("notes-data-changed", { action: "note.create" });
+				return {
+					kind: "window-binding",
+					binding: {
+						windowId: input.windowId,
+						contentId: note.id,
+						parameterVersion: 1
+					}
+				};
+			}
 			if (activation.commandId !== "data") {
 				if (![
 					"open",
@@ -6926,6 +6987,7 @@ function notesBackend(lifetime) {
 			const result = await enqueue(context, () => execute(request));
 			if ([
 				"note.save",
+				"note.create",
 				"note.append",
 				"note.delete",
 				"note.restore",

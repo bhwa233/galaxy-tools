@@ -10,6 +10,7 @@ import type {
   UToolsDesktopRequest,
 } from "../../shared/utools-desktop.js";
 import type { Rect } from "../../src/features/capsules/types.js";
+import { prepareInstantWindow } from "../window-transitions.js";
 const {
   app,
   BrowserWindow,
@@ -42,8 +43,12 @@ export async function startUToolsRunner(): Promise<void> {
   let manifest: UToolsManifest;
   let state: any;
   let desktop: UToolsDesktopPresentation | undefined;
+  let deferredReveal: { revision: number; run(): void } | undefined;
   let originalBounds: Rect | undefined;
   let originalMaximized = false;
+  let originalVisible = false;
+  let originalTopmost = false;
+  let originalMinimized = false;
   let entered = false;
   let menuOpen = false;
   let geometryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -424,6 +429,7 @@ export async function startUToolsRunner(): Promise<void> {
                 checked: !window.isAlwaysOnTop(),
                 click: () => {
                   window!.setAlwaysOnTop(false);
+                  void hostRequest({ type: "ordinary-topmost", value: false }).catch(report);
                   update({ mode: "normal" });
                 },
               },
@@ -433,13 +439,14 @@ export async function startUToolsRunner(): Promise<void> {
                 checked: window.isAlwaysOnTop(),
                 click: () => {
                   window!.setAlwaysOnTop(true);
+                  void hostRequest({ type: "ordinary-topmost", value: true }).catch(report);
                   update({ mode: "topmost" });
                 },
               },
               ...(state.desktopAvailable
                 ? [
                     {
-                      label: "常驻桌面",
+                      label: "添加到卡片桌面",
                       type: "radio" as const,
                       checked: false,
                       enabled: !!entered && !!state.featureCode,
@@ -497,23 +504,31 @@ export async function startUToolsRunner(): Promise<void> {
         );
       menuOpen = true;
       Menu.buildFromTemplate([
+        ...(p.mode !== "overlay"
+          ? [
+              {
+                label: "置顶",
+                type: "checkbox" as const,
+                checked: p.card.group === "top",
+                click: (item: import("electron").MenuItem) => act("pin", item.checked),
+              },
+            ]
+          : []),
         {
-          label: "置顶",
-          type: "checkbox",
-          checked: p.card.group === "top",
-          click: (item) => act("pin", item.checked),
-        },
-        {
-          label: "常驻时鼠标穿透",
-          type: "checkbox",
-          checked: p.card.inputMode === "passive",
-          click: (item) => act("passthrough", item.checked),
-        },
-        { type: "separator" },
-        {
-          label: "取消固定到桌面",
+          label: "独立窗口打开",
           click: () =>
-            void hostRequest({ type: "unpin" }).catch((error) => update({ error: String(error) })),
+            void hostRequest({
+              type: "panel",
+              revision: p.revision,
+              action: "open",
+            }).catch((error) => update({ error: String(error) })),
+        },
+        {
+          label: "关闭",
+          click: () =>
+            void hostRequest({ type: "panel", revision: p.revision, action: "close" }).catch(
+              (error) => update({ error: String(error) }),
+            ),
         },
       ]).popup({
         window,
@@ -565,7 +580,8 @@ export async function startUToolsRunner(): Promise<void> {
     }
     if (operation === "hide") {
       if (desktop)
-        return hostRequest({ type: "panel", revision: desktop.revision, action: "hide" });
+        return hostRequest({ type: "panel", revision: desktop.revision, action: "close" });
+      if (configuration.desktopAvailable) return hostRequest({ type: "ordinary-close" });
       wantsVisible = false;
       window.hide();
       if (visible) {
@@ -575,10 +591,12 @@ export async function startUToolsRunner(): Promise<void> {
       return;
     }
     if (operation === "minimize") {
+      if (desktop?.mode === "overlay") return;
       window.minimize();
       return;
     }
     if (operation === "maximize") {
+      if (desktop?.mode === "overlay") return;
       if (window.isMaximized()) window.unmaximize();
       else window.maximize();
       return;
@@ -619,6 +637,7 @@ export async function startUToolsRunner(): Promise<void> {
         backgroundThrottling: false,
       },
     });
+    await prepareInstantWindow(window);
     view = new WebContentsView({
       webPreferences: {
         preload: path.join(__dirname, "utools-preload.cjs"),
@@ -654,7 +673,7 @@ export async function startUToolsRunner(): Promise<void> {
     });
     window.on("resize", layout);
     const markNativeGesture = () => {
-      nativeGesture = desktop?.revision;
+      nativeGesture = desktop?.revision ?? -1;
     };
     window.on("will-move", markNativeGesture);
     window.on("will-resize", markNativeGesture);
@@ -664,6 +683,12 @@ export async function startUToolsRunner(): Promise<void> {
       clearTimeout(geometryTimer);
       geometryTimer = setTimeout(() => {
         nativeGesture = undefined;
+        if (revision === -1 && !desktop) {
+          void hostRequest({ type: "ordinary-bounds", bounds: window!.getBounds() }).catch(
+            () => {},
+          );
+          return;
+        }
         reportBounds(revision);
       }, 150);
     };
@@ -681,8 +706,14 @@ export async function startUToolsRunner(): Promise<void> {
       if (!exiting) {
         event.preventDefault();
         if (desktop) {
-          void hostRequest({ type: "panel", revision: desktop.revision, action: "hide" }).catch(
+          void hostRequest({ type: "panel", revision: desktop.revision, action: "close" }).catch(
             (error) => update({ error: String(error) }),
+          );
+          return;
+        }
+        if (configuration.desktopAvailable) {
+          void hostRequest({ type: "ordinary-close" }).catch((error) =>
+            update({ error: String(error) }),
           );
           return;
         }
@@ -716,7 +747,8 @@ export async function startUToolsRunner(): Promise<void> {
       item.reject(new Error("兼容运行器已停止"));
     }
     calls.clear();
-    if (view && !view.webContents.isDestroyed()) view.webContents.close();
+    if (view && !view.webContents.isDestroyed())
+      view.webContents.close({ waitForBeforeUnload: false });
     window?.destroy();
     store?.close();
     store = undefined;
@@ -784,6 +816,27 @@ export async function startUToolsRunner(): Promise<void> {
         stopping = false;
         return reply(id, { ok: true });
       }
+      if (operation === "workspace-save") {
+        if (!window || !shown) return reply(id, { ok: true });
+        const result = await dialog.showMessageBox(window, {
+          type: "question",
+          message: "关闭此窗口？",
+          detail: "请先保存插件中的修改。",
+          buttons: ["取消", "已保存并关闭"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        return reply(
+          id,
+          result.response === 1 ? { ok: true } : { ok: false, reason: "用户取消关闭" },
+        );
+      }
+      if (operation === "workspace-hide") {
+        window?.hide();
+        desktop = undefined;
+        update({ desktop: null });
+        return reply(id, { ok: true });
+      }
       if (operation === "prepare") {
         stopping = true;
         if (shown && window && value !== "crash") {
@@ -805,37 +858,87 @@ export async function startUToolsRunner(): Promise<void> {
       }
       if (stopping) throw new Error("插件正在停止");
       await open();
+      if (operation === "workspace-open") {
+        if (value.environment === "desktop") {
+          wantsVisible = true;
+          if (desktop?.mode === "overlay") originalVisible = true;
+        }
+        if (!entered) {
+          const feature = [...features(), ...manifest.features].find(
+            (item) => item.code === value.featureCode,
+          );
+          if (!feature) throw new Error("插件功能已不存在");
+          state.featureCode = feature.code;
+          await request("enter", {
+            code: feature.code,
+            type: "text",
+            payload: feature.cmds.find((item: unknown) => typeof item === "string") || feature.code,
+            from: "main",
+          });
+          entered = true;
+        }
+        return reply(id, { ok: true });
+      }
       if (operation === "desktop") {
+        if (deferredReveal && value?.revision === deferredReveal.revision && !value.deferReveal) {
+          const reveal = deferredReveal;
+          deferredReveal = undefined;
+          reveal.run();
+          return reply(id, { ok: true });
+        }
+        deferredReveal = undefined;
         clearTimeout(geometryTimer);
         nativeGesture = undefined;
         drag = undefined;
-        if (value === null) {
+        if (value === null || (value.mode === "desktop" && value.card.unifiedWindow)) {
+          const borrowed = desktop?.mode === "overlay";
           desktop = undefined;
-          window!.setAlwaysOnTop(false);
+          window!.setAlwaysOnTop(
+            borrowed
+              ? originalTopmost
+              : value
+                ? value.card.group === "top"
+                : window!.isAlwaysOnTop(),
+          );
           window!.setMinimumSize(320, 160);
+          window!.setMinimizable(true);
+          window!.setMaximizable(true);
           window!.setFocusable(true);
           window!.setIgnoreMouseEvents(false);
           window!.setSkipTaskbar(false);
-          if (originalBounds) {
-            const area = screen.getDisplayMatching(originalBounds).workArea;
-            const width = Math.min(originalBounds.width, area.width);
-            const height = Math.min(originalBounds.height, area.height);
+          const targetBounds = borrowed ? originalBounds : value?.card.bounds;
+          if (targetBounds) {
+            const area = screen.getDisplayMatching(targetBounds).workArea;
+            const width = Math.min(targetBounds.width, area.width);
+            const height = Math.min(targetBounds.height, area.height);
             window!.setBounds({
-              x: Math.max(area.x, Math.min(originalBounds.x, area.x + area.width - width)),
-              y: Math.max(area.y, Math.min(originalBounds.y, area.y + area.height - height)),
+              x: Math.max(area.x, Math.min(targetBounds.x, area.x + area.width - width)),
+              y: Math.max(area.y, Math.min(targetBounds.y, area.y + area.height - height)),
               width,
               height,
             });
           }
-          if (originalMaximized) window!.maximize();
-          update({ desktop: null });
-          if (configuration.show !== false) window!.show();
+          if (borrowed && originalMaximized) window!.maximize();
+          update({ desktop: null, mode: window!.isAlwaysOnTop() ? "topmost" : "normal" });
+          const show = () => {
+            if (configuration.show !== false && (borrowed ? originalVisible : value?.visible))
+              window!.showInactive();
+            else window!.hide();
+            if (borrowed && originalMinimized) window!.minimize();
+          };
+          if (value?.deferReveal) {
+            window!.hide();
+            deferredReveal = { revision: value.revision, run: show };
+          } else show();
           return reply(id, { ok: true });
         }
         const next = value as UToolsDesktopPresentation;
         if (!desktop) {
           originalBounds = window!.getBounds();
           originalMaximized = window!.isMaximized();
+          originalVisible = window!.isVisible();
+          originalTopmost = window!.isAlwaysOnTop();
+          originalMinimized = window!.isMinimized();
         }
         if (window!.isMaximized()) window!.unmaximize();
         if (desktop && next.revision < desktop.revision) throw new Error("过期的桌面窗口投影");
@@ -857,10 +960,17 @@ export async function startUToolsRunner(): Promise<void> {
           entered = true;
         }
         window!.setSkipTaskbar(true);
-        window!.setFocusable(next.mode === "overlay" || next.card.inputMode === "interactive");
-        window!.setIgnoreMouseEvents(next.mode === "desktop" && next.card.inputMode === "passive", {
-          forward: true,
-        });
+        window!.setMinimizable(next.mode !== "overlay");
+        window!.setMaximizable(next.mode !== "overlay");
+        window!.setFocusable(
+          !next.inputBlocked && (next.mode === "overlay" || next.card.inputMode === "interactive"),
+        );
+        window!.setIgnoreMouseEvents(
+          !!next.inputBlocked || (next.mode === "desktop" && next.card.inputMode === "passive"),
+          {
+            forward: true,
+          },
+        );
         window!.setAlwaysOnTop(
           next.mode === "overlay" || next.card.group === "top",
           process.platform === "win32" ? "pop-up-menu" : "floating",
@@ -888,15 +998,28 @@ export async function startUToolsRunner(): Promise<void> {
           };
           update({ desktop: next });
         });
-        if (next.visible && configuration.show !== false) {
-          if (!window!.isVisible()) window!.showInactive();
-          if (next.mode === "overlay") window!.moveTop();
-          shown = true;
-          visible = true;
-        } else {
+        const reveal = () => {
+          if (next.visible && configuration.show !== false) {
+            if (!window!.isVisible()) window!.showInactive();
+            if (next.mode === "overlay" && !next.inputBlocked) window!.moveTop();
+            if (next.activate && !next.inputBlocked) window!.focus();
+            shown = true;
+            visible = true;
+          } else {
+            window!.hide();
+            visible = false;
+          }
+        };
+        if (next.deferReveal) {
           window!.hide();
-          visible = false;
-        }
+          deferredReveal = {
+            revision: next.revision,
+            run: () => {
+              desktop = { ...next, deferReveal: false };
+              reveal();
+            },
+          };
+        } else reveal();
         return reply(id, { ok: true });
       }
       if (operation === "activate") {
@@ -908,8 +1031,11 @@ export async function startUToolsRunner(): Promise<void> {
           if (desktop)
             await hostRequest({ type: "panel", revision: desktop.revision, action: "show" });
           if (configuration.show !== false) {
-            window!.show();
-            window!.focus();
+            if (desktop?.inputBlocked) window!.showInactive();
+            else {
+              window!.show();
+              window!.focus();
+            }
             shown = true;
             visible = true;
           }
@@ -922,8 +1048,11 @@ export async function startUToolsRunner(): Promise<void> {
         entered = true;
         state.featureCode = action.code;
         if (configuration.show !== false && wantsVisible) {
-          window!.show();
-          window!.focus();
+          if (desktop?.inputBlocked) window!.showInactive();
+          else {
+            window!.show();
+            window!.focus();
+          }
           shown = true;
           visible = true;
         }
@@ -942,8 +1071,11 @@ export async function startUToolsRunner(): Promise<void> {
           entered = true;
           state.featureCode = value.code;
           if (configuration.show !== false && wantsVisible) {
-            window!.show();
-            window!.focus();
+            if (desktop?.inputBlocked) window!.showInactive();
+            else {
+              window!.show();
+              window!.focus();
+            }
             shown = true;
             visible = true;
           }

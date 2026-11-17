@@ -445,119 +445,142 @@ async function copyAllowlist(source, destination, metadata) {
   }
 }
 async function copyBusinessRenderer(packageRoot, source, metadata) {
-  const hostRenderer = path.resolve(
-      project,
-      buildOptions.renderer
-        ? path.join(buildOptions.renderer, metadata.spark233.id)
-        : path.join(
-            "local-build/plugin-renderers",
-            createHash("sha256").update(output).digest("hex").slice(0, 12),
-            metadata.spark233.id,
+  // A local build must never read a concurrent build's renderer output, even
+  // when both packages keep the same release version and output directory.
+  const temporaryRoot = await fs.realpath(os.tmpdir());
+  const developmentRenderer =
+    metadata.spark233.development && !buildOptions.renderer
+      ? await fs.mkdtemp(
+          path.join(
+            temporaryRoot,
+            `spark233-dev-renderer-${metadata.spark233.development.buildId}-`,
           ),
-    ),
-    hostAssets = path.join(hostRenderer, "assets");
-  if (!buildOptions.renderer) {
-    const require = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
-    const { build } = await import(pathToFileURL(require.resolve("vite")).href);
-    await build({
-      configFile: path.join(project, "apps/desktop/vite.config.ts"),
-      root: path.join(source, "renderer"),
-      plugins: [
-        {
-          name: "plugin-renderer-owner",
-          generateBundle() {
-            const modules = [...this.getModuleIds()].map((id) => id.replaceAll("\\", "/"));
-            if (
-              modules.some(
-                (id) =>
-                  id.endsWith("/src/features/launcher/Launcher.tsx") || id.endsWith("/src/App.tsx"),
+        )
+      : undefined;
+  if (developmentRenderer && path.dirname(await fs.realpath(developmentRenderer)) !== temporaryRoot)
+    throw new Error("Development renderer staging escaped its temporary directory");
+  try {
+    const hostRenderer = path.resolve(
+        project,
+        buildOptions.renderer
+          ? path.join(buildOptions.renderer, metadata.spark233.id)
+          : developmentRenderer
+            ? path.join(developmentRenderer, metadata.spark233.id)
+            : path.join(
+                "local-build/plugin-renderers",
+                createHash("sha256").update(output).digest("hex").slice(0, 12),
+                metadata.spark233.id,
+              ),
+      ),
+      hostAssets = path.join(hostRenderer, "assets");
+    if (!buildOptions.renderer) {
+      const require = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
+      const { build } = await import(pathToFileURL(require.resolve("vite")).href);
+      await build({
+        configFile: path.join(project, "apps/desktop/vite.config.ts"),
+        root: path.join(source, "renderer"),
+        plugins: [
+          {
+            name: "plugin-renderer-owner",
+            generateBundle() {
+              const modules = [...this.getModuleIds()].map((id) => id.replaceAll("\\", "/"));
+              if (
+                modules.some(
+                  (id) =>
+                    id.endsWith("/src/features/launcher/Launcher.tsx") ||
+                    id.endsWith("/src/App.tsx"),
+                )
               )
-            )
-              throw new Error(
-                `Plugin renderer imports the host launcher/router: ${metadata.spark233.id}`,
-              );
-            this.emitFile({
-              type: "asset",
-              fileName: "spark233-renderer.json",
-              source: JSON.stringify({
-                version: 1,
-                pluginId: metadata.spark233.id,
-                launcherIncluded: false,
-                moduleCount: modules.length,
-              }),
-            });
+                throw new Error(
+                  `Plugin renderer imports the host launcher/router: ${metadata.spark233.id}`,
+                );
+              this.emitFile({
+                type: "asset",
+                fileName: "spark233-renderer.json",
+                source: JSON.stringify({
+                  version: 1,
+                  pluginId: metadata.spark233.id,
+                  launcherIncluded: false,
+                  moduleCount: modules.length,
+                }),
+              });
+            },
           },
+        ],
+        publicDir: false,
+        build: {
+          outDir: hostRenderer,
+          emptyOutDir: true,
+          rolldownOptions: { input: path.join(source, "renderer/index.html") },
         },
-      ],
-      publicDir: false,
-      build: {
-        outDir: hostRenderer,
-        emptyOutDir: true,
-        rolldownOptions: { input: path.join(source, "renderer/index.html") },
-      },
-    });
-  }
-  const uiPackage = JSON.parse(
-    await fs.readFile(path.join(hostRenderer, "spark233-ui.json"), "utf8"),
-  );
-  const uiSourceHash = createHash("sha256")
-    .update(await fs.readFile(path.join(project, "packages/ui/src/components.ts")))
-    .digest("hex");
-  if (
-    uiPackage.name !== uiMetadata.name ||
-    uiPackage.version !== uiMetadata.version ||
-    JSON.stringify(uiPackage.compatibility) !== JSON.stringify(uiMetadata.spark233Ui) ||
-    uiPackage.componentsEntry !== "@spark233/ui/components" ||
-    uiPackage.componentSourceSha256 !== uiSourceHash
-  )
-    throw new Error("Build the current versioned UI renderer before assembling official packages");
-  const assets = await fs.readdir(hostAssets, { withFileTypes: true });
-  const fonts = [
-    { name: "HarmonyOS_Sans_SC.ttf", pattern: /^HarmonyOS_Sans_SC(?:-[a-z0-9_-]+)?\.ttf$/i },
-    {
-      name: "SourceHanSerifSC-Regular.woff2",
-      pattern: /^SourceHanSerifSC-Regular(?:-[a-z0-9_-]+)?\.woff2$/i,
-    },
-  ].map((font) => {
-    const matches = assets.filter((asset) => font.pattern.test(asset.name));
-    if (matches.length !== 1 || !matches[0].isFile())
+      });
+    }
+    const uiPackage = JSON.parse(
+      await fs.readFile(path.join(hostRenderer, "spark233-ui.json"), "utf8"),
+    );
+    const uiSourceHash = createHash("sha256")
+      .update(await fs.readFile(path.join(project, "packages/ui/src/components.ts")))
+      .digest("hex");
+    if (
+      uiPackage.name !== uiMetadata.name ||
+      uiPackage.version !== uiMetadata.version ||
+      JSON.stringify(uiPackage.compatibility) !== JSON.stringify(uiMetadata.spark233Ui) ||
+      uiPackage.componentsEntry !== "@spark233/ui/components" ||
+      uiPackage.componentSourceSha256 !== uiSourceHash
+    )
       throw new Error(
-        `Build the host renderer with external shared fonts first: missing ${font.name}`,
+        "Build the current versioned UI renderer before assembling official packages",
       );
-    return { ...font, file: matches[0].name, url: `spark233://shared/ui/v1/${font.name}` };
-  });
-  const target = path.join(packageRoot, "renderer"),
-    privateWebOrigin = ["spark233.traffic", "spark233.quicklinks"].includes(metadata.spark233.id),
-    fontFiles = new Set(privateWebOrigin ? [] : fonts.map((font) => font.file));
-  await fs.cp(hostRenderer, target, {
-    recursive: true,
-    filter: (filename) => !fontFiles.has(path.basename(filename)),
-  });
-  for (const entry of await fs.readdir(target, { recursive: true, withFileTypes: true })) {
-    const filename = path.join(entry.parentPath, entry.name);
-    if (entry.isSymbolicLink()) throw new Error(`Renderer resource is a symlink: ${entry.name}`);
-    if (!entry.isFile() || !/\.(?:html|css|m?js|json|svg)$/i.test(entry.name)) continue;
-    const previous = await fs.readFile(filename, "utf8");
-    let content = previous;
-    for (const font of privateWebOrigin ? [] : fonts)
-      content = content.replace(
-        new RegExp(`(?:\\.\\.?/assets/|/assets/|assets/|\\./)?${RegExp.escape(font.file)}`, "g"),
-        font.url,
-      );
-    if (content !== previous) await fs.writeFile(filename, content);
+    const assets = await fs.readdir(hostAssets, { withFileTypes: true });
+    const fonts = [
+      { name: "HarmonyOS_Sans_SC.ttf", pattern: /^HarmonyOS_Sans_SC(?:-[a-z0-9_-]+)?\.ttf$/i },
+      {
+        name: "SourceHanSerifSC-Regular.woff2",
+        pattern: /^SourceHanSerifSC-Regular(?:-[a-z0-9_-]+)?\.woff2$/i,
+      },
+    ].map((font) => {
+      const matches = assets.filter((asset) => font.pattern.test(asset.name));
+      if (matches.length !== 1 || !matches[0].isFile())
+        throw new Error(
+          `Build the host renderer with external shared fonts first: missing ${font.name}`,
+        );
+      return { ...font, file: matches[0].name, url: `spark233://shared/ui/v1/${font.name}` };
+    });
+    const target = path.join(packageRoot, "renderer"),
+      privateWebOrigin = ["spark233.traffic", "spark233.quicklinks"].includes(metadata.spark233.id),
+      fontFiles = new Set(privateWebOrigin ? [] : fonts.map((font) => font.file));
+    await fs.cp(hostRenderer, target, {
+      recursive: true,
+      filter: (filename) => !fontFiles.has(path.basename(filename)),
+    });
+    for (const entry of await fs.readdir(target, { recursive: true, withFileTypes: true })) {
+      const filename = path.join(entry.parentPath, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`Renderer resource is a symlink: ${entry.name}`);
+      if (!entry.isFile() || !/\.(?:html|css|m?js|json|svg)$/i.test(entry.name)) continue;
+      const previous = await fs.readFile(filename, "utf8");
+      let content = previous;
+      for (const font of privateWebOrigin ? [] : fonts)
+        content = content.replace(
+          new RegExp(`(?:\\.\\.?/assets/|/assets/|assets/|\\./)?${RegExp.escape(font.file)}`, "g"),
+          font.url,
+        );
+      if (content !== previous) await fs.writeFile(filename, content);
+    }
+    const sharedUi = {
+      version: 1,
+      uiPackage,
+      fonts: Object.fromEntries(
+        fonts.map((font) => [font.name, privateWebOrigin ? `./assets/${font.file}` : font.url]),
+      ),
+    };
+    await fs.writeFile(
+      path.join(target, "spark233-shared-ui.json"),
+      JSON.stringify(sharedUi, null, 2),
+    );
+    return sharedUi;
+  } finally {
+    if (developmentRenderer) await fs.rm(developmentRenderer, { recursive: true, force: true });
   }
-  const sharedUi = {
-    version: 1,
-    uiPackage,
-    fonts: Object.fromEntries(
-      fonts.map((font) => [font.name, privateWebOrigin ? `./assets/${font.file}` : font.url]),
-    ),
-  };
-  await fs.writeFile(
-    path.join(target, "spark233-shared-ui.json"),
-    JSON.stringify(sharedUi, null, 2),
-  );
-  return sharedUi;
 }
 const sha256 = (content) => createHash("sha256").update(content).digest("hex");
 const sha512Integrity = (content) =>
@@ -670,7 +693,27 @@ const release = {};
 const cleanup = [];
 let applicationSource = path.join(root, "applications");
 const devBuild = process.env.SPARK233_DEV_PLUGIN_BUILD;
-if (devBuild && !/^[0-9]{1,15}$/.test(devBuild)) throw new Error("Invalid development build id");
+if (devBuild && (devBuild.length > 64 || !/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(devBuild)))
+  throw new Error("Invalid development build id");
+let development;
+if (devBuild) {
+  let commit;
+  try {
+    const value = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: project,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (/^[a-f0-9]{40}$/.test(value)) commit = value;
+  } catch {
+    // Source archives may not contain Git metadata. The UTC build time remains available.
+  }
+  development = {
+    buildId: devBuild,
+    builtAt: new Date().toISOString(),
+    ...(commit ? { commit } : {}),
+  };
+}
 if (devBuild && process.env.SPARK233_DEV_PLUGIN_OUTPUT) {
   // A launcher reclaiming old generations must leave a concurrent publisher
   // alone, including its new archives before they appear in index.json.
@@ -687,12 +730,8 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   const source = path.join(root, entry.name);
   const metadata = JSON.parse(await fs.readFile(path.join(source, "package.json"), "utf8"));
   if (!metadata.spark233) continue;
-  if (devBuild) {
-    const parts = metadata.version.split(".");
-    if (parts.length !== 3 || parts.some((part) => !/^\d+$/.test(part)))
-      throw new Error(`Development build requires a stable version: ${metadata.name}`);
-    metadata.version = `${parts[0]}.${parts[1]}.${devBuild}`;
-  }
+  if (development) metadata.spark233.development = development;
+  else delete metadata.spark233.development;
   if (selectedIds && !selectedIds.has(metadata.spark233.id)) continue;
   if (!expectedIds.has(metadata.spark233.id))
     throw new Error(`Unexpected official plugin ${metadata.spark233.id}`);
@@ -720,7 +759,7 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
   let keepWork = false;
   try {
     const packageRoot = path.join(work, "package");
-    const filename = `${entry.name}-${metadata.version}.tgz`;
+    const filename = `${entry.name}-${metadata.version}${devBuild ? `-dev-${devBuild}` : ""}.tgz`;
     const archive = path.join(output, filename);
     let sharedUi;
     let fingerprint;
@@ -735,7 +774,8 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       if (
         packaged.name !== metadata.name ||
         packaged.version !== metadata.version ||
-        packaged.spark233?.id !== metadata.spark233.id
+        packaged.spark233?.id !== metadata.spark233.id ||
+        packaged.spark233?.development !== undefined
       )
         throw new Error(`Published package identity mismatch: ${metadata.name}`);
       fingerprint = packaged.spark233Build?.fingerprint;
@@ -789,6 +829,7 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       name: metadata.name,
       version: metadata.version,
       displayName: metadata.spark233.displayName,
+      ...(development ? { development } : {}),
       ...(iconFile
         ? {
             icon: `data:image/png;base64,${(await fs.readFile(iconFile)).toString("base64")}`,
@@ -807,6 +848,7 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       file: filename,
       fingerprint,
       source: fromRegistry ? "registry" : "build",
+      ...(development ? { development } : {}),
     };
     const files = [];
     for await (const name of fs.glob("**/*", { cwd: packageRoot })) {
@@ -819,6 +861,7 @@ for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       pluginId: metadata.spark233.id,
       version: metadata.version,
       archiveBytes: (await fs.stat(archive)).size,
+      ...(development ? { development } : {}),
       installedBytes: files.reduce((sum, file) => sum + file.bytes, 0),
       files,
       ...(sharedUi ? { sharedUi } : {}),

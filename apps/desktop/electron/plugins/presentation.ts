@@ -1,5 +1,5 @@
 import { nativeImage } from "electron";
-import { localizePluginManifest, type PluginTheme } from "@spark233/sdk";
+import { localizePluginManifest, pluginWindowPageEntry, type PluginTheme } from "@spark233/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { confined } from "../persistence.js";
@@ -24,6 +24,7 @@ export function pluginPresentation(
       ? manifest.ui!.windows![profile]
       : undefined;
   const icon = window?.icon ?? manifest.ui?.icon;
+  const pageEntry = window ? pluginWindowPageEntry(window) : undefined;
   const resource = theme
     ? (icon?.themes?.[theme.accent ?? "green"]?.[theme.effective] ?? icon)
     : icon;
@@ -53,11 +54,12 @@ export function pluginPresentation(
     shellIcon,
     iconData,
     root: installation.directory,
-    entry: window
+    pageEntry,
+    entry: pageEntry
       ? path
           .relative(
             path.join(installation.directory, "renderer"),
-            confined(installation.directory, window.entry),
+            confined(installation.directory, pageEntry),
           )
           .split(path.sep)
           .join("/")

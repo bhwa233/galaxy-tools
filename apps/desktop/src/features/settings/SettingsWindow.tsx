@@ -254,8 +254,9 @@ export function SettingsWindow() {
           setError(undefined);
         }
       });
-    writes.current = operation;
-    void operation
+    // Closing must await reconciliation too: once a refused patch is rolled
+    // back, its rejected request must not keep poisoning future close checks.
+    const settled = operation
       .catch(async (value) => {
         // Roll back every refused key the user has not edited again since, so one
         // rejected setting cannot keep failing every later save.
@@ -276,8 +277,9 @@ export function SettingsWindow() {
         if (mounted.current) setError(text(value));
       })
       .finally(() => {
-        if (mounted.current && writes.current === operation) setSaving(false);
+        if (mounted.current && writes.current === settled) setSaving(false);
       });
+    writes.current = settled;
   };
   const chooseMigration = async () => {
     try {
@@ -377,6 +379,11 @@ export function SettingsWindow() {
         </nav>
         <SettingsFooterHost>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-6">
+            {state?.maintenance && (
+              <Alert>
+                <AlertDescription>{t("shell.maintenance")}</AlertDescription>
+              </Alert>
+            )}
             {error && (
               <Alert variant="destructive">
                 <AlertDescription className="flex items-center justify-between gap-3">
@@ -396,177 +403,202 @@ export function SettingsWindow() {
                 </AlertDescription>
               </Alert>
             )}
-            {!config ? (
-              <p role="status" className="flex gap-2">
-                <Spinner />
-                {t("pluginConfig.loading")}
-              </p>
-            ) : (
-              <>
-                {page === "general" && (
-                  <>
-                    <h2 className="text-lg font-semibold">{t("settingsEditor.pages.general")}</h2>
-                    <SettingsPanel
-                      presentation="content"
-                      initialGroup="app"
+            <fieldset className="contents" disabled={state?.maintenance && page !== "diagnostics"}>
+              {!config ? (
+                <p role="status" className="flex gap-2">
+                  <Spinner />
+                  {t("pluginConfig.loading")}
+                </p>
+              ) : (
+                <>
+                  {page === "general" && (
+                    <>
+                      <h2 className="text-lg font-semibold">{t("settingsEditor.pages.general")}</h2>
+                      <SettingsPanel
+                        presentation="content"
+                        initialGroup="app"
+                        config={config}
+                        onChange={change}
+                        onClose={() => {}}
+                        onMigrateDataDir={() => {}}
+                      />
+                    </>
+                  )}
+                  {(page === "plugins" || page === "marketplace") && (
+                    <PluginManagementDialog
+                      key={page}
+                      embedded
+                      open
+                      mode={page === "plugins" ? "configuration" : "market"}
+                      onNavigate={navigate}
+                      pluginId={target.pluginId}
+                      initialTab={target.tab}
+                      initialState={pluginSnapshot}
+                      loadState={readPlugins}
+                      onOpenChange={() => {}}
+                    />
+                  )}
+                  {(page === "shortcuts" || page === "tray") && (
+                    <CommandSettings
+                      key={page + (target.pluginId ?? "")}
+                      kind={page}
                       config={config}
                       onChange={change}
-                      onClose={() => {}}
-                      onMigrateDataDir={() => {}}
+                      onSaved={setConfig}
+                      warnings={state?.warnings}
+                      pluginId={target.pluginId}
+                      initialState={pluginSnapshot}
+                      loadState={readPlugins}
                     />
-                  </>
-                )}
-                {(page === "plugins" || page === "marketplace") && (
-                  <PluginManagementDialog
-                    key={page}
-                    embedded
-                    open
-                    mode={page === "plugins" ? "configuration" : "market"}
-                    onNavigate={navigate}
-                    pluginId={target.pluginId}
-                    initialTab={target.tab}
-                    initialState={pluginSnapshot}
-                    loadState={readPlugins}
-                    onOpenChange={() => {}}
-                  />
-                )}
-                {(page === "shortcuts" || page === "tray") && (
-                  <CommandSettings
-                    key={page + (target.pluginId ?? "")}
-                    kind={page}
-                    config={config}
-                    onChange={change}
-                    onSaved={setConfig}
-                    warnings={state?.warnings}
-                    pluginId={target.pluginId}
-                    initialState={pluginSnapshot}
-                    loadState={readPlugins}
-                  />
-                )}
-                {page === "entries" && (
-                  <LauncherPreferencesDialog
-                    embedded
-                    open
-                    onOpenChange={() => {}}
-                    entries={state?.preferences ?? []}
-                    ready={!!state?.pluginsReady}
-                    learning={state?.learning}
-                    onLearningUpdate={async (input) => {
-                      const next = await updateLauncherLearning(input);
-                      setState(next);
-                      return next;
-                    }}
-                    onMutate={async (input) => {
-                      const next = await updateLauncherPreference(input);
-                      setState(next);
-                      return next;
-                    }}
-                  />
-                )}
-                {page === "desktop" && (
-                  <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
-                    <FieldSet>
-                      <FieldLegend>{t("settingsEditor.pages.desktop")}</FieldLegend>
-                      <FieldGroup>
-                        <Field orientation="horizontal" data-disabled={saving}>
-                          <Checkbox
-                            id="desktop-layer-enabled"
-                            checked={desktopPreferences.enabled}
-                            disabled={saving}
-                            onCheckedChange={(enabled) => change({ desktopLayer: { enabled } })}
-                          />
-                          <FieldContent>
-                            <FieldLabel htmlFor="desktop-layer-enabled">
-                              {t("desktopSettings.enabled")}
-                            </FieldLabel>
-                            <FieldDescription>
-                              {t("desktopSettings.enabledDescription")}
-                            </FieldDescription>
-                          </FieldContent>
-                        </Field>
-                        <Field
-                          orientation="horizontal"
-                          data-disabled={saving || !desktopPreferences.enabled}
-                        >
-                          <Checkbox
-                            id="desktop-layer-web"
-                            checked={desktopPreferences.webEnabled}
-                            disabled={saving || !desktopPreferences.enabled}
-                            onCheckedChange={(webEnabled) =>
-                              change({ desktopLayer: { ...config.desktopLayer, webEnabled } })
-                            }
-                          />
-                          <FieldContent>
-                            <FieldLabel htmlFor="desktop-layer-web">
-                              {t("desktopSettings.webEnabled")}
-                            </FieldLabel>
-                          </FieldContent>
-                        </Field>
-                        <Field
-                          orientation="horizontal"
-                          data-disabled={saving || !desktopPreferences.enabled}
-                        >
-                          <Checkbox
-                            id="desktop-layer-notes"
-                            checked={desktopPreferences.notesEnabled}
-                            disabled={saving || !desktopPreferences.enabled}
-                            onCheckedChange={(notesEnabled) =>
-                              change({ desktopLayer: { ...config.desktopLayer, notesEnabled } })
-                            }
-                          />
-                          <FieldContent>
-                            <FieldLabel htmlFor="desktop-layer-notes">
-                              {t("desktopSettings.notesEnabled")}
-                            </FieldLabel>
-                            <FieldDescription>
-                              {t("desktopSettings.notesDescription")}
-                            </FieldDescription>
-                          </FieldContent>
-                        </Field>
-                      </FieldGroup>
-                    </FieldSet>
-                    <DesktopWidgetManager
-                      enabled={desktopPreferences.enabled}
-                      webEnabled={desktopPreferences.webEnabled}
+                  )}
+                  {page === "entries" && (
+                    <LauncherPreferencesDialog
+                      embedded
+                      open
+                      onOpenChange={() => {}}
+                      entries={state?.preferences ?? []}
+                      ready={!!state?.pluginsReady}
+                      learning={state?.learning}
+                      onLearningUpdate={async (input) => {
+                        const next = await updateLauncherLearning(input);
+                        setState(next);
+                        return next;
+                      }}
+                      onMutate={async (input) => {
+                        const next = await updateLauncherPreference(input);
+                        setState(next);
+                        return next;
+                      }}
                     />
-                  </div>
-                )}
-                {page === "backup" && (
-                  <>
-                    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-4">
-                      <div className="min-w-0 flex-1">
-                        <h2 className="text-sm font-medium">{t("settings.dataDir")}</h2>
-                        <p className="break-all text-xs text-muted-foreground">{config.dataDir}</p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        disabled={migrating}
-                        onClick={() => {
-                          void chooseMigration();
-                        }}
-                      >
-                        {t("settings.selectFolder")}
-                      </Button>
+                  )}
+                  {page === "desktop" && (
+                    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
+                      <FieldSet>
+                        <FieldLegend>{t("settingsEditor.pages.desktop")}</FieldLegend>
+                        <FieldGroup>
+                          <Field orientation="horizontal" data-disabled={saving}>
+                            <Checkbox
+                              id="desktop-layer-enabled"
+                              checked={desktopPreferences.enabled}
+                              disabled={saving}
+                              onCheckedChange={(enabled) => change({ desktopLayer: { enabled } })}
+                            />
+                            <FieldContent>
+                              <FieldLabel htmlFor="desktop-layer-enabled">
+                                {t("desktopSettings.enabled")}
+                              </FieldLabel>
+                              <FieldDescription>
+                                {t("desktopSettings.enabledDescription")}
+                              </FieldDescription>
+                            </FieldContent>
+                          </Field>
+                          <Field
+                            orientation="horizontal"
+                            data-disabled={saving || !desktopPreferences.enabled}
+                          >
+                            <Checkbox
+                              id="desktop-top-trigger"
+                              checked={desktopPreferences.topTriggerEnabled}
+                              disabled={saving || !desktopPreferences.enabled}
+                              onCheckedChange={(topTriggerEnabled) =>
+                                change({ desktopLayer: { topTriggerEnabled } })
+                              }
+                            />
+                            <FieldContent>
+                              <FieldLabel htmlFor="desktop-top-trigger">
+                                {t("desktopSettings.topTriggerEnabled")}
+                              </FieldLabel>
+                              <FieldDescription>
+                                {t("desktopSettings.topTriggerDescription")}
+                              </FieldDescription>
+                            </FieldContent>
+                          </Field>
+                          <Field
+                            orientation="horizontal"
+                            data-disabled={saving || !desktopPreferences.enabled}
+                          >
+                            <Checkbox
+                              id="desktop-layer-web"
+                              checked={desktopPreferences.webEnabled}
+                              disabled={saving || !desktopPreferences.enabled}
+                              onCheckedChange={(webEnabled) =>
+                                change({ desktopLayer: { ...config.desktopLayer, webEnabled } })
+                              }
+                            />
+                            <FieldContent>
+                              <FieldLabel htmlFor="desktop-layer-web">
+                                {t("desktopSettings.webEnabled")}
+                              </FieldLabel>
+                            </FieldContent>
+                          </Field>
+                          <Field
+                            orientation="horizontal"
+                            data-disabled={saving || !desktopPreferences.enabled}
+                          >
+                            <Checkbox
+                              id="desktop-layer-notes"
+                              checked={desktopPreferences.notesEnabled}
+                              disabled={saving || !desktopPreferences.enabled}
+                              onCheckedChange={(notesEnabled) =>
+                                change({ desktopLayer: { ...config.desktopLayer, notesEnabled } })
+                              }
+                            />
+                            <FieldContent>
+                              <FieldLabel htmlFor="desktop-layer-notes">
+                                {t("desktopSettings.notesEnabled")}
+                              </FieldLabel>
+                              <FieldDescription>
+                                {t("desktopSettings.notesDescription")}
+                              </FieldDescription>
+                            </FieldContent>
+                          </Field>
+                        </FieldGroup>
+                      </FieldSet>
+                      <DesktopWidgetManager
+                        enabled={desktopPreferences.enabled}
+                        webEnabled={desktopPreferences.webEnabled}
+                      />
                     </div>
-                    <BackupDialog embedded open onOpenChange={() => {}} />
-                  </>
-                )}
-                {page === "diagnostics" && (
-                  <DiagnosticsDialog embedded open onOpenChange={() => {}} />
-                )}
-                {(page === "general" || page === "tray" || page === "desktop") && (
-                  <SettingsFooter
-                    status={
-                      saving
-                        ? t("launcher.preferences.saving")
-                        : hasPending
-                          ? t("settingsEditor.unsaved")
-                          : t("settingsEditor.saved")
-                    }
-                  />
-                )}
-              </>
-            )}
+                  )}
+                  {page === "backup" && (
+                    <>
+                      <div className="flex flex-wrap items-center gap-3 rounded-lg border p-4">
+                        <div className="min-w-0 flex-1">
+                          <h2 className="text-sm font-medium">{t("settings.dataDir")}</h2>
+                          <p className="break-all text-xs text-muted-foreground">
+                            {config.dataDir}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          disabled={migrating}
+                          onClick={() => {
+                            void chooseMigration();
+                          }}
+                        >
+                          {t("settings.selectFolder")}
+                        </Button>
+                      </div>
+                      <BackupDialog embedded open onOpenChange={() => {}} />
+                    </>
+                  )}
+                  {page === "diagnostics" && (
+                    <DiagnosticsDialog embedded open onOpenChange={() => {}} />
+                  )}
+                  {(page === "general" || page === "tray" || page === "desktop") && (
+                    <SettingsFooter
+                      status={
+                        saving
+                          ? t("launcher.preferences.saving")
+                          : hasPending
+                            ? t("settingsEditor.unsaved")
+                            : t("settingsEditor.saved")
+                      }
+                    />
+                  )}
+                </>
+              )}
+            </fieldset>
           </div>
         </SettingsFooterHost>
       </div>

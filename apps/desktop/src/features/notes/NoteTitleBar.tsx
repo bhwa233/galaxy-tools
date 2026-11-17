@@ -9,6 +9,7 @@ import { useWindowMode } from "../windows/useWindowMode";
 import { closeCurrentWindow } from "../windows/controls";
 import { showToast } from "../../components/Toast";
 import { getErrorMessage } from "../../platform/errors";
+import { invoke } from "../../platform/desktop";
 
 type Props = Pick<
   NoteSession,
@@ -52,6 +53,15 @@ export const NoteTitleBar = memo(function NoteTitleBar({
       title={windowInfo?.title ?? t("main.window.manager")}
       locale={i18n.resolvedLanguage ?? "zh-CN"}
       mode={windowMode.mode}
+      collapsed={windowInfo ? false : undefined}
+      nativeMenus={
+        windowInfo
+          ? {
+              mode: () => void invoke("window_control", { action: "menu" }).catch(report),
+              more: () => void invoke("window_control", { action: "menu" }).catch(report),
+            }
+          : undefined
+      }
       onModeChange={
         windowMode.onModeChange && ((next) => void windowMode.onModeChange!(next).catch(report))
       }

@@ -4,6 +4,7 @@ import os from "node:os";
 import { expect, it, vi } from "vitest";
 import { pluginPackageSchema, parseDeclarativeTemplate, parseWidgetData } from "@spark233/sdk";
 import { WidgetOpenMainGate } from "./widget-open-main.js";
+import { pluginWindowCatalog } from "../host/plugin-window-catalog.js";
 import {
   resolvePluginEntries,
   validatePluginMetadata,
@@ -29,6 +30,71 @@ const declaration = () => ({
       windows: { main: { entry: "index.html" } },
     },
   },
+});
+
+it("keeps window opt-in and restricted widget permissions across legacy and unified declarations", () => {
+  const raw = declaration();
+  const metadata = {
+    ...raw,
+    spark233: {
+      ...raw.spark233,
+      api: "^1.8.0",
+      ui: {
+        ...raw.spark233.ui,
+        windows: {
+          ...raw.spark233.ui.windows,
+          hud: {
+            chrome: "none",
+            cardDesktop: true,
+            content: {
+              kind: "declarative",
+              title: "Speed",
+              template: "widgets/hud.json",
+              size: { width: 110, height: 52 },
+            },
+          },
+        },
+      },
+    },
+  };
+  const environment = { ...defaultHostEnvironment("0.1.7"), platform: "win32", arch: "x64" };
+  const parsed = validatePluginMetadata(metadata, environment);
+  const windows = pluginWindowCatalog(parsed.spark233);
+  expect(windows.find((window) => window.windowId === "main")?.cardDesktop).toBe(false);
+  expect(windows.find((window) => window.windowId === "hud")).toMatchObject({
+    bridge: "widget",
+    chrome: "none",
+    cardDesktop: true,
+    size: { width: 110, height: 52 },
+  });
+  expect(() =>
+    validatePluginMetadata(
+      {
+        ...metadata,
+        spark233: {
+          ...metadata.spark233,
+          api: "^1.7.0",
+        },
+      },
+      environment,
+    ),
+  ).toThrow(/1.8.0/);
+  for (const invalid of [
+    { entry: "index.html", purpose: "dialog", cardDesktop: true },
+    { entry: "index.html", titleBar: "custom", chrome: "none" },
+    { entry: "index.html", content: { kind: "page", entry: "other.html" } },
+    { content: { kind: "page", entry: "../outside.html" } },
+    { entry: "index.html", maxSize: { width: 400, height: 300 } },
+  ])
+    expect(
+      pluginPackageSchema.safeParse({
+        ...metadata,
+        spark233: {
+          ...metadata.spark233,
+          ui: { ...metadata.spark233.ui, windows: { main: invalid } },
+        },
+      }).success,
+    ).toBe(false);
 });
 
 it("rejects custom title bars whose API range includes hosts without sandboxed window controls", () => {

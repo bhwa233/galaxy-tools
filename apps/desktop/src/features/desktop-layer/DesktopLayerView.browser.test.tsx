@@ -165,7 +165,7 @@ it("coalesces slow pointer replies, retires queued moves at gesture boundaries a
 it("keeps the traffic HUD width stable and its natural height balanced without clipping long rates", async () => {
   // A fixed outer height left extra empty space below the two rate rows.
   const template = parseDeclarativeTemplate(hud);
-  const { width } = trafficPackage.spark233.ui.widgets.hud.size;
+  const { width } = trafficPackage.spark233.ui.windows.hud.content.size;
   const onContentHeight = () => {};
   const content = (tx: string, rx: string) => (
     <div style={{ width }}>

@@ -16,6 +16,9 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { unifiedWindowControl, onUnifiedWindowState } from "../host/plugin-window-adapters.js";
+import { effectiveWindowCapabilities, windowBindingSchema } from "@spark233/sdk";
+import { routePluginWindow, windowOpenContext } from "../host/plugin-window-routing.js";
 import {
   localizePluginManifest,
   pluginCapabilitySchema,
@@ -29,6 +32,7 @@ import {
   type PluginWebContext,
   type PluginWebEvent,
   type PluginWindowStopReason,
+  type WindowBinding,
 } from "@spark233/sdk";
 import { atomicWrite, canonical, confined, inside } from "../persistence.js";
 import { bindDevToolsShortcut } from "../host/windows.js";
@@ -75,6 +79,14 @@ export interface PluginWebCapabilityRequest {
   signal: AbortSignal;
 }
 export interface WebPluginOptions {
+  /** Host-owned transient routing; the source is this controller's own carrier. */
+  openTransientWindow?: (
+    binding: WindowBinding,
+    action: "open" | "create",
+    parent: BrowserWindow,
+  ) => Promise<boolean>;
+  windowInstanceId?: string;
+  onWindowAttach?: (instanceId: string, window: BrowserWindow) => () => void;
   windowProfile?: string;
   getLocale?: () => string;
   scope: PluginResourceScope;
@@ -252,12 +264,25 @@ class WebRuntime implements WebPluginController {
       const next = operation.slice(5);
       if (next !== "normal" && next !== "topmost" && next !== "desktop")
         throw new Error("Unknown window mode");
+      const unified = unifiedWindowControl(window);
+      if (unified) {
+        if (next === "desktop" || !unified.state().capabilities.topmost)
+          throw new Error("Window mode is unavailable in this environment");
+        unified.setAlwaysOnTop(next === "topmost");
+        this.publishShell();
+        return;
+      }
       return this.setMode(next);
     }
     switch (operation) {
       case "state":
         return this.shellState();
       case "menu:mode": {
+        const unified = unifiedWindowControl(window);
+        if (unified) {
+          unified.menu(anchor);
+          return;
+        }
         // Native menus: DOM popups of the shell page would sit under the plugin view.
         const choose = (next: WindowMode) => void this.setMode(next).catch(report);
         const item = (mode: WindowMode, zh: string, en: string) => ({
@@ -274,6 +299,11 @@ class WebRuntime implements WebPluginController {
         return undefined;
       }
       case "menu:more": {
+        const unified = unifiedWindowControl(window);
+        if (unified) {
+          unified.menu(anchor);
+          return;
+        }
         const modes = this.modes;
         Menu.buildFromTemplate([
           ...(modes?.onDesktop
@@ -302,6 +332,7 @@ class WebRuntime implements WebPluginController {
         await this.modes?.setLocked(operation === "lock:on");
         return undefined;
       case "minimize":
+        if (unifiedWindowControl(window)?.state().capabilities.minimizable === false) return;
         window.minimize();
         return undefined;
       case "toggleMaximize":
@@ -310,6 +341,7 @@ class WebRuntime implements WebPluginController {
         else window.maximize();
         return undefined;
       case "close":
+        if (unifiedWindowControl(window)) return unifiedWindowControl(window)!.close();
         // On the desktop, close means "remove from desktop"; the page stays alive.
         if (this.mode === "desktop") {
           await this.modes?.removeFromDesktop();
@@ -382,13 +414,21 @@ class WebRuntime implements WebPluginController {
     const window = this.currentWindow;
     const presentation = this.presentation();
     return {
+      chrome: presentation.window?.chrome ?? "host",
       title: presentation.window?.title ?? presentation.manifest.displayName,
       maximized: !!window && !window.isDestroyed() && window.isMaximized(),
       maximizable: presentation.window?.maximizable ?? true,
+      minimizable: presentation.window?.minimizable ?? true,
       locale: this.options.getLocale?.() ?? "zh-CN",
       theme: this.options.getTheme(),
       ...(this.modes?.state() ?? { mode: "normal" as const, desktopAvailable: false }),
-      desktopAvailable: !!this.options.desktop,
+      ...(window && unifiedWindowControl(window)?.state().environment === "card-desktop"
+        ? {
+            mode: "desktop" as const,
+            desktopAvailable: false,
+          }
+        : {}),
+      desktopAvailable: !this.options.windowInstanceId && !!this.options.desktop,
       ...this.status,
       barCollapsed: this.barCollapsed(),
     };
@@ -398,6 +438,7 @@ class WebRuntime implements WebPluginController {
    * card. Hovering the strip (unless locked), focus or an open menu unfolds it.
    */
   private barCollapsed(): boolean {
+    if (this.options.windowInstanceId) return false;
     const window = this.currentWindow;
     if (!window || window.isDestroyed() || this.mode !== "desktop") return false;
     if (window.isFocused() || this.menuOpen) return false;
@@ -462,7 +503,12 @@ class WebRuntime implements WebPluginController {
     const view = this.currentView;
     if (!window || window.isDestroyed() || !view) return;
     const [width, height] = window.getContentSize();
-    const top = this.barCollapsed() ? SHELL_STRIP_HEIGHT : SHELL_BAR_HEIGHT;
+    const top =
+      this.presentation().window?.chrome === "none"
+        ? 0
+        : this.barCollapsed()
+          ? SHELL_STRIP_HEIGHT
+          : SHELL_BAR_HEIGHT;
     view.setBounds({ x: 0, y: top, width, height: Math.max(1, height - top) });
   }
   private context(): PluginWebContext {
@@ -615,6 +661,11 @@ class WebRuntime implements WebPluginController {
         z.undefined().parse(request.payload);
         if (request.operation === "window.isMaximized") return window.isMaximized();
         if (request.operation === "window.minimize") {
+          if (
+            !window.isMinimizable() ||
+            unifiedWindowControl(window)?.state().capabilities.minimizable === false
+          )
+            throw new Error("This window cannot be minimized in its current environment");
           window.minimize();
           return undefined;
         }
@@ -643,9 +694,90 @@ class WebRuntime implements WebPluginController {
         this.publishShell();
         return undefined;
       }
+      case "window.setAlwaysOnTop": {
+        const value = z.boolean().parse(request.payload);
+        const control = unifiedWindowControl(window);
+        if (control) control.setAlwaysOnTop(value);
+        else window.setAlwaysOnTop(value);
+        return undefined;
+      }
+      case "window.state": {
+        z.undefined().parse(request.payload);
+        const declaration = this.presentation().window ?? {};
+        const state = unifiedWindowControl(window)?.state() ?? {
+          environment: "desktop",
+          chrome: declaration.chrome ?? "host",
+          capabilities: effectiveWindowCapabilities(declaration, "desktop"),
+        };
+        return { ...state, capabilities: { ...state.capabilities } };
+      }
+      case "window.addToCardDesktop":
+      case "window.openIndependent": {
+        z.undefined().parse(request.payload);
+        const control = unifiedWindowControl(window);
+        if (!control) throw new Error("This window has no persistent host identity");
+        await control.open(
+          request.operation === "window.addToCardDesktop" ? "card-desktop" : "desktop",
+        );
+        return undefined;
+      }
+      case "windows.open": {
+        const target = z
+          .strictObject({ binding: windowBindingSchema, action: z.enum(["open", "create"]) })
+          .parse(request.payload);
+        const definition = this.options.manifest.ui?.windows?.[target.binding.windowId];
+        if (!definition) throw new Error("Target window is not declared by this plugin");
+        await windowOpenContext.run(
+          {
+            environment: unifiedWindowControl(window)?.state().environment ?? "desktop",
+            assertActive: () => {
+              if (
+                this.currentWindow !== window ||
+                window.isDestroyed() ||
+                this.disposed ||
+                !this.options.scope.accepts(this.owner)
+              )
+                throw new Error("Window source is no longer active");
+            },
+          },
+          async () => {
+            if (await this.options.openTransientWindow?.(target.binding, target.action, window))
+              return;
+            if (!(await routePluginWindow(this.owner.pluginId, target.binding, target.action)))
+              throw new Error("Window router is unavailable");
+          },
+        );
+        return undefined;
+      }
+      case "window.showMenu": {
+        const anchor = z
+          .strictObject({
+            x: z.number().int().nonnegative(),
+            y: z.number().int().nonnegative(),
+          })
+          .optional()
+          .parse(request.payload);
+        const [width, height] = window.getContentSize();
+        if (anchor && (anchor.x > width || anchor.y > height))
+          throw new Error("Menu anchor is outside its own window");
+        const unified = unifiedWindowControl(window);
+        if (unified) unified.menu(anchor);
+        else {
+          Menu.buildFromTemplate([
+            {
+              label: (this.options.getLocale?.() ?? "zh-CN").startsWith("en") ? "Close" : "关闭",
+              click: () => window.close(),
+            },
+          ]).popup({ window, ...anchor });
+        }
+        return undefined;
+      }
       case "window.close": {
-        const decision = await this.prepareStop("window-close");
-        if (!decision.ok) throw new Error(decision.reason);
+        const unified = unifiedWindowControl(window);
+        if (unified) {
+          await unified.close();
+          return undefined;
+        }
         setImmediate(() => {
           if (this.currentWindow === window) this.destroyWindow();
         });
@@ -667,13 +799,22 @@ class WebRuntime implements WebPluginController {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const result = await Promise.race([
-            this.options.capabilityBroker({
-              owner: { ...this.owner },
-              capability: data.capability,
-              operation: data.operation,
-              payload: data.payload,
-              signal: controller.signal,
-            }),
+            windowOpenContext.run(
+              {
+                environment: unifiedWindowControl(window)?.state().environment ?? "desktop",
+                instanceId: this.options.windowInstanceId,
+                signal: controller.signal,
+                assertActive: () => controller.signal.throwIfAborted(),
+              },
+              () =>
+                this.options.capabilityBroker!({
+                  owner: { ...this.owner },
+                  capability: data.capability,
+                  operation: data.operation,
+                  payload: data.payload,
+                  signal: controller.signal,
+                }),
+            ),
             new Promise<never>((_, reject) => {
               timer = setTimeout(
                 () => {
@@ -713,6 +854,7 @@ class WebRuntime implements WebPluginController {
     }
   }
   private async open(): Promise<BrowserWindow> {
+    windowOpenContext.getStore()?.assertActive?.();
     if (this.disposed || this.options.scope.state !== "active")
       throw new Error("Plugin window scope is not active");
     if (this.currentWindow && !this.currentWindow.isDestroyed()) return this.currentWindow;
@@ -770,16 +912,19 @@ class WebRuntime implements WebPluginController {
       });
       const declaration = this.presentation().window;
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-      // Every page gets the host status bar; titleBar "custom" is deprecated and ignored.
-      const bar = SHELL_BAR_HEIGHT;
+      // Legacy titleBar remains ignored; only the new per-window chrome hides it.
+      const bar = declaration?.chrome === "none" ? 0 : SHELL_BAR_HEIGHT;
       // The shell is a host page in the default session; the plugin never runs in it.
       const window = new BrowserWindow({
         width: Math.min(declaration?.size?.width ?? 900, area.width),
         height: Math.min((declaration?.size?.height ?? 620) + bar, area.height),
         minWidth: Math.min(declaration?.minSize?.width ?? 160, area.width),
         minHeight: Math.min((declaration?.minSize?.height ?? 60) + bar, area.height),
+        maxWidth: declaration?.maxSize?.width,
+        maxHeight: declaration?.maxSize ? declaration.maxSize.height + bar : undefined,
         resizable: declaration?.resizable ?? true,
         maximizable: declaration?.maximizable ?? true,
+        minimizable: declaration?.minimizable ?? true,
         skipTaskbar: declaration?.taskbar === false,
         frame: false,
         show: false,
@@ -812,6 +957,15 @@ class WebRuntime implements WebPluginController {
       window.contentView.addChildView(view);
       this.currentWindow = window;
       this.currentView = view;
+      onUnifiedWindowState(window, () => {
+        this.publishShell();
+        const state = unifiedWindowControl(window)?.state();
+        if (state) this.send({ type: "window-state", owner: this.owner, state });
+      });
+      if (this.options.windowInstanceId && this.options.onWindowAttach) {
+        const release = this.options.onWindowAttach(this.options.windowInstanceId, window);
+        window.once("closed", release);
+      }
       const page = view.webContents;
       bindDevToolsShortcut(window, { isolatedSession: true, contents: page });
       this.applyWindowIdentity();
@@ -830,14 +984,14 @@ class WebRuntime implements WebPluginController {
       window.on("resize", () => this.layout());
       this.modes = new WindowModeController({
         window,
-        desktop: this.options.desktop,
+        desktop: this.options.windowInstanceId ? undefined : this.options.desktop,
         pluginId: this.owner.pluginId,
         profile: this.profile(),
         title: () => this.shellState().title,
         taskbar: () => this.presentation().window?.taskbar !== false,
         desktopMinSize: (() => {
           const size = this.presentation().window?.desktopMinSize;
-          return size && { width: size.width, height: size.height + SHELL_BAR_HEIGHT };
+          return size && { width: size.width, height: size.height + bar };
         })(),
         onChange: () => this.refreshBar(),
       });
@@ -869,6 +1023,7 @@ class WebRuntime implements WebPluginController {
       page.ipc.handle(CHANNEL, (event, value: unknown) => this.request(window, event, value));
       window.on("close", (event) => {
         event.preventDefault();
+        if (unifiedWindowControl(window)) return;
         // Closing a desktop card (e.g. Alt+F4) removes it from the desktop only.
         if (this.mode === "desktop") {
           void this.modes
@@ -876,9 +1031,7 @@ class WebRuntime implements WebPluginController {
             .catch((error) => console.error("plugin-window-unpin", error));
           return;
         }
-        void this.prepareStop("window-close").then((decision) => {
-          if (decision.ok && this.currentWindow === window) this.destroyWindow();
-        });
+        if (this.currentWindow === window) this.destroyWindow();
       });
       window.once("closed", () => {
         if (this.currentWindow === window) this.destroyWindow();
@@ -920,6 +1073,7 @@ class WebRuntime implements WebPluginController {
     });
   }
   async activate(activation: PluginActivation): Promise<JsonValue | undefined> {
+    windowOpenContext.getStore()?.assertActive?.();
     if (this.disposed || this.options.scope.state !== "active")
       throw new Error("Plugin is not accepting activation");
     if (
@@ -932,6 +1086,7 @@ class WebRuntime implements WebPluginController {
     this.activationId = randomUUID();
     this.saveApproved = false;
     const window = await this.open();
+    windowOpenContext.getStore()?.assertActive?.();
     if (existing)
       this.send({
         type: "activation",
@@ -1071,7 +1226,7 @@ class WebRuntime implements WebPluginController {
     if (view && !view.webContents.isDestroyed()) {
       view.webContents.ipc.removeHandler(CHANNEL);
       // A view's page is not destroyed with its window; close it explicitly.
-      view.webContents.close();
+      view.webContents.close({ waitForBeforeUnload: false });
     }
     if (window && !window.isDestroyed()) {
       window.webContents.ipc.removeHandler(SHELL_CHANNEL);
@@ -1085,8 +1240,6 @@ class WebRuntime implements WebPluginController {
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    if (this.currentWindow && !this.saveApproved)
-      throw new Error("Plugin page requires successful save confirmation before release");
     this.disposed = true;
     this.destroyWindow();
     await this.cleanup;

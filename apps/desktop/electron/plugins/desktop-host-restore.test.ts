@@ -227,7 +227,10 @@ test("development bundled updates replace code while preserving plugin data", as
   const source = path.join(root, "source", "package");
   fs.mkdirSync(bundle, { recursive: true });
   fs.mkdirSync(source, { recursive: true });
-  const makePackage = async (version: string, hostRange = "^1.2.0") => {
+  let saveFailure: "refused" | "timeout" | undefined;
+  const running = new Map<string, string>();
+  const makePackage = async (version: string, hostRange = "^1.2.0", buildId?: string) => {
+    const development = buildId ? { buildId, builtAt: "2026-11-12T00:00:00.000Z" } : undefined;
     fs.writeFileSync(
       path.join(source, "package.json"),
       JSON.stringify({
@@ -237,18 +240,20 @@ test("development bundled updates replace code while preserving plugin data", as
           schemaVersion: 1,
           id: "spark233.search",
           displayName: "Search",
+          ...(development ? { development } : {}),
           api: "^1.2.0",
           host: hostRange,
           platforms: [process.platform],
           architectures: [process.arch],
           entry: "index.html",
           capabilities: [],
+          activation: "on-startup",
           commands: [{ id: "open", title: "Open" }],
         },
       }),
     );
-    fs.writeFileSync(path.join(source, "index.html"), `<p>${version}</p>`);
-    const filename = `search-${version}.tgz`;
+    fs.writeFileSync(path.join(source, "index.html"), `<p>${version}:${buildId ?? "release"}</p>`);
+    const filename = `search-${version}${buildId ? `-dev-${buildId}` : ""}.tgz`;
     const archive = path.join(bundle, filename);
     await createTar({ cwd: path.dirname(source), file: archive, gzip: true }, ["package"]);
     const integrity = `sha512-${createHash("sha512").update(fs.readFileSync(archive)).digest("base64")}`;
@@ -261,6 +266,7 @@ test("development bundled updates replace code while preserving plugin data", as
             pluginId: "spark233.search",
             name: "@spark233/plugin-search",
             version,
+            ...(development ? { development } : {}),
             file: filename,
             integrity,
           },
@@ -275,7 +281,22 @@ test("development bundled updates replace code while preserving plugin data", as
       developmentBundledUpdates,
       hostVersion,
       getTheme: () => ({ version: "1.0.0", preference: "light", effective: "light" }),
-      createOfficialRuntime: async () => ({ activate: async () => undefined }),
+      createOfficialRuntime: async (installation, _metadata, scope) => {
+        running.set(
+          installation.directory,
+          fs.readFileSync(path.join(installation.directory, "index.html"), "utf8"),
+        );
+        scope.own("process", {
+          prepareStop: () => {
+            if (saveFailure === "timeout") throw new Error("save timed out");
+            return saveFailure ? { ok: false, reason: "save refused" } : { ok: true };
+          },
+          dispose: () => {
+            running.delete(installation.directory);
+          },
+        });
+        return { activate: async () => undefined };
+      },
     });
     hosts.push(host);
     return host;
@@ -288,31 +309,62 @@ test("development bundled updates replace code while preserving plugin data", as
   fs.writeFileSync(data, "kept");
   await first.shutdown();
   hosts.splice(hosts.indexOf(first), 1);
-  await makePackage("0.1.1700000000001");
+  await makePackage("0.1.6", "^1.2.0", "1700000000001");
   const second = makeHost(true);
   await second.initialize();
   expect(second.manager.list().find((item) => item.pluginId === "spark233.search")?.version).toBe(
-    "0.1.1700000000001",
+    "0.1.6",
   );
   expect(fs.readFileSync(data, "utf8")).toBe("kept");
   expect(fs.existsSync(previousDirectory)).toBe(false);
+  const firstBuild = second.manager.list()[0]!;
+  expect(firstBuild.development?.buildId).toBe("1700000000001");
+  expect(running.get(firstBuild.directory)).toBe("<p>0.1.6:1700000000001</p>");
   await second.shutdown();
   hosts.splice(hosts.indexOf(second), 1);
-  await makePackage("0.1.1700000000002");
+  await makePackage("0.1.6", "^1.2.0", "1700000000002");
+  for (const failure of ["refused", "timeout"] as const) {
+    saveFailure = failure;
+    const refused = makeHost(true);
+    await expect(refused.initialize()).rejects.toThrow(/save refused|save timed out/);
+    expect(refused.manager.list()[0]!.development?.buildId).toBe("1700000000001");
+    expect(running.get(firstBuild.directory)).toBe("<p>0.1.6:1700000000001</p>");
+    expect(fs.existsSync(firstBuild.directory)).toBe(true);
+    expect(fs.readFileSync(data, "utf8")).toBe("kept");
+    saveFailure = undefined;
+    await refused.shutdown();
+    hosts.splice(hosts.indexOf(refused), 1);
+  }
+  const updated = makeHost(true);
+  await updated.initialize();
+  const secondBuild = updated.manager.list()[0]!;
+  expect(secondBuild.version).toBe("0.1.6");
+  expect(secondBuild.development?.buildId).toBe("1700000000002");
+  expect(secondBuild.directory).not.toBe(firstBuild.directory);
+  expect(running.get(secondBuild.directory)).toBe("<p>0.1.6:1700000000002</p>");
+  expect(fs.existsSync(firstBuild.directory)).toBe(false);
+  const state = (await updated.handle("plugins_list", {}, parent, caller)) as PluginManagementState;
+  expect(state.plugins[0]?.development?.buildId).toBe("1700000000002");
+  expect(state.catalog?.[0]?.installedDevelopment?.buildId).toBe("1700000000002");
+  await updated.shutdown();
+  hosts.splice(hosts.indexOf(updated), 1);
+  await makePackage("0.1.6", "^1.2.0", "1700000000003");
   const production = makeHost(false);
   await production.initialize();
   expect(
     production.manager.list().find((item) => item.pluginId === "spark233.search")?.version,
-  ).toBe("0.1.1700000000001");
+  ).toBe("0.1.6");
+  expect(production.manager.list()[0]?.development?.buildId).toBe("1700000000002");
   await production.shutdown();
   hosts.splice(hosts.indexOf(production), 1);
   // A renumbered host cannot run the installed copy; a newer compatible
   // bundled release replaces it even though the bundle was already consumed.
-  await makePackage("0.1.1700000000003", ">=0.0.1 <1");
+  await makePackage("0.1.7", ">=0.0.1 <1");
   const renumbered = makeHost(false, "0.1.4");
   await renumbered.initialize();
   const repaired = renumbered.manager.list().find((item) => item.pluginId === "spark233.search");
-  expect(repaired?.version).toBe("0.1.1700000000003");
+  expect(repaired?.version).toBe("0.1.7");
+  expect(repaired?.development).toBeUndefined();
   expect(repaired?.lastError).toBeFalsy();
   expect(fs.readFileSync(data, "utf8")).toBe("kept");
 });

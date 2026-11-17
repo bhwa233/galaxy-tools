@@ -87,14 +87,26 @@ describe.skipIf(process.platform !== "win32")("resident selection transport", ()
     const helper = helpers[0];
     helper.stdout.write(JSON.stringify({ id: helper.requests.at(-1)!.id, window: 77 }) + "\n");
     await expect(sampled).resolves.toBe(77);
+    // Screenshot focus observations must not overwrite the source-app restore
+    // point, even when another HWND is now in the foreground.
+    const observed = reader.observeForeground(641);
+    helper.stdout.write(
+      JSON.stringify({ id: helper.requests.at(-1)!.id, window: 99, pid: 641, ownerVisible: true }) +
+        "\n",
+    );
+    await observed;
     await reader.restoreTarget(78);
-    expect(helper.requests).toHaveLength(1);
+    expect(helper.requests).toHaveLength(2);
     const restored = reader.restoreTarget(77);
     expect(helper.requests.at(-1)?.operation).toBe("restore");
     helper.stdout.write(JSON.stringify({ id: helper.requests.at(-1)!.id, window: 77 }) + "\n");
     await restored;
     await reader.restoreTarget(77);
-    expect(helper.requests).toHaveLength(2);
+    expect(helper.requests.map((request) => request.operation)).toEqual([
+      "foreground",
+      "observe",
+      "restore",
+    ]);
   });
 
   it("recovers from a hung read and resolves pending work when stopped", async () => {

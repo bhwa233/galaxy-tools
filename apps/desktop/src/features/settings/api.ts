@@ -3,9 +3,14 @@ export type { ShortcutCheckResult, SettingsTarget, SettingsPage } from "./types"
 import { invoke } from "../../platform/desktop";
 import { open } from "../../platform/desktop";
 import type { AppConfig, AppConfigPatch, ViewMode } from "./types";
+import i18n from "../../locales";
 
 export function getConfig(): Promise<AppConfig> {
-  return invoke("config_get");
+  let timer: ReturnType<typeof setTimeout>;
+  return new Promise<AppConfig>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(i18n.t("shell.configTimeout"))), 5000);
+    void invoke("config_get").then(resolve, reject);
+  }).finally(() => clearTimeout(timer));
 }
 
 export function patchConfig(

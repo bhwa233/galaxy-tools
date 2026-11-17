@@ -1,5 +1,6 @@
 import { showToast } from "../../components/Toast";
 import { PluginIcon } from "./PluginIcon";
+import { PluginBuildInfo, PluginVersion } from "./PluginVersion";
 import { PluginShortcuts } from "./PluginShortcuts";
 import { PluginConfiguration } from "./PluginConfiguration";
 import { ApplicationsDialog } from "../applications/ApplicationsDialog";
@@ -368,7 +369,7 @@ export function PluginManagementDialog({
   };
 
   const loadReleaseNotes = async (plugin: PluginSummary) => {
-    const key = `${plugin.pluginId}@${plugin.version}`;
+    const key = `${plugin.pluginId}@${plugin.version}#${plugin.development?.buildId ?? "release"}`;
     if (noteRequests.current.has(key)) return;
     noteRequests.current.add(key);
     setLoadingNotes([...noteRequests.current]);
@@ -725,16 +726,22 @@ export function PluginManagementDialog({
                                   className="size-5 shrink-0"
                                 />
                                 <span className="text-sm font-medium">{item.displayName}</span>
-                                <Badge variant="outline">{item.version}</Badge>
+                                <PluginVersion
+                                  version={item.version}
+                                  development={item.development}
+                                  badge
+                                />
                               </div>
                               <span className="break-all text-xs text-muted-foreground">
                                 {item.packageName}
                               </span>
                               {item.installedVersion && (
-                                <span className="text-xs text-muted-foreground">
-                                  {t("plugins.catalog.currentVersion", {
-                                    version: item.installedVersion,
-                                  })}
+                                <span className="inline-flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  {t("plugins.catalog.currentVersionLabel")}
+                                  <PluginVersion
+                                    version={item.installedVersion}
+                                    development={item.installedDevelopment}
+                                  />
                                 </span>
                               )}
                             </div>
@@ -899,7 +906,11 @@ export function PluginManagementDialog({
                             {preview.metadata.spark233.translations?.[
                               i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN"
                             ]?.displayName ?? preview.metadata.spark233.displayName}{" "}
-                            <Badge variant="outline">{preview.metadata.version}</Badge>
+                            <PluginVersion
+                              version={preview.metadata.version}
+                              development={preview.metadata.spark233.development}
+                              badge
+                            />
                             {preview.metadata.spark233.compatibility && (
                               <Badge variant="secondary">uTools</Badge>
                             )}
@@ -934,15 +945,26 @@ export function PluginManagementDialog({
                             </p>
                           )}
                           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
-                            <span>
+                            <span className="inline-flex flex-wrap items-center gap-2">
                               {preview.currentVersion
-                                ? t("plugins.currentVersion", { version: preview.currentVersion })
+                                ? t("plugins.currentVersionLabel")
                                 : t("plugins.notInstalled")}
+                              {preview.currentVersion && (
+                                <PluginVersion
+                                  version={preview.currentVersion}
+                                  development={preview.currentDevelopment}
+                                />
+                              )}
                             </span>
-                            <span>
-                              {t("plugins.candidateVersion", { version: preview.metadata.version })}
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              {t("plugins.candidateVersionLabel")}
+                              <PluginVersion
+                                version={preview.metadata.version}
+                                development={preview.metadata.spark233.development}
+                              />
                             </span>
                           </div>
+                          <PluginBuildInfo development={preview.metadata.spark233.development} />
                           <p className="break-all text-sm text-muted-foreground">
                             {t("plugins.source", { defaultValue: "来源" })}:
                             {preview.source.location}
@@ -1233,7 +1255,7 @@ export function PluginManagementDialog({
                   )
                   .map((plugin) => {
                     const update = state?.updates.find((item) => item.pluginId === plugin.pluginId);
-                    const notesKey = `${plugin.pluginId}@${plugin.version}`;
+                    const notesKey = `${plugin.pluginId}@${plugin.version}#${plugin.development?.buildId ?? "release"}`;
                     const notes = releaseNotes[notesKey] ?? plugin.releaseNotes;
                     const notesLoading = loadingNotes.includes(notesKey);
                     return (
@@ -1262,11 +1284,16 @@ export function PluginManagementDialog({
                               {statusLabel(plugin)}
                             </Badge>
                           </CardTitle>
-                          <CardDescription className="break-all">
-                            {plugin.packageName} · {plugin.version}
+                          <CardDescription className="flex flex-wrap items-center gap-2 break-all">
+                            <span>{plugin.packageName} ·</span>
+                            <PluginVersion
+                              version={plugin.version}
+                              development={plugin.development}
+                            />
                           </CardDescription>
                         </CardHeader>
                         <CardContent className="flex min-w-0 flex-col gap-5">
+                          <PluginBuildInfo development={plugin.development} />
                           {mode === "configuration" && (
                             <SlidingButtonGroup
                               value={detailTab}
@@ -1280,13 +1307,13 @@ export function PluginManagementDialog({
                           {mode === "configuration" && (
                             <div hidden={detailTab !== "config"} className="min-w-0">
                               <PluginConfiguration
-                                key={`${plugin.pluginId}@${plugin.version}`}
+                                key={notesKey}
                                 footerVisible={detailTab === "config"}
                                 pluginId={plugin.pluginId}
                               />
                               {plugin.pluginId === "spark233.applications" && (
                                 <ApplicationsDialog
-                                  key={plugin.version}
+                                  key={notesKey}
                                   embedded
                                   open
                                   onOpenChange={() => {}}
@@ -1326,10 +1353,7 @@ export function PluginManagementDialog({
                           {mode === "configuration" && (
                             <div hidden={detailTab !== "functions"}>
                               {!!plugin.commands.length && (
-                                <PluginShortcuts
-                                  key={`${plugin.pluginId}@${plugin.version}`}
-                                  plugin={plugin}
-                                />
+                                <PluginShortcuts key={notesKey} plugin={plugin} />
                               )}
                             </div>
                           )}

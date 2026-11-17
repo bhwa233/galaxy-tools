@@ -68,6 +68,7 @@ it("loads old panel settings without restoring the observer and removes them on 
       enabled: true,
       webEnabled: true,
       notesEnabled: true,
+      topTriggerEnabled: true,
     });
     store.save(store.value);
     const persisted = JSON.parse(fs.readFileSync(store.file, "utf8"));
@@ -96,6 +97,7 @@ it("normalizes persisted partial desktop flags and rejects invalid flags without
       enabled: false,
       webEnabled: true,
       notesEnabled: true,
+      topTriggerEnabled: true,
     });
     store.save({
       ...store.value,
@@ -106,6 +108,7 @@ it("normalizes persisted partial desktop flags and rejects invalid flags without
       enabled: true,
       webEnabled: true,
       notesEnabled: false,
+      topTriggerEnabled: true,
     });
     expect(() =>
       store.save({

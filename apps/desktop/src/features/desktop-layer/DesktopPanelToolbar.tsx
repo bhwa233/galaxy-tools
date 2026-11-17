@@ -7,6 +7,7 @@ import "./desktop-overlay.css";
 export function DesktopPanelToolbar({
   children,
   pinned,
+  canPin = true,
   onPin,
   onHide,
   locale,
@@ -14,35 +15,36 @@ export function DesktopPanelToolbar({
 }: {
   children: ReactNode;
   pinned: boolean;
+  canPin?: boolean;
   onPin(): void;
   onHide(): void;
   locale: string;
 } & HTMLAttributes<HTMLElement>) {
   const zh = locale.startsWith("zh");
-  // Same wording as the status bar's mode menu: a desktop card is either kept
-  // on the desktop or kept on the desktop and always on top.
   const pinLabel = pinned
     ? zh
-      ? "取消置顶（保留在桌面）"
-      : "Not on top (stay on desktop)"
+      ? "取消置顶"
+      : "Stop keeping on top"
     : zh
       ? "置顶"
       : "Always on top";
-  const hideLabel = zh ? "收起面板" : "Hide panel";
+  const hideLabel = zh ? "关闭" : "Close";
   return (
     <header {...props} className="desktop-overlay-panel-header">
       {children}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        title={pinLabel}
-        aria-label={pinLabel}
-        aria-pressed={pinned}
-        onClick={onPin}
-      >
-        {pinned ? <Pin /> : <PinOff />}
-      </Button>
+      {canPin && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          title={pinLabel}
+          aria-label={pinLabel}
+          aria-pressed={pinned}
+          onClick={onPin}
+        >
+          {pinned ? <Pin /> : <PinOff />}
+        </Button>
+      )}
       <Button
         type="button"
         variant="ghost"

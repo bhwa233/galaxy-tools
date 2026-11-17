@@ -7,7 +7,7 @@ export interface OwnedResource {
   prepareStop?: (reason: StopReason) => StopDecision | Promise<StopDecision>;
   cancelStop?: () => void | Promise<void>;
   dispose: () => void | Promise<void>;
-  /** Only used after a native, explicit user confirmation to discard unsaved work. */
+  /** Host-authorized shutdown, or cancellation of an explicitly owned native session. */
   forceTerminate?: () => void | Promise<void>;
 }
 export interface ReleaseResult {

@@ -21,6 +21,7 @@ import { LayerWindow, computeShape, surfaceKey } from "./layer-window.js";
 import { contains } from "./capsule-layout.js";
 import { LayerLayoutStore, constrainLayerCard } from "./layer-layout-store.js";
 import { AppError } from "./persistence.js";
+import { snapRect } from "./plugins/window-desktop.js";
 import type {
   ExternalLayerParticipant,
   ExternalLayerPresentation,
@@ -110,8 +111,24 @@ export interface DesktopLayerOptions {
   onOverlaySettings?: () => void | Promise<void>;
   /** Plugin windows the plugin bar offers under "Add plugin". */
   overlayLaunchers?: () => DesktopOverlayLauncher[];
-  onOverlayLaunch?: (pluginId: string, commandId: string) => Promise<void>;
+  onOverlayLaunch?: (
+    pluginId: string,
+    commandId: string,
+    intentId?: string,
+  ) => Promise<{ instanceId: string } | void>;
   onOverlayFavorite?: (pluginId: string, commandId: string, value: boolean) => void;
+  onOverlayPanelClose?: (card: LayerCard) => Promise<void>;
+  onOverlayArrange?: (displayId: string) => void;
+  onOverlayRetry?: (card: LayerCard) => Promise<void>;
+  onOverlayPanelAction?: (
+    card: LayerCard,
+    action: "show" | "hide" | "pin" | "passthrough" | "open" | "close",
+    value?: boolean,
+  ) => Promise<boolean>;
+  overlaySelected?: (card: LayerCard) => boolean | undefined;
+  overlayEligible?: (card: LayerCard) => boolean;
+  overlayPosition?: (card: LayerCard, area: Rect) => Rect | undefined;
+  onOverlayPosition?: (card: LayerCard, bounds: Rect, area: Rect) => void;
   onOverlayPresentation?: (
     card: LayerCard,
     patch: { group?: "top" | "normal"; inputMode?: "passive" | "interactive" },
@@ -145,6 +162,20 @@ interface OverlaySession {
   drafts: Map<string, Rect>;
   previews: Set<string>;
   menus: Set<string>;
+  lastFocusCardId?: string;
+  restoringFocusCardId?: string;
+  transient?: {
+    id: string;
+    kind: "modal" | "menu";
+    focusCardId?: string;
+    focusSurfaceId?: string;
+    launch?: {
+      pluginId: string;
+      commandId: string;
+      result?: { instanceId: string };
+      pending?: Promise<{ cardId?: string }>;
+    };
+  };
 }
 
 /** Reuses LayerWindow and the durable layout store; only coordinates trusted
@@ -155,6 +186,7 @@ export class DesktopLayer {
   private presentationRevision = 0;
   private overlayClosing?: Promise<void>;
   private overlayGesture?: {
+    mode: "move" | "resize";
     surfaceId: string;
     cardId: string;
     pointerId: number;
@@ -169,9 +201,11 @@ export class DesktopLayer {
       participant: ExternalLayerParticipant;
       value?: ExternalLayerPresentation;
       pending?: Promise<void>;
+      failure?: unknown;
     }
   >();
   private surfaces = new Map<string, Surface>();
+  private revealBatch?: Set<Surface>;
   private cards = new Map<string, LayerCard>();
   private generation = 0;
   private disposed = false;
@@ -271,14 +305,34 @@ export class DesktopLayer {
     return this.external.get(cardId)?.value;
   }
   async externalBounds(cardId: string, bounds: Rect): Promise<void> {
+    if (this.overlayInputBlocked) throw new AppError("layer.busy", "请先关闭桌面管理面板");
     const card = this.cards.get(cardId);
     if (!card || !this.external.has(cardId) || this.editor)
       throw new AppError("permissionDenied", "兼容桌面窗口已失效");
-    const requested = rect.parse(bounds);
+    let requested = rect.parse(bounds);
+    if (this.overlay)
+      requested = snapRect(
+        requested,
+        this.options
+          .displays()
+          .filter((display) => display.id === this.overlay!.displayId)
+          .map((display) => display.workArea),
+        [...this.cards.values()]
+          .filter((value) => value.id !== cardId)
+          .map((value) => value.bounds),
+      );
     const session = this.overlay;
     if (session) {
       const previous = this.external.get(cardId)?.value;
       if (previous?.mode !== "overlay") throw new AppError("permissionDenied", "插件栏会话已失效");
+      if ((card.cardDesktopOnly || card.cardDesktopMember) && this.options.onOverlayPosition) {
+        const area = this.options
+          .displays()
+          .find((display) => display.id === session.displayId)!.workArea;
+        this.options.onOverlayPosition(card, requested, area);
+        this.refresh();
+        return;
+      }
       // Native resize changes the one shared content size, while its desktop
       // origin remains independent of the operation bar's position.
       this.overlayLayout.position(
@@ -324,9 +378,10 @@ export class DesktopLayer {
   }
   async externalPanel(
     cardId: string,
-    action: "show" | "hide" | "pin" | "passthrough" | "open",
+    action: "show" | "hide" | "pin" | "passthrough" | "open" | "close",
     value?: boolean,
   ): Promise<unknown> {
+    if (this.overlayInputBlocked) throw new AppError("layer.busy", "请先关闭桌面管理面板");
     if (!this.external.has(cardId)) throw new AppError("permissionDenied", "兼容桌面窗口已失效");
     return this.panelAction(cardId, action, value);
   }
@@ -418,7 +473,14 @@ export class DesktopLayer {
         if ((card.renderKind === "utools" || card.renderKind === "window") && !this.editor)
           continue;
         if (this.editor && card.presentationOnly) continue;
-        if (!card.visible && !this.editor) continue;
+        if (
+          !card.visible &&
+          !this.editor &&
+          !card.cardDesktopOnly &&
+          !(this.overlay && card.cardDesktopMember)
+        )
+          continue;
+        if (card.cardDesktopOnly && !this.overlay) card = { ...card, visible: false };
         if (card.renderKind === "notes" && !this.options.flags().notesEnabled) continue;
         if (card.renderKind === "web" && !this.options.flags().webEnabled) continue;
         if (
@@ -468,6 +530,7 @@ export class DesktopLayer {
           if (!panel) return { ...card, visible: false };
           const bounds =
             session.drafts.get(card.id) ??
+            this.options.overlayPosition?.(card, overlayDisplay.workArea) ??
             this.overlayLayout.place(card, overlayDisplay.id, overlayDisplay.workArea, index);
           const regions = overlayInteractionBounds({ ...card, bounds }, overlayDisplay.workArea);
           return {
@@ -576,7 +639,9 @@ export class DesktopLayer {
         this.surfaces.set(key, surface);
       }
       const isOverlay = !!session?.members.has(key);
-      const mode = isOverlay ? "overlay:" + session!.epoch : "desktop";
+      const mode = isOverlay
+        ? "overlay:" + session!.epoch + ":" + (session!.transient?.id ?? "")
+        : "desktop";
       const transition =
         (surface.mode !== undefined && surface.mode !== mode) ||
         (isOverlay && surface.mode === undefined) ||
@@ -593,8 +658,10 @@ export class DesktopLayer {
         isOverlay ? "top" : (group.cards[0]?.group ?? "top"),
         isOverlay ? "interactive" : (group.cards[0]?.inputMode ?? "interactive"),
       );
-      const focusable = !!this.editor || isOverlay;
-      const passive = !this.editor && !isOverlay && group.cards[0]?.inputMode === "passive";
+      const blocked = isOverlay && !!session?.transient && key !== session.id;
+      const focusable = !blocked && (!!this.editor || isOverlay);
+      const passive =
+        blocked || (!this.editor && !isOverlay && group.cards[0]?.inputMode === "passive");
       if (surface.focusable !== focusable) {
         surface.window.win.setFocusable(focusable);
         surface.focusable = focusable;
@@ -677,7 +744,9 @@ export class DesktopLayer {
   private presentExternal(): void {
     const displays = this.options.displays();
     const panels = this.overlayPanels();
-    for (const [id, entry] of this.external) {
+    for (const [id, entry] of [...this.external].sort(
+      ([a], [b]) => (this.cards.get(a)?.order ?? 0) - (this.cards.get(b)?.order ?? 0),
+    )) {
       const card = this.cards.get(id);
       if (!card) continue;
       const session = this.overlay;
@@ -689,12 +758,14 @@ export class DesktopLayer {
         ? {
             ...card,
             displayId: display.id,
-            bounds: this.overlayLayout.place(
-              card,
-              display.id,
-              display.workArea,
-              panels.findIndex((p) => p.cardId === id),
-            ),
+            bounds:
+              this.options.overlayPosition?.(card, display.workArea) ??
+              this.overlayLayout.place(
+                card,
+                display.id,
+                display.workArea,
+                panels.findIndex((p) => p.cardId === id),
+              ),
           }
         : card;
       const hidden = ["user", "locked", "suspend"].some(
@@ -711,21 +782,31 @@ export class DesktopLayer {
           !this.options.store.readError &&
           !this.editor &&
           !hidden &&
-          (session ? selected : card.visible),
+          (session ? selected : card.visible && !card.cardDesktopOnly),
         locale: this.options.locale(),
-        ...(session ? { epoch: session.epoch } : {}),
+        ...(session ? { epoch: session.epoch, inputBlocked: !!session.transient } : {}),
+        ...(this.revealBatch && entry.participant.reveal ? { deferReveal: true } : {}),
       };
-      if (isDeepStrictEqual(entry.value, value)) continue;
+      if (isDeepStrictEqual(entry.value, value) && !entry.failure) continue;
       entry.value = structuredClone(value);
+      entry.failure = undefined;
       const pending = entry.participant.present(value).catch((error) => {
         if (this.external.get(id) !== entry) return;
+        entry.failure = error;
         this.diagnostic("external-presentation", error);
-        if (this.overlay?.epoch === value.epoch && value.mode === "overlay")
+        if (
+          this.overlay &&
+          this.overlay.epoch === value.epoch &&
+          value.mode === "overlay" &&
+          !this.overlay.transient
+        )
           void this.closeOverlay(false);
       });
       entry.pending = pending;
       void pending.finally(() => {
         if (entry.pending === pending) entry.pending = undefined;
+        // A delayed presentation must never raise its HWND above host chrome.
+        if (this.overlay?.transient) this.raiseOverlayHost();
       });
     }
   }
@@ -737,6 +818,7 @@ export class DesktopLayer {
         if (entry.pending === pending) break;
         pending = entry.pending;
       }
+      if (entry.failure && this.overlay?.transient) throw entry.failure;
     }
   }
   private restack(): void {
@@ -746,6 +828,7 @@ export class DesktopLayer {
       this.fullscreen,
       [...this.hidden].sort(),
       this.overlay?.epoch,
+      this.overlay?.transient?.id,
       [...this.surfaces.values()].map((s) => [s.id, s.generation, s.window.win.isVisible()]),
     ]);
     if (signature === this.stackSignature) return;
@@ -762,6 +845,7 @@ export class DesktopLayer {
       previous = member;
     }
     this.stackSignature = signature;
+    if (this.overlay?.transient) this.raiseOverlayHost();
   }
   private publishSnapshot(surface: Surface, force = false): LayerSnapshot {
     const snapshot = this.snapshot(surface.id);
@@ -859,6 +943,11 @@ export class DesktopLayer {
               displayId: this.overlay.displayId,
               epoch: this.overlay.epoch,
               host: id === this.overlay.id,
+              ...(this.overlay.transient
+                ? {
+                    transient: { id: this.overlay.transient.id, kind: this.overlay.transient.kind },
+                  }
+                : {}),
               workArea: this.options.displays().find((d) => d.id === this.overlay!.displayId)
                 ?.workArea,
               panels: this.overlayPanels().filter(
@@ -890,6 +979,22 @@ export class DesktopLayer {
     )
       throw new AppError("permissionDenied", "Desktop surface identity expired");
     surface.lastSeq = input.seq;
+    if (
+      this.overlay?.transient &&
+      ![
+        "ready",
+        "presentation-committed",
+        "heartbeat",
+        "content-height",
+        "widget-relay",
+        "fault",
+      ].includes(input.type) &&
+      (surface.id !== this.overlay.id ||
+        !["overlay-transient", "overlay-launch", "overlay-panel", "overlay-arrange"].includes(
+          input.type,
+        ))
+    )
+      throw new AppError("layer.busy", "请先关闭桌面管理面板");
     switch (input.type) {
       case "ready":
         surface.lastBeat = Date.now();
@@ -909,9 +1014,15 @@ export class DesktopLayer {
       case "heartbeat":
         surface.lastBeat = Date.now();
         return;
+      case "overlay-transient":
+        this.assertOverlaySurface(surface, input.overlayEpoch);
+        if (surface.id !== this.overlay!.id)
+          throw new AppError("permissionDenied", "Only the workspace host can manage transient UI");
+        return this.setOverlayTransient(surface, input);
       case "content-height": {
         if (this.overlay?.members.has(surface.id)) return;
         const card = surface.cards.find((item) => item.id === input.cardId);
+        if (card?.cardDesktopOnly && !this.overlay) return;
         if (
           this.editor ||
           !card?.intrinsicHeight ||
@@ -926,6 +1037,19 @@ export class DesktopLayer {
       case "overlay-close":
         this.assertOverlaySurface(surface, input.overlayEpoch);
         return this.closeOverlay(true);
+      case "overlay-arrange":
+        this.assertOverlaySurface(surface, input.overlayEpoch);
+        if (surface.id !== this.overlay!.id)
+          throw new AppError("permissionDenied", "Only the workspace toolbar can arrange panels");
+        this.options.onOverlayArrange?.(this.overlay!.displayId);
+        this.refresh();
+        return;
+      case "overlay-retry":
+        this.assertOverlaySurface(surface, input.overlayEpoch, input.cardId);
+        if (!this.cards.has(input.cardId)) throw new AppError("window.notFound", "面板不存在");
+        await this.options.onOverlayRetry?.(this.cards.get(input.cardId)!);
+        this.refresh();
+        return;
       case "overlay-settings":
         this.assertOverlaySurface(surface, input.overlayEpoch);
         await this.closeOverlay(false);
@@ -945,8 +1069,12 @@ export class DesktopLayer {
           this.refresh();
           return;
         }
-        await this.closeOverlay(false);
-        return this.options.onOverlayLaunch?.(entry.pluginId, entry.commandId);
+        if (!entry.windowId) await this.closeOverlay(false);
+        if (input.transientId && !this.overlay?.transient)
+          throw new AppError("permissionDenied", "新增面板会话已失效");
+        if (!this.overlay?.transient)
+          return this.options.onOverlayLaunch?.(entry.pluginId, entry.commandId);
+        return this.launchFromTransient(entry.pluginId, entry.commandId, input.transientId);
       }
       case "overlay-layout": {
         this.assertOverlaySurface(surface, input.overlayEpoch, input.cardId);
@@ -963,7 +1091,9 @@ export class DesktopLayer {
         const bounds = this.clampOverlay({ ...projected.bounds, x: requested.x, y: requested.y });
         if (bounds.width > area.width || bounds.height > area.height)
           throw new AppError("permissionDenied", "插件栏面板超出屏幕范围");
-        this.overlayLayout.position(overlayPanelKey(card), this.overlay!.displayId, bounds);
+        if ((card.cardDesktopOnly || card.cardDesktopMember) && this.options.onOverlayPosition)
+          this.options.onOverlayPosition(card, bounds, area);
+        else this.overlayLayout.position(overlayPanelKey(card), this.overlay!.displayId, bounds);
         this.refresh();
         return;
       }
@@ -996,14 +1126,29 @@ export class DesktopLayer {
             !p ||
             !Number.isFinite(p.x) ||
             !Number.isFinite(p.y) ||
-            !projected.overlayControls ||
-            !contains(projected.overlayControls, {
-              x: origin.x + p.x,
-              y: origin.y + p.y,
-            })
+            !(
+              (input.mode === "resize" &&
+                projected.resize &&
+                contains(
+                  {
+                    x: projected.bounds.x + projected.bounds.width - 16,
+                    y: projected.bounds.y + projected.bounds.height - 16,
+                    width: 16,
+                    height: 16,
+                  },
+                  { x: origin.x + p.x, y: origin.y + p.y },
+                )) ||
+              (input.mode !== "resize" &&
+                ((projected.overlayControls &&
+                  contains(projected.overlayControls, { x: origin.x + p.x, y: origin.y + p.y })) ||
+                  (projected.chrome === "none" &&
+                    projected.renderKind === "declarative" &&
+                    contains(projected.bounds, { x: origin.x + p.x, y: origin.y + p.y }))))
+            )
           )
             throw new AppError("permissionDenied", "拖动起点不在控制栏");
           this.overlayGesture = {
+            mode: input.mode === "resize" ? "resize" : "move",
             surfaceId: surface.id,
             cardId: projected.id,
             pointerId: input.pointerId,
@@ -1030,20 +1175,59 @@ export class DesktopLayer {
         if (input.phase !== "move" && input.phase !== "end")
           throw new AppError("permissionDenied", "未知拖动阶段");
         const cursor = this.options.cursor();
-        const bounds = this.clampOverlay({
-          ...gesture.bounds,
-          x: gesture.bounds.x + cursor.x - gesture.cursor.x,
-          y: gesture.bounds.y + cursor.y - gesture.cursor.y,
-        });
+        const dx = cursor.x - gesture.cursor.x,
+          dy = cursor.y - gesture.cursor.y;
+        const area = this.options
+          .displays()
+          .find((display) => display.id === session.displayId)!.workArea;
+        const bounds =
+          gesture.mode === "resize" && projected.resize
+            ? {
+                ...gesture.bounds,
+                width: Math.round(
+                  Math.max(
+                    projected.resize.minSize.width,
+                    Math.min(
+                      projected.resize.maxSize.width,
+                      area.x + area.width - gesture.bounds.x,
+                      gesture.bounds.width + dx,
+                    ),
+                  ),
+                ),
+                height: Math.round(
+                  Math.max(
+                    projected.resize.minSize.height,
+                    Math.min(
+                      projected.resize.maxSize.height,
+                      area.y + area.height - gesture.bounds.y,
+                      gesture.bounds.height + dy,
+                    ),
+                  ),
+                ),
+              }
+            : this.clampOverlay(
+                snapRect(
+                  { ...gesture.bounds, x: gesture.bounds.x + dx, y: gesture.bounds.y + dy },
+                  [area],
+                  [...this.surfaces.values()]
+                    .flatMap((entry) => entry.cards)
+                    .filter((card) => card.id !== input.cardId && card.visible)
+                    .map((card) => card.bounds),
+                ),
+              );
         session.drafts.set(input.cardId, bounds);
         if (input.phase === "end") {
           this.overlayGesture = undefined;
           try {
-            this.overlayLayout.position(
-              overlayPanelKey(this.cards.get(input.cardId)!),
-              session.displayId,
-              bounds,
-            );
+            const card = this.cards.get(input.cardId)!;
+            if ((card.cardDesktopOnly || card.cardDesktopMember) && this.options.onOverlayPosition)
+              this.options.onOverlayPosition(
+                card,
+                bounds,
+                this.options.displays().find((display) => display.id === session.displayId)!
+                  .workArea,
+              );
+            else this.overlayLayout.position(overlayPanelKey(card), session.displayId, bounds);
           } finally {
             session.drafts.delete(input.cardId);
             this.reconcile();
@@ -1053,7 +1237,19 @@ export class DesktopLayer {
       }
       case "overlay-panel": {
         this.assertOverlaySurface(surface, input.overlayEpoch, input.cardId);
-        return this.panelAction(input.cardId, input.action, input.value);
+        const session = this.overlay!;
+        const transient = session.transient;
+        if (transient?.kind === "menu" && input.action === "show")
+          transient.focusCardId = input.cardId;
+        const result = await this.panelAction(input.cardId, input.action, input.value);
+        if (
+          transient?.kind === "menu" &&
+          input.action === "show" &&
+          this.overlay === session &&
+          !session.transient
+        )
+          await this.activatePanel(input.cardId);
+        return result;
       }
       case "pointer": {
         if (this.overlay?.members.has(surface.id)) return;
@@ -1489,7 +1685,195 @@ export class DesktopLayer {
     // Reapply the operation order after every focus transfer between members.
     this.stackSignature = "";
     this.restack();
-    for (const entry of this.external.values()) entry.participant.restack?.();
+    if (this.overlay.transient) {
+      this.raiseOverlayHost();
+      return;
+    }
+    for (const [id, entry] of [...this.external].sort(
+      ([a], [b]) => (this.cards.get(a)?.order ?? 0) - (this.cards.get(b)?.order ?? 0),
+    )) {
+      if (this.isCardVisible(id) || entry.value?.visible) entry.participant.restack?.();
+    }
+  }
+  get overlayInputBlocked(): boolean {
+    return !!this.overlay?.transient;
+  }
+  /** Native focus reports can raise a card, but transient restoration must not
+   * rewrite the durable placement order. */
+  noteOverlayFocus(cardId: string): boolean {
+    const session = this.overlay;
+    if (!session) return true;
+    if (session.transient) {
+      this.raiseOverlayHost();
+      return false;
+    }
+    session.lastFocusCardId = cardId;
+    if (session.restoringFocusCardId === cardId) return false;
+    session.restoringFocusCardId = undefined;
+    return true;
+  }
+  private raiseOverlayHost(): void {
+    const session = this.overlay;
+    if (!session?.transient) return;
+    const host = this.surfaces.get(session.id)?.window.win;
+    if (!host || !host.isVisible() || host.isDestroyed()) return;
+    // Participants stop raising themselves while blocked; repeating this after
+    // asynchronous presentations also covers a late showInactive/restore.
+    host.moveTop();
+  }
+  private async setOverlayTransient(
+    surface: Surface,
+    input: { id: string; kind: "modal" | "menu"; open: boolean; activateCardId?: string },
+  ): Promise<{ focusHost: boolean } | void> {
+    const session = this.overlay!;
+    const id = z.uuid().parse(input.id);
+    const kind = z.enum(["modal", "menu"]).parse(input.kind);
+    const open = z.boolean().parse(input.open);
+    if (!open) {
+      const transient = session.transient;
+      if (!transient || transient.id !== id || transient.kind !== kind)
+        throw new AppError("permissionDenied", "桌面管理面板已失效");
+      session.transient = undefined;
+      this.reconcile();
+      const committed = await this.waitPresentations(session.members);
+      await this.waitExternalPresentations();
+      if (this.overlay !== session || session.transient) return;
+      if (!committed) throw new AppError("layer.presentationFailed", "桌面面板尚未就绪");
+      this.restackOverlay();
+      const cardId = input.activateCardId ?? transient.focusCardId;
+      if (
+        cardId &&
+        this.cards.has(cardId) &&
+        this.overlayPanels().some((p) => p.cardId === cardId && p.selected)
+      ) {
+        session.restoringFocusCardId = cardId;
+        await this.activatePanel(cardId);
+        return { focusHost: false };
+      } else {
+        const previous = this.surfaces.get(transient.focusSurfaceId ?? session.id);
+        if (previous?.window.win.isVisible()) previous.window.win.focus();
+        else surface.window.win.focus();
+        return { focusHost: !previous || previous.id === session.id };
+      }
+    }
+    if (session.transient?.id === id && session.transient.kind === kind) return;
+    const previous = session.transient;
+    const transient: NonNullable<OverlaySession["transient"]> = {
+      id,
+      kind,
+      // Native focus reports are newer than another process's cached focus.
+      focusCardId:
+        previous?.focusCardId ??
+        session.lastFocusCardId ??
+        [...this.external].find(([, e]) => e.participant.focus?.())?.[0],
+      focusSurfaceId:
+        previous?.focusSurfaceId ??
+        [...session.members].find((key) => this.surfaces.get(key)?.window.win.isFocused()),
+    };
+    session.transient = transient;
+    this.overlayGesture = undefined;
+    this.cancelConsumerPointers();
+    this.reconcile();
+    try {
+      const committed = await this.waitPresentations(session.members);
+      await this.waitExternalPresentations();
+      if (this.overlay !== session || session.transient !== transient)
+        throw new AppError("permissionDenied", "桌面管理面板已失效");
+      if (!committed) throw new AppError("layer.presentationFailed", "桌面管理面板尚未就绪");
+      this.raiseOverlayHost();
+      surface.window.win.focus();
+    } catch (error) {
+      if (this.overlay === session && session.transient === transient) {
+        session.transient = undefined;
+        this.reconcile();
+        await this.waitPresentations(session.members);
+        await this.waitExternalPresentations();
+        if (this.overlay === session && !session.transient) {
+          this.restackOverlay();
+          if (transient.focusCardId && this.cards.has(transient.focusCardId)) {
+            session.restoringFocusCardId = transient.focusCardId;
+            await this.activatePanel(transient.focusCardId);
+          } else if (surface.window.win.isVisible()) surface.window.win.focus();
+        }
+      }
+      throw error;
+    }
+  }
+  private async launchFromTransient(
+    pluginId: string,
+    commandId: string,
+    id?: string,
+  ): Promise<{ cardId?: string }> {
+    const session = this.overlay!;
+    const transient = session.transient!;
+    if (transient.kind !== "modal" || transient.id !== id)
+      throw new AppError("permissionDenied", "新增面板会话已失效");
+    let launch = transient.launch;
+    if (launch && (launch.pluginId !== pluginId || launch.commandId !== commandId))
+      throw new AppError("layer.busy", "请先重试当前窗口，或关闭新增面板");
+    launch ??= transient.launch = { pluginId, commandId };
+    if (launch.pending) return launch.pending;
+    const operation = (async () => {
+      if (!launch.result) {
+        const result = await this.options.onOverlayLaunch?.(pluginId, commandId, transient.id);
+        if (result) launch.result = result;
+      }
+      if (this.overlay !== session || session.transient !== transient)
+        throw new AppError("permissionDenied", "新增面板会话已失效");
+      this.reconcile();
+      const committed = await this.waitPresentations(session.members);
+      await this.waitExternalPresentations();
+      if (this.overlay !== session || session.transient !== transient)
+        throw new AppError("permissionDenied", "新增面板会话已失效");
+      if (!committed)
+        throw new AppError("layer.presentationFailed", "窗口已创建，展示失败，请重试");
+      const card =
+        launch.result &&
+        [...this.cards.values()].find(
+          (value) =>
+            value.renderRef === launch.result!.instanceId ||
+            value.widget?.widgetInstanceId === launch.result!.instanceId,
+        );
+      if (launch.result && !card)
+        throw new AppError("window.restoreMissing", "窗口已创建，展示尚未就绪，请重试");
+      return { cardId: card?.id };
+    })();
+    launch.pending = operation;
+    try {
+      return await operation;
+    } finally {
+      if (launch.pending === operation) launch.pending = undefined;
+      this.raiseOverlayHost();
+    }
+  }
+  /** Host management may locate an existing panel; it cannot create content. */
+  async locateWindow(instanceId: string): Promise<void> {
+    if (!this.overlay) throw new AppError("layer.unavailable", "请先展开卡片桌面");
+    const card = [...this.cards.values()].find(
+      (value) => value.renderRef === instanceId || value.widget?.widgetInstanceId === instanceId,
+    );
+    if (!card) throw new AppError("window.restoreMissing", "找不到已恢复的窗口展示");
+    await this.panelAction(card.id, "show");
+  }
+  private async activatePanel(cardId: string): Promise<void> {
+    if (this.overlayInputBlocked) return;
+    this.reconcile();
+    const epoch = this.overlay?.epoch;
+    if (epoch === undefined) return;
+    await this.waitExternalPresentations();
+    if (this.overlay?.epoch !== epoch || this.overlayInputBlocked) return;
+    await this.waitPresentations(this.overlay.members);
+    if (this.overlay?.epoch !== epoch || this.overlayInputBlocked) return;
+    const external = this.external.get(cardId);
+    if (external) {
+      if (external.value?.visible && external.value.epoch === epoch)
+        await external.participant.activate?.();
+      return;
+    }
+    const surface = [...this.surfaces.values()].find((value) =>
+      value.cards.some((card) => card.id === cardId && card.visible),
+    );
+    if (surface?.window.win.isVisible()) surface.window.win.focus();
   }
   private assertOverlaySurface(surface: Surface, epoch: number | undefined, cardId?: string): void {
     const session = this.overlay;
@@ -1508,13 +1892,22 @@ export class DesktopLayer {
   }
   private async panelAction(
     cardId: string,
-    action: "show" | "hide" | "pin" | "passthrough" | "open",
+    action: "show" | "hide" | "pin" | "passthrough" | "open" | "close",
     value?: boolean,
   ): Promise<unknown> {
     const card = this.cards.get(cardId);
     if (!card || !overlayPanelKind(card))
       throw new AppError("permissionDenied", "插件栏面板已失效");
-    action = z.enum(["show", "hide", "pin", "passthrough", "open"]).parse(action);
+    action = z.enum(["show", "hide", "pin", "passthrough", "open", "close"]).parse(action);
+    if (await this.options.onOverlayPanelAction?.(card, action, value)) {
+      this.refresh();
+      if (action === "show") {
+        this.restackOverlay();
+        await this.activatePanel(cardId);
+      }
+      return;
+    }
+    if (action === "close") return this.options.onOverlayPanelClose?.(card);
     if (action === "open") {
       if (!this.isCardVisible(card.id) && !this.external.get(card.id)?.value?.visible)
         throw new AppError("permissionDenied", "请先显示面板");
@@ -1582,6 +1975,10 @@ export class DesktopLayer {
       if (this.overlayGesture?.cardId === card.id) this.overlayGesture = undefined;
     }
     this.refresh();
+    if (action === "show") {
+      this.restackOverlay();
+      await this.activatePanel(cardId);
+    }
     return;
   }
   private beginPresentation(surface: Surface): void {
@@ -1607,12 +2004,29 @@ export class DesktopLayer {
       clearTimeout(timer);
       surface.commit = undefined;
       if (ok) {
-        surface.window.completePresentation();
-        this.restack();
+        if (!this.revealBatch?.has(surface)) {
+          surface.window.completePresentation();
+          this.restack();
+        }
       }
       resolve(ok);
     };
     surface.commit = { promise, finish };
+    this.revealBatch?.add(surface);
+  }
+  private async revealTogether(batch: Set<Surface>): Promise<void> {
+    if (this.revealBatch !== batch) return;
+    this.revealBatch = undefined;
+    for (const surface of batch) surface.window.completePresentation();
+    const pending: Promise<void>[] = [];
+    for (const entry of this.external.values()) {
+      if (!entry.value?.deferReveal) continue;
+      const { deferReveal: _deferred, ...value } = entry.value;
+      entry.value = value;
+      pending.push(Promise.resolve(entry.participant.reveal?.()));
+    }
+    await Promise.all(pending);
+    this.restack();
   }
   private async waitPresentations(ids: Iterable<string>): Promise<boolean> {
     return (
@@ -1643,18 +2057,28 @@ export class DesktopLayer {
   private overlayPanels(): DesktopOverlayPanel[] {
     return [...this.cards.values()].flatMap((card) => {
       const kind = overlayPanelKind(card);
-      if (!kind || !card.visible || (kind === "notes" && !this.options.flags().notesEnabled))
+      if (this.options.overlayEligible?.(card) === false) return [];
+      if (
+        !kind ||
+        (!card.visible && !card.cardDesktopMember && !card.cardDesktopOnly) ||
+        (kind === "notes" && !this.options.flags().notesEnabled)
+      )
         return [];
       const payload = card.payload as { items?: Array<{ title?: string }> } | undefined;
       return [
         {
           cardId: card.id,
+          pluginId: card.pluginId ?? card.widget?.pluginId,
+          pluginTitle: card.pluginTitle,
+          pluginIcon: card.pluginIcon,
           title:
             card.title ??
             payload?.items?.[0]?.title ??
             (kind === "notes" ? "便签" : kind === "traffic" ? "流量监控" : "截图贴图"),
           kind,
-          selected: this.overlayLayout.get(overlayPanelKey(card))?.selected !== false,
+          selected:
+            this.options.overlaySelected?.(card) ??
+            this.overlayLayout.get(overlayPanelKey(card))?.selected !== false,
           pinned: card.group === "top",
           inputMode: card.inputMode,
         },
@@ -1711,6 +2135,7 @@ export class DesktopLayer {
       previews: new Set(),
       menus: new Set(),
     };
+    const batch = (this.revealBatch = new Set<Surface>());
     this.overlay = session;
     this.reconcile();
     const committed = await this.waitPresentations(session.members);
@@ -1725,12 +2150,15 @@ export class DesktopLayer {
       await this.closeOverlay(false);
       throw new AppError("layer.presentationFailed", "插件栏窗口未能就绪，已恢复桌面");
     }
+    await this.revealTogether(batch);
+    if (this.overlay !== session) return;
     surface.window.win.focus();
     this.restackOverlay();
   }
   closeOverlay(restoreFocus = true): Promise<void> {
     if (!this.overlay) return this.overlayClosing ?? Promise.resolve();
     const session = this.overlay;
+    const batch = (this.revealBatch = new Set<Surface>());
     this.overlay = undefined;
     this.overlayGesture = undefined;
     this.cancelConsumerPointers();
@@ -1738,6 +2166,7 @@ export class DesktopLayer {
     const closing = (async () => {
       await this.waitPresentations(session.members);
       await this.waitExternalPresentations();
+      await this.revealTogether(batch);
       if (this.overlayEpoch === session.epoch && !this.overlay)
         await this.options.onOverlayClosed?.(restoreFocus);
     })().catch((error) => this.diagnostic("overlay-focus", error));

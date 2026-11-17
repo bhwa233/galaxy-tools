@@ -13,14 +13,20 @@ const selection = z.strictObject({
     .max(65536)
     .refine((text) => Buffer.byteLength(text, "utf8") <= 65536),
 });
-const foreground = z.strictObject({ id: z.uuid(), window: z.number().int().nonnegative() });
+const foreground = z.strictObject({
+  id: z.uuid(),
+  window: z.number().int().nonnegative(),
+  pid: z.number().int().nonnegative().optional(),
+  ownerVisible: z.boolean().optional(),
+});
+type Foreground = Omit<z.infer<typeof foreground>, "id">;
 interface SelectionWorker {
   child: ChildProcessWithoutNullStreams;
   ready: Promise<void>;
   exited: Promise<void>;
   active: boolean;
   finish?: (text: string) => void;
-  foreground?: (window: number) => void;
+  foreground?: (window: number, pid?: number, ownerVisible?: boolean) => void;
 }
 
 /** Reuses windows-runtime's in-box compiler and the host's cache primitives.
@@ -54,18 +60,33 @@ export class NativeSelectionReader {
    * unless a warm helper answers almost immediately: a cold helper must not
    * delay the panel, and the read then degrades to an empty input. */
   async target(signal: AbortSignal): Promise<number> {
-    if (process.platform !== "win32" || signal.aborted || this.abort.signal.aborted) return 0;
+    return (await this.sampleForeground(signal, "foreground")).window;
+  }
+
+  /** Read-only focus sample; it does not replace the saved restoration target. */
+  observeForeground(ownerPid: number): Promise<Foreground> {
+    return this.sampleForeground(this.abort.signal, "observe", ownerPid);
+  }
+
+  private async sampleForeground(
+    signal: AbortSignal,
+    operation: "foreground" | "observe",
+    ownerPid?: number,
+  ): Promise<Foreground> {
+    if (process.platform !== "win32" || signal.aborted || this.abort.signal.aborted)
+      return { window: 0 };
     const worker = this.worker;
-    if (!worker?.active || worker.finish || worker.foreground) return 0;
+    if (!worker?.active || worker.finish || worker.foreground) return { window: 0 };
     const id = randomUUID();
-    return new Promise<number>((resolve) => {
-      const settle = (window: number) => {
+    return new Promise<Foreground>((resolve) => {
+      const settle = (window: number, pid?: number, ownerVisible?: boolean) => {
         clearTimeout(timer);
         signal.removeEventListener("abort", fail);
         worker.foreground = undefined;
         this.requests.delete(worker);
-        this.capturedTarget = window > 0 && worker.active ? { worker, window } : undefined;
-        resolve(window);
+        if (operation === "foreground")
+          this.capturedTarget = window > 0 && worker.active ? { worker, window } : undefined;
+        resolve({ window, pid, ownerVisible });
       };
       // A slow sample only costs accuracy: never kill the warm helper for it,
       // otherwise every missed deadline turns the next read into a cold start.
@@ -75,12 +96,15 @@ export class NativeSelectionReader {
         this.retire(worker);
       };
       const timer = setTimeout(timeout, 120);
-      worker.foreground = (window) => settle(window);
+      worker.foreground = settle;
       this.requests.set(worker, { id, kind: "foreground" });
       signal.addEventListener("abort", fail, { once: true });
-      worker.child.stdin.write(JSON.stringify({ id, operation: "foreground" }) + "\n", (error) => {
-        if (error) fail();
-      });
+      worker.child.stdin.write(
+        JSON.stringify({ id, operation, ...(ownerPid ? { targetWindow: ownerPid } : {}) }) + "\n",
+        (error) => {
+          if (error) fail();
+        },
+      );
     });
   }
 
@@ -284,7 +308,7 @@ export class NativeSelectionReader {
               const result = foreground.safeParse(message);
               if (!result.success || result.data.id !== request.id) return fail();
               this.requests.delete(worker);
-              worker.foreground?.(result.data.window);
+              worker.foreground?.(result.data.window, result.data.pid, result.data.ownerVisible);
             }
           }
         } catch {

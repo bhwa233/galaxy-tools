@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import semver from "semver";
 import { isPluginPackagePath } from "@spark233/sdk";
+import { getPluginVersionDirectory } from "./package-installer.js";
 import { AppError, atomicWrite, canonical, confined, inside, readJson } from "../persistence.js";
 import {
   PluginManager,
@@ -462,10 +463,11 @@ export class PluginBackupService {
     const relative = path
       .relative(
         canonical(this.options.pluginRoot),
-        path.join(
-          layout.packages.versionsRoot,
-          encodeURIComponent(record.pluginId),
-          encodeURIComponent(record.version),
+        getPluginVersionDirectory(
+          layout.packages,
+          record.pluginId,
+          record.version,
+          record.development,
         ),
       )
       .split(path.sep)
@@ -898,10 +900,11 @@ export class PluginBackupService {
             }
             const next = this.options.manager.validateBackupSnapshot(manifest.manager, (record) =>
               stagedPath(
-                path.join(
-                  this.options.manager.getBackupLayout().packages.versionsRoot,
-                  encodeURIComponent(record.pluginId),
-                  encodeURIComponent(record.version),
+                getPluginVersionDirectory(
+                  this.options.manager.getBackupLayout().packages,
+                  record.pluginId,
+                  record.version,
+                  record.development,
                 ),
               ),
             );

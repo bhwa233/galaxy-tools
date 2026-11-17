@@ -121,6 +121,7 @@ export function Shell() {
         <DesktopPanelToolbar
           locale={desktop.locale}
           pinned={desktop.card.group === "top"}
+          canPin={desktop.mode !== "overlay"}
           onPin={() =>
             action("desktop-action", { action: "pin", value: desktop.card.group !== "top" })
           }

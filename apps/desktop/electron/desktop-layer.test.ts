@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LayerCard, LayerClientRequest, LayerEvent } from "../shared/layer-contract.js";
-import { DesktopLayer } from "./desktop-layer.js";
+import { DesktopLayer, type DesktopLayerOptions } from "./desktop-layer.js";
 import { LayerWindow } from "./layer-window.js";
 import { LayerLayoutStore } from "./layer-layout-store.js";
 import { UToolsDesktopHost } from "./plugins/utools-desktop.js";
@@ -19,7 +19,7 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function fixture() {
+async function fixture(options: Partial<DesktopLayerOptions> = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-overlay-"));
   const area = { x: -1600, y: -100, width: 1600, height: 1000 };
   const cards: LayerCard[] = [
@@ -78,6 +78,7 @@ async function fixture() {
     flags: () => ({ enabled: true, notesEnabled: true, webEnabled: true }),
     diagnostic: vi.fn(),
     onOverlayClosed: restored,
+    ...options,
     createWindow: (spec) => {
       let visible = false,
         destroyed = false,
@@ -106,6 +107,7 @@ async function fixture() {
         setAlwaysOnTop: vi.fn(),
         setShape: vi.fn(),
         moveAbove: vi.fn(),
+        moveTop: vi.fn(),
         focus: vi.fn(),
         isFocused: () => false,
         getMediaSourceId: () => spec.id,
@@ -201,6 +203,43 @@ it("reuses source windows, moves only bar geometry and restores native presentat
   expect(f.store.load().revision).toBe(revision);
   expect(f.cards).toEqual(original);
   expect(f.restored).toHaveBeenCalledTimes(3);
+});
+
+it("reveals the shade and ready cards together after a slow participant commits", async () => {
+  const f = await fixture();
+  const card = {
+    ...f.cards[1]!,
+    id: "slow-window",
+    renderKind: "window" as const,
+    renderRef: "slow-window",
+  };
+  f.cards.push(card);
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const reveal = vi.fn();
+  const stop = f.layer.registerExternal(card.id, {
+    present: async (value) => {
+      if (value.mode === "overlay") {
+        entered.resolve();
+        await release.promise;
+      }
+    },
+    reveal,
+  });
+  try {
+    const opening = f.layer.openOverlay();
+    await entered.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.natives.every((window) => !window.isVisible())).toBe(true);
+    expect(reveal).not.toHaveBeenCalled();
+    release.resolve();
+    await opening;
+    expect(f.natives.every((window) => window.isVisible())).toBe(true);
+    expect(reveal).toHaveBeenCalledOnce();
+  } finally {
+    release.resolve();
+    stop();
+  }
 });
 
 it("projects compatibility-owned windows without creating content surfaces and keeps desktop and bar placement independent", async () => {
@@ -331,6 +370,312 @@ it("rejects requests from a replaced compatibility owner and restores the saved 
   await host.retry(identity);
   await expect.poll(() => host.list()[0]?.status).toBe("active");
   expect(host.list()[0]?.widgetInstanceId).toBe(identity);
+});
+
+it("waits for a located window's presentation and cancels focus after the overlay closes", async () => {
+  const f = await fixture();
+  const card: LayerCard = {
+    ...f.cards[1],
+    id: "external-window",
+    renderKind: "window",
+    renderRef: "existing-instance",
+    cardDesktopOnly: true,
+    cardDesktopMember: true,
+  };
+  f.cards.push(card);
+  const activate = vi.fn();
+  let hold = false;
+  let release!: () => void;
+  let started!: () => void;
+  let presenting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const stop = f.layer.registerExternal(card.id, {
+    present: async (value) => {
+      if (hold && value.mode === "overlay" && value.visible) {
+        started();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+    },
+    activate,
+  });
+  try {
+    await f.layer.openOverlay();
+    await f.layer.externalPanel(card.id, "hide");
+    hold = true;
+    const locating = f.layer.locateWindow("existing-instance");
+    await presenting;
+    expect(activate).not.toHaveBeenCalled();
+    release();
+    await locating;
+    expect(activate).toHaveBeenCalledOnce();
+    await f.layer.externalPanel(card.id, "hide");
+    presenting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const obsolete = f.layer.locateWindow("existing-instance");
+    await presenting;
+    const closing = f.layer.closeOverlay(false);
+    release();
+    await Promise.all([obsolete, closing]);
+    expect(activate).toHaveBeenCalledOnce();
+  } finally {
+    hold = false;
+    release?.();
+    stop();
+  }
+});
+
+it("gives only the current host transient input priority and restores card focus without saving layout", async () => {
+  const f = await fixture();
+  const card: LayerCard = {
+    ...f.cards[1],
+    id: "native-card",
+    renderKind: "window",
+    renderRef: "native-instance",
+    cardDesktopMember: true,
+  };
+  const cachedCard: LayerCard = { ...card, id: "cached-native-card", renderRef: "cached-instance" };
+  f.cards.push(cachedCard, card);
+  const activateCached = vi.fn();
+  // A uTools blur report can arrive after another HWND has already reported
+  // focus. Its cached `true` must not replace the most recent native event.
+  const stopCached = f.layer.registerExternal(cachedCard.id, {
+    focus: () => true,
+    activate: activateCached,
+    present: async () => {},
+  });
+  const activate = vi.fn();
+  const restack = vi.fn();
+  let focused = true;
+  let release!: () => void;
+  let blocking = false;
+  const stop = f.layer.registerExternal(card.id, {
+    focus: () => focused,
+    activate,
+    restack,
+    present: async (value) => {
+      if (blocking && value.inputBlocked)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+    },
+  });
+  try {
+    await f.layer.openOverlay();
+    f.layer.noteOverlayFocus(card.id);
+    f.layer.restackOverlay();
+    const hostId = [
+      ...new Set(f.cards.map((value) => f.layer.surfaceForCard(value.id)).filter(Boolean)),
+    ].find((id) => f.layer.snapshot(id!).overlay?.host)!;
+    const otherId = f.layer.surfaceForCard("image")!;
+    const epoch = f.layer.snapshot(hostId).overlay!.epoch!;
+    const original = structuredClone(f.cards);
+    const revision = f.store.load().revision;
+    blocking = true;
+    const modalId = "11111111-1111-4111-8111-111111111111";
+    await expect(
+      f.invoke(otherId, {
+        type: "overlay-transient",
+        id: modalId,
+        kind: "modal",
+        open: true,
+        overlayEpoch: epoch,
+      }),
+    ).rejects.toThrow("workspace host");
+    let acknowledged = false;
+    const opening = f
+      .invoke(hostId, {
+        type: "overlay-transient",
+        id: modalId,
+        kind: "modal",
+        open: true,
+        overlayEpoch: epoch,
+      })
+      .then(() => {
+        acknowledged = true;
+      });
+    await expect.poll(() => !!release).toBe(true);
+    expect(acknowledged).toBe(false);
+    expect(f.layer.externalPresentation(card.id)?.inputBlocked).toBe(true);
+    expect(f.layer.windowForCard("image")!.setFocusable).toHaveBeenLastCalledWith(false);
+    await expect(f.invoke(otherId, { type: "overlay-close", overlayEpoch: epoch })).rejects.toThrow(
+      "管理面板",
+    );
+    await expect(f.layer.externalPanel(card.id, "hide")).rejects.toThrow("管理面板");
+    release();
+    blocking = false;
+    focused = false;
+    await opening;
+    restack.mockClear();
+    f.layer.restackOverlay();
+    f.layer.refresh();
+    await Promise.resolve();
+    expect(restack).not.toHaveBeenCalled();
+    const host = f.layer.windowForCard("note")!;
+    expect(host.moveTop).toHaveBeenCalled();
+    const menuId = "22222222-2222-4222-8222-222222222222";
+    await f.invoke(hostId, {
+      type: "overlay-transient",
+      id: menuId,
+      kind: "menu",
+      open: true,
+      overlayEpoch: epoch,
+    });
+    await expect(
+      f.invoke(hostId, {
+        type: "overlay-transient",
+        id: modalId,
+        kind: "modal",
+        open: false,
+        overlayEpoch: epoch,
+      }),
+    ).rejects.toThrow("失效");
+    expect(f.layer.snapshot(hostId).overlay?.transient?.id).toBe(menuId);
+    await f.invoke(hostId, {
+      type: "overlay-transient",
+      id: menuId,
+      kind: "menu",
+      open: false,
+      overlayEpoch: epoch,
+    });
+    expect(f.layer.overlayInputBlocked).toBe(false);
+    expect(activate).toHaveBeenCalledOnce();
+    expect(activateCached).not.toHaveBeenCalled();
+    expect(f.layer.externalPresentation(card.id)?.inputBlocked).toBe(false);
+    expect(f.layer.noteOverlayFocus(card.id)).toBe(false);
+    expect(f.cards).toEqual(original);
+    expect(f.store.load().revision).toBe(revision);
+  } finally {
+    release?.();
+    stop();
+    stopCached();
+  }
+});
+
+it("keeps a failed add modal and reuses the created identity while waiting for native presentation", async () => {
+  let complete!: (value: { instanceId: string }) => void;
+  const create = vi.fn(
+    () =>
+      new Promise<{ instanceId: string }>((resolve) => {
+        complete = resolve;
+      }),
+  );
+  const f = await fixture({
+    overlayLaunchers: () => [
+      {
+        pluginId: "fixture",
+        commandId: "document",
+        title: "Document",
+        plugin: "Fixture",
+        favorite: false,
+        windowId: "document",
+      },
+    ],
+    onOverlayLaunch: create,
+  });
+  await f.layer.openOverlay();
+  const hostId = f.layer.surfaceForCard("note")!;
+  const epoch = f.layer.snapshot(hostId).overlay!.epoch!;
+  const id = "33333333-3333-4333-8333-333333333333";
+  await f.invoke(hostId, {
+    type: "overlay-transient",
+    id,
+    kind: "modal",
+    open: true,
+    overlayEpoch: epoch,
+  });
+  const request = {
+    type: "overlay-launch" as const,
+    pluginId: "fixture",
+    commandId: "document",
+    transientId: id,
+    overlayEpoch: epoch,
+  };
+  const first = f.invoke(hostId, request);
+  const duplicate = f.invoke(hostId, request);
+  const rejected = Promise.allSettled([first, duplicate]);
+  expect(create).toHaveBeenCalledOnce();
+  expect(create).toHaveBeenCalledWith("fixture", "document", id);
+  const card: LayerCard = {
+    ...f.cards[1],
+    id: "created-card",
+    renderKind: "window",
+    renderRef: "created-instance",
+    cardDesktopMember: true,
+  };
+  f.cards.push(card);
+  let fail = true;
+  const activate = vi.fn();
+  const stop = f.layer.registerExternal(card.id, {
+    present: async (value) => {
+      if (fail && value.mode === "overlay") throw new Error("native presentation refused");
+    },
+    activate,
+  });
+  try {
+    complete({ instanceId: "created-instance" });
+    expect((await rejected).every((value) => value.status === "rejected")).toBe(true);
+    expect(f.layer.snapshot(hostId).overlay?.transient?.id).toBe(id);
+    expect(f.layer.overlayInputBlocked).toBe(true);
+    fail = false;
+    await expect(f.invoke(hostId, request)).resolves.toEqual({ cardId: card.id });
+    expect(create).toHaveBeenCalledOnce();
+    expect(activate).not.toHaveBeenCalled();
+    await f.invoke(hostId, {
+      type: "overlay-transient",
+      id,
+      kind: "modal",
+      open: false,
+      activateCardId: card.id,
+      overlayEpoch: epoch,
+    });
+    expect(activate).toHaveBeenCalledOnce();
+    await expect(f.invoke(hostId, request)).rejects.toThrow("失效");
+    expect(create).toHaveBeenCalledOnce();
+  } finally {
+    stop();
+  }
+});
+
+it("rolls back transient input constraints when a native participant rejects opening", async () => {
+  const f = await fixture();
+  const activate = vi.fn();
+  const card: LayerCard = {
+    ...f.cards[1],
+    id: "rejecting-card",
+    renderKind: "window",
+    cardDesktopMember: true,
+  };
+  f.cards.push(card);
+  const stop = f.layer.registerExternal(card.id, {
+    focus: () => true,
+    activate,
+    present: async (value) => {
+      if (value.inputBlocked) throw new Error("blocked presentation refused");
+    },
+  });
+  try {
+    await f.layer.openOverlay();
+    const hostId = f.layer.surfaceForCard("note")!;
+    await expect(
+      f.invoke(hostId, {
+        type: "overlay-transient",
+        id: "44444444-4444-4444-8444-444444444444",
+        kind: "modal",
+        open: true,
+        overlayEpoch: f.layer.snapshot(hostId).overlay!.epoch,
+      }),
+    ).rejects.toThrow("blocked presentation refused");
+    expect(f.layer.overlayActive).toBe(true);
+    expect(f.layer.overlayInputBlocked).toBe(false);
+    expect(f.layer.externalPresentation(card.id)?.inputBlocked).toBe(false);
+    expect(activate).toHaveBeenCalledOnce();
+  } finally {
+    stop();
+  }
 });
 
 it("rejects old sessions and cross-surface authority, and derives native drag from trusted cursor DIPs", async () => {

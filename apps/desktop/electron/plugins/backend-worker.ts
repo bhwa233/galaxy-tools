@@ -8,6 +8,7 @@ import type {
   PluginDataMigration,
   PluginMigrationContext,
   PluginMigrationResult,
+  WindowBinding,
 } from "@spark233/sdk";
 import type { StopDecision } from "./resources.js";
 
@@ -21,10 +22,12 @@ export interface BackendContext {
   /** Scoped platform effect; once issued, await its final result before committing data. */
   callHost: (call: BackendHostCall) => Promise<void>;
 }
-export type BackendHostCall = {
-  operation: "file.trash" | "storage.protectRoot";
-  path: string;
-};
+export type BackendHostCall =
+  | {
+      operation: "file.trash" | "storage.protectRoot";
+      path: string;
+    }
+  | { operation: "window.open"; binding: WindowBinding; action: "open" | "create" };
 export interface BackendPlugin {
   activate?: (
     activation: PluginActivation,

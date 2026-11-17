@@ -11,11 +11,14 @@ import type {
   StopReason,
   PluginDataMigration,
   PluginCapability,
+  WindowBinding,
 } from "@spark233/sdk";
 import type { BackendMessage, BackendRequest, BackendHostCall } from "./backend-worker.js";
 import { AppError, confined, canonical } from "../persistence.js";
 import { PluginResourceScope, samePluginOwner, type StopDecision } from "./resources.js";
 import { PendingRequests } from "./pending-requests.js";
+import { windowBindingSchema } from "@spark233/sdk";
+import { routePluginWindow, windowOpenContext } from "../host/plugin-window-routing.js";
 
 export interface PluginBackendController {
   readonly owner: PluginOwner;
@@ -29,6 +32,8 @@ export interface PluginBackendController {
   dispose(): Promise<void>;
 }
 export interface TrustedBackendOptions {
+  /** Transient declarations bypass durable placement coordination. */
+  openTransientWindow?: (binding: WindowBinding, action: "open" | "create") => Promise<boolean>;
   scope: PluginResourceScope;
   pluginRoot: string;
   /** Absolute, validated manifest backend entry. */
@@ -91,6 +96,10 @@ class UtilityBackend implements PluginBackendController {
   private exitPromise: Promise<number>;
   private finishExit!: (code: number) => void;
   private hostCalls = new Map<string, AbortController>();
+  private invocationWindows = new Map<
+    string,
+    NonNullable<ReturnType<typeof windowOpenContext.getStore>>
+  >();
 
   constructor(
     private child: UtilityProcess,
@@ -191,6 +200,59 @@ class UtilityBackend implements PluginBackendController {
     if (this.hostCalls.has(message.callId)) return;
     const controller = new AbortController();
     try {
+      if (message.call?.operation === "window.open") {
+        if (
+          !/^[a-f0-9-]{36}$/i.test(message.callId) ||
+          this.hostCalls.size >= 32 ||
+          this.exited ||
+          this.disposing ||
+          !this.options.scope.accepts(message.owner) ||
+          this.pending.meta(message.requestId) !== "activate"
+        )
+          throw new AppError("permissionDenied", "窗口调用不属于活跃插件请求");
+        const context = this.invocationWindows.get(message.requestId);
+        const binding = windowBindingSchema.parse(message.call.binding);
+        if (
+          message.call.operation !== "window.open" ||
+          (message.call.action !== "open" && message.call.action !== "create")
+        )
+          throw new AppError("invalidPayload", "窗口操作不合法");
+        const action = message.call.action;
+        this.hostCalls.set(message.callId, controller);
+        await windowOpenContext.run(
+          {
+            ...(context ?? { environment: "desktop" }),
+            assertActive: () => {
+              context?.assertActive?.();
+              if (
+                !this.pending.has(message.requestId) ||
+                !this.options.scope.accepts(message.owner) ||
+                controller.signal.aborted
+              )
+                throw new AppError("pluginStopping", "窗口来源请求已结束");
+            },
+          },
+          async () => {
+            if (await this.options.openTransientWindow?.(binding, action)) return;
+            // Business creation/restoration already owns the plugin queue. A
+            // transient dialog is independent; another business open would deadlock.
+            if (context?.coordinated)
+              throw new AppError("window.recursiveOpen", "窗口创建或恢复期间不能递归打开窗口");
+            if (!(await routePluginWindow(this.owner.pluginId, binding, action)))
+              throw new AppError("window.unavailable", "窗口协调器不可用");
+          },
+        );
+        if (!this.options.scope.accepts(message.owner) || controller.signal.aborted)
+          throw new AppError("pluginDisabled", "窗口调用所属插件已停止");
+        this.child.postMessage({
+          type: "host-reply",
+          owner: this.owner,
+          requestId: message.requestId,
+          callId: message.callId,
+          ok: true,
+        });
+        return;
+      }
       if (
         !/^[a-f0-9-]{36}$/i.test(message.callId) ||
         this.hostCalls.size >= 32 ||
@@ -326,6 +388,10 @@ class UtilityBackend implements PluginBackendController {
       throw new Error("Plugin backend is not accepting commands");
     this.prepared = false;
     const requestId = randomUUID();
+    this.invocationWindows.set(
+      requestId,
+      windowOpenContext.getStore() ?? { environment: "desktop" },
+    );
     const release = this.options.scope.own("task", {
       dispose: () => {
         if (!this.pending.has(requestId)) return;
@@ -344,6 +410,7 @@ class UtilityBackend implements PluginBackendController {
         signal ? { signal, cancel: () => void release().catch(() => {}) } : undefined,
       );
     } finally {
+      this.invocationWindows.delete(requestId);
       await release();
     }
   }

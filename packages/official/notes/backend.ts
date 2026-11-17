@@ -40,6 +40,7 @@ const schemas = {
   "note.revision": z.object({ id, versionId: z.uuid() }),
   "note.restore": z.object({ id, versionId: z.uuid(), expectedRevision: z.string().length(64) }),
   "note.save": z.object({ request: save, id: id.optional() }),
+  "note.create": z.object({ creationId: z.uuid(), request: save }),
   "note.append": z.object({ id, content: text }),
   "note.delete": z.object({ id }),
   "note.setEditorMode": z.object({ id, mode: z.enum(["text", "markdown"]) }),
@@ -198,6 +199,8 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
         return store.get(request.id);
       case "note.save":
         return store.save(request.request, request.id);
+      case "note.create":
+        return store.createIdempotent(request.creationId, request.request);
       case "note.append": {
         const note = store.get(request.id);
         return store.save(
@@ -345,6 +348,21 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
   return {
     async activate(activation: PluginActivation, context: BackendContext) {
       if (!activation.commandId) return;
+      if (activation.commandId === "window-create") {
+        if (lifetime.startupCheckOnly)
+          throw new AppError("pluginDisabled", "Startup validation cannot create notes");
+        const input = z
+          .strictObject({ creationId: z.uuid(), windowId: z.enum(["notepad", "tile"]) })
+          .parse(activation.parameters);
+        const note = await enqueue(context, () =>
+          store.createIdempotent(input.creationId, { title: "", content: "", category: "" }),
+        );
+        context.emit("notes-data-changed", { action: "note.create" });
+        return {
+          kind: "window-binding",
+          binding: { windowId: input.windowId, contentId: note.id, parameterVersion: 1 },
+        };
+      }
       if (activation.commandId !== "data") {
         if (!["open", "new", "search", "open-note", "desktop-note"].includes(activation.commandId))
           throw new AppError("unknownPluginCommand", "Unknown notes command");
@@ -360,6 +378,7 @@ export default function notesBackend(lifetime: BackendContext): BackendPlugin {
       if (
         [
           "note.save",
+          "note.create",
           "note.append",
           "note.delete",
           "note.restore",

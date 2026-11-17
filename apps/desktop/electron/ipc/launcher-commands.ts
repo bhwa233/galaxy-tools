@@ -6,6 +6,8 @@ import { z } from "zod";
 import { AppError, atomicWrite } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
 import type { CommandHandler, CommandInvocation } from "./invocation.js";
+import { presentationGuard, supersedePresentation } from "../host/presentation-epoch.js";
+import { windowOpenContext } from "../host/plugin-window-routing.js";
 export function createLauncherCommands(
   ctx: Pick<
     RuntimeContext,
@@ -119,19 +121,34 @@ export function createLauncherCommands(
           }
         }
         case "launcher_execute": {
+          supersedePresentation();
+          const presentation = presentationGuard();
+          const parent = windowOpenContext.getStore();
           const callerId = ctx.launcherCaller(win);
           const execution = {
             callerId,
             active: true,
             query: ctx.launcher.queryIdentity(callerId),
           };
-          return ctx.launcherExecutions.run(execution, async () => {
-            try {
-              return await ctx.launcher.execute(args, execution.callerId);
-            } finally {
-              execution.active = false;
-            }
-          });
+          return windowOpenContext.run(
+            {
+              ...parent,
+              environment: parent?.environment ?? "desktop",
+              presentation,
+              assertActive: () => {
+                parent?.assertActive?.();
+                if (!presentation()) throw new AppError("cancelled", "操作已被新的展示意图替代");
+              },
+            },
+            () =>
+              ctx.launcherExecutions.run(execution, async () => {
+                try {
+                  return await ctx.launcher.execute(args, execution.callerId);
+                } finally {
+                  execution.active = false;
+                }
+              }),
+          );
         }
         case "launcher_complete_onboarding":
           ctx.launcher.completeOnboarding();

@@ -13,6 +13,9 @@ import { pluginPresentation } from "../plugins/presentation.js";
 import type { PluginWindowActivation, PluginWindowInfo } from "../../shared/plugin-windows.js";
 import { PluginWindowActivations } from "./plugin-window-activations.js";
 import { PluginWindowStateStore } from "./plugin-window-state.js";
+import { unifiedWindowControl } from "./plugin-window-adapters.js";
+import { routePluginWindow, windowOpenContext } from "./plugin-window-routing.js";
+import { supersedePresentation } from "./presentation-epoch.js";
 
 /** desktop-windows owns this domain; shared state remains in the composition root. */
 export function createDesktopWindows(
@@ -208,6 +211,8 @@ export function createDesktopWindows(
       icon: presentation.iconData,
       presentation: presentation.window?.presentation ?? "standard",
       maximizable: presentation.window?.maximizable ?? true,
+      minimizable: presentation.window?.minimizable ?? true,
+      chrome: presentation.window?.chrome ?? "host",
       commands: ctx
         .pluginHost!.manager.commands(true)
         .map(({ pluginId, command }) => `${pluginId}:${command.id}`),
@@ -219,6 +224,7 @@ export function createDesktopWindows(
     payload?: unknown,
     placement?: "cursor" | "edge",
   ): Promise<BrowserWindow> {
+    windowOpenContext.getStore()?.assertActive?.();
     if (ctx.lifecycle.blocked) throw new AppError("hostStopping", "Host is not available");
     const renderer = ctx.officialRenderers.get(pluginId);
     if (!ctx.pluginHost || !renderer || renderer.scope.state !== "active")
@@ -232,8 +238,26 @@ export function createDesktopWindows(
     if (!presentation.window)
       throw new AppError("invalidPlugin", "Plugin window profile is not declared");
     const declaration = presentation.window;
+    if (
+      declaration.purpose !== "dialog" &&
+      (await routePluginWindow(pluginId, {
+        windowId: profile,
+        parameterVersion: declaration.restore?.parameterVersion ?? 1,
+        ...(payload === undefined
+          ? {}
+          : { parameters: payload as import("@spark233/sdk").JsonValue }),
+      }))
+    ) {
+      const target = [...ctx.windows.values()].find(
+        (candidate) =>
+          ctx.layouts.get(labelOf(candidate))?.pluginId === pluginId &&
+          ctx.layouts.get(labelOf(candidate))?.windowProfile === profile,
+      );
+      if (!target) throw new Error("Coordinated window did not attach");
+      return target;
+    }
     const previous =
-      declaration.reuse === "document"
+      declaration.reuse === "document" || declaration.reuse === "multiple"
         ? undefined
         : [...ctx.layouts.values()].find(
             (layout) =>
@@ -243,7 +267,7 @@ export function createDesktopWindows(
           );
     const saved = pluginWindowStates().get(pluginId, profile);
     const layout: Layout = previous ?? {
-      label: `plugin:${pluginId}:${profile}${declaration.reuse === "document" ? `:${randomUUID()}` : ""}`,
+      label: `plugin:${pluginId}:${profile}${declaration.reuse === "document" || declaration.reuse === "multiple" ? `:${windowOpenContext.getStore()?.instanceId ?? randomUUID()}` : ""}`,
       view: "launcher",
       pluginId,
       windowProfile: profile,
@@ -283,6 +307,7 @@ export function createDesktopWindows(
   function remember(win: BrowserWindow): void {
     const layout = ctx.layouts.get(labelOf(win));
     if (!layout || win.isDestroyed()) return;
+    if (unifiedWindowControl(win)) return;
     layout.bounds = layout.pluginId ? win.getNormalBounds() : win.getBounds();
     if (layout.pluginId && layout.windowProfile) {
       pluginWindowStates().remember({
@@ -363,6 +388,7 @@ export function createDesktopWindows(
       // acknowledged readiness, reuse remains immediate for later hotkeys.
       // An existing desktop card is located (raised and highlighted) instead.
       const modes = ctx.windowModes.get(existing.id);
+      if (windowOpenContext.getStore()?.coordinated) return existing;
       if (modes?.onDesktop) modes.locate();
       else if (layout.label !== "launcher" || ctx.ready.has(existing.id)) {
         if (!existing.isVisible()) existing.show();
@@ -384,6 +410,9 @@ export function createDesktopWindows(
         presentationConfig?.image ?? hostConfig?.image ?? path.join(ctx.here, "assets/icon.ico"),
       resizable: presentationConfig?.window?.resizable,
       maximizable: presentationConfig?.window?.maximizable,
+      minimizable: presentationConfig?.window?.minimizable,
+      maxWidth: presentationConfig?.window?.maxSize?.width,
+      maxHeight: presentationConfig?.window?.maxSize?.height,
       minWidth: presentationConfig?.window?.minSize
         ? Math.min(presentationConfig.window.minSize.width, area.width)
         : layout.hostPage === "settings"
@@ -575,6 +604,7 @@ export function createDesktopWindows(
     win.on("close", (event) => {
       if (ctx.exiting) return;
       event.preventDefault();
+      if (unifiedWindowControl(win)) return;
       if (
         layout.label !== "launcher" &&
         isHostView(layout) &&
@@ -590,11 +620,9 @@ export function createDesktopWindows(
           (error) => ctx.reportError(error, win),
         );
     });
-    win.on("query-session-end", (event) => {
+    win.on("query-session-end", () => {
       if (ctx.exiting) return;
-      // Windows can otherwise terminate the renderer before its asynchronous
-      // durable-save handshake. Veto this attempt and close through the coordinator.
-      event.preventDefault();
+      // Start cleanup without vetoing the operating system's shutdown request.
       void ctx.quit();
     });
     win.on("closed", () => {
@@ -630,7 +658,7 @@ export function createDesktopWindows(
     // the plugin package's own renderer, which is the shipped artifact.
     const url = ctx.devUrl
       ? presentationConfig?.window
-        ? `${ctx.devUrl}/@fs/${presentationConfig.root.split(path.sep).join("/")}/${presentationConfig.window.entry}`
+        ? `${ctx.devUrl}/@fs/${presentationConfig.root.split(path.sep).join("/")}/${presentationConfig.pageEntry}`
         : ctx.devUrl
       : layout.pluginId
         ? `spark233://workspace/${encodeURIComponent(layout.pluginId)}/${presentationConfig?.entry ?? "index.html"}`
@@ -679,10 +707,16 @@ export function createDesktopWindows(
   }
 
   async function openHostSettings(target: NonNullable<Layout["settingsTarget"]>): Promise<boolean> {
-    if (ctx.lifecycle.blocked) return false;
+    if (ctx.lifecycle.shellBlocked) return false;
+    supersedePresentation();
     if (target.pluginId) ctx.pluginHost?.manager.describe(target.pluginId);
     const previous = ctx.windows.get("settings");
-    if (previous && ctx.ready.has(previous.id) && !(await ctx.prepare(previous))) return false;
+    const previousLayout = ctx.layouts.get("settings");
+    if (previous && !previous.isDestroyed() && previousLayout) {
+      createWindow(previousLayout);
+      if (!ctx.maintenance && ctx.ready.has(previous.id) && !(await ctx.prepare(previous)))
+        return false;
+    }
     const existingLayout = ctx.layouts.get("settings");
     const bounds =
       existingLayout?.bounds ??

@@ -14,7 +14,10 @@ afterEach(async () => {
 
 // Reuse the source-command tests' real Manager/package-file fixture pattern;
 // controlled resources exercise shutdown recovery without an Electron renderer or process.
-async function fixture(withWidget = false) {
+async function fixture(
+  withWidget = false,
+  onStartup?: (name: string, manager: PluginManager) => Promise<void>,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark233-shutdown-"));
   const versionsRoot = path.join(root, "versions"),
     stateFile = path.join(root, "state.json");
@@ -133,7 +136,8 @@ async function fixture(withWidget = false) {
               },
             }
           : {}),
-        activate: async () => {
+        activate: async (activation) => {
+          if (!activation.commandId) await onStartup?.(name, manager);
           if (paused) throw new Error("Owned service is still paused");
           activations.set(name, (activations.get(name) ?? 0) + 1);
           return { name, generation };
@@ -153,6 +157,22 @@ async function fixture(withWidget = false) {
   await manager.initialize();
   return { manager, controls, generations, activations, disposals, scopes, widgetExecutions };
 }
+
+test("keeps a ready plugin usable while another startup service is still initializing", async () => {
+  let checked = false;
+  await fixture(false, async (name, manager) => {
+    if (name !== "b") return;
+    await expect(
+      manager.activate("fixture.shutdown-a", { commandId: "ping" }),
+    ).resolves.toMatchObject({ name: "a" });
+    expect(manager.commands().some((value) => value.pluginId === "fixture.shutdown-b")).toBe(false);
+    expect(manager.list().find((value) => value.pluginId === "fixture.shutdown-b")?.status).toBe(
+      "starting",
+    );
+    checked = true;
+  });
+  expect(checked).toBe(true);
+});
 
 test("cancelled shutdown restores released startup services and resumes later prepared instances", async () => {
   const { manager, controls, activations, disposals, scopes } = await fixture();

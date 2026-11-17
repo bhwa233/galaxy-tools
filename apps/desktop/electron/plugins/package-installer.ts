@@ -9,7 +9,12 @@ import npmFetch from "npm-registry-fetch";
 import * as semver from "semver";
 import * as ssri from "ssri";
 import * as tar from "tar";
-import { isPluginPackagePath, type PluginPackageMetadata } from "@spark233/sdk";
+import {
+  isPluginPackagePath,
+  pluginDevelopmentBuildSchema,
+  type PluginDevelopmentBuild,
+  type PluginPackageMetadata,
+} from "@spark233/sdk";
 import { inside } from "../persistence.js";
 import {
   validatePluginDirectory,
@@ -112,6 +117,7 @@ export function getPluginVersionDirectory(
   paths: Pick<PluginPackagePaths, "versionsRoot">,
   pluginId: string,
   version: string,
+  development?: PluginDevelopmentBuild,
 ): string {
   if (!path.isAbsolute(paths.versionsRoot))
     throw new Error("Plugin versions root must be absolute");
@@ -122,7 +128,9 @@ export function getPluginVersionDirectory(
   ) {
     throw new Error("Invalid plugin identity for an exact version directory");
   }
-  return path.join(paths.versionsRoot, encodeURIComponent(pluginId), encodeURIComponent(version));
+  const build = development && pluginDevelopmentBuildSchema.parse(development);
+  const identity = build ? `${version}--dev-${build.buildId}` : version;
+  return path.join(paths.versionsRoot, encodeURIComponent(pluginId), encodeURIComponent(identity));
 }
 
 async function privateDirectory(directory: string): Promise<string> {
@@ -229,6 +237,7 @@ async function stagePackage(
       { versionsRoot },
       metadata.spark233.id,
       metadata.version,
+      metadata.spark233.development,
     );
     let identity: Stats;
     if (options.reuseExisting) {
@@ -243,6 +252,7 @@ async function stagePackage(
           name: metadata.name,
           version: metadata.version,
           pluginId: metadata.spark233.id,
+          development: metadata.spark233.development ?? null,
         });
         // Compare the bounded normalized tree, not only its manifest, before
         // reusing an immutable version for an explicit source-binding preview.

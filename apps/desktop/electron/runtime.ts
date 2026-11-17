@@ -32,6 +32,14 @@ import { createPluginSettings } from "./host/plugin-settings.js";
 import { createSurfaceCommands } from "./host/surface-commands.js";
 import { acquireDesktopInstance } from "./host/single-instance.js";
 import { createWindowClose } from "./host/window-close.js";
+import { pluginWindowCatalog } from "./host/plugin-window-catalog.js";
+import { PluginWindowLayoutStore } from "./host/plugin-window-state.js";
+import { PluginUninstallReceipts } from "./host/plugin-uninstall-receipts.js";
+import { PluginWindowCoordinator } from "./host/plugin-window-coordinator.js";
+import { PluginWindowAdapters } from "./host/plugin-window-adapters.js";
+import { startDesktopTrigger } from "./desktop-trigger.js";
+import { registerWindowRouter, windowOpenContext } from "./host/plugin-window-routing.js";
+import { migratePluginWindowLayout } from "./host/plugin-window-migration.js";
 import { createDispatch } from "./ipc/dispatch.js";
 import { createTransport } from "./ipc/transport.js";
 import { AppError, atomicWrite, canonical, confined, inside } from "./persistence.js";
@@ -73,11 +81,15 @@ import { type CaptureImage } from "./plugins/official/capture.js";
 import { type ClipboardRuntime } from "./plugins/official/clipboard.js";
 import { NotesDataClient } from "./plugins/official/notes-data-client.js";
 import { registerPluginProtocolScheme } from "./plugins/web-host.js";
+import { listLayerInstances } from "./host/layer-instances.js";
 import { HostPrivateDataRootsStore } from "./private-data-roots.js";
 import type { ReminderNotification } from "./reminders.js";
 import { initializeWindowsRuntime, watchFullscreen } from "./windows-runtime.js";
 
 export interface RuntimeContext {
+  readonly pluginWindowCoordinator: typeof pluginWindowCoordinator;
+  readonly pluginWindowAdapters: typeof pluginWindowAdapters;
+  readonly pluginWindowLayouts: typeof pluginWindowLayouts;
   readonly desktopLayer: typeof desktopLayer;
   readonly utoolsDesktop: typeof utoolsDesktop;
   readonly windowDesktop: typeof windowDesktop;
@@ -153,6 +165,7 @@ export interface RuntimeContext {
   readonly launcherExecutions: typeof launcherExecutions;
   readonly launcherHides: typeof launcherHides;
   readonly launcherPresentationGuard: typeof launcherPresentationGuard;
+  readonly beginExclusiveTask: typeof beginExclusiveTask;
   launcherShow: typeof launcherShow;
   readonly layouts: typeof layouts;
   layoutsRestored: typeof layoutsRestored;
@@ -234,6 +247,15 @@ export interface RuntimeContext {
   readonly translationSettingsFile: typeof translationSettingsFile;
 }
 const runtimeContext: RuntimeContext = {
+  get pluginWindowAdapters() {
+    return pluginWindowAdapters;
+  },
+  get pluginWindowCoordinator() {
+    return pluginWindowCoordinator;
+  },
+  get pluginWindowLayouts() {
+    return pluginWindowLayouts;
+  },
   get activateHostCommand(): typeof activateHostCommand {
     return activateHostCommand;
   },
@@ -497,6 +519,9 @@ const runtimeContext: RuntimeContext = {
   },
   get launcherPresentationGuard(): typeof launcherPresentationGuard {
     return launcherPresentationGuard;
+  },
+  get beginExclusiveTask(): typeof beginExclusiveTask {
+    return beginExclusiveTask;
   },
   get launcherShow(): typeof launcherShow {
     return launcherShow;
@@ -818,6 +843,7 @@ const { globalMenu, paperMenu, fireReminderNotification, refreshTray } =
   createMenus(runtimeContext);
 const { prepare, hideAndRelease, foldAndRelease, quit } = createWindowClose(runtimeContext);
 const {
+  beginExclusiveTask,
   launcherPresentationGuard,
   endLauncherExecutionQuery,
   launcherCaller,
@@ -943,6 +969,7 @@ const cliArgs = parseCliArgs(process.argv);
 let pendingCliCommand: CliCommand | undefined;
 let primaryDesktopInstance = false;
 let startupComplete = false;
+let shellReady = false;
 if (cliArgs.mcp) {
   // --mcp：stdio MCP 服务进程，不参与单实例锁与正常启动。
   void runMcpLauncher({ exe: process.execPath, here, configDir })
@@ -1017,7 +1044,7 @@ function setMaintenance(value: boolean): void {
   }
   // Entering maintenance keeps visible choices available for a clear rejected
   // action. Recovery must refresh even if the UI never read the entering state.
-  if (!value) emit("launcher-status-changed");
+  emit("launcher-status-changed");
 }
 let notesScope: PluginResourceScope | undefined;
 const preparedWindows = new Set<number>();
@@ -1087,7 +1114,7 @@ let capsules: Capsules;
 let desktopLayer: DesktopLayer | undefined;
 let overlayFocusTarget = 0;
 let overlayToggle: Promise<void> = Promise.resolve();
-function toggleDesktopOverlay(): Promise<void> {
+function toggleDesktopOverlay(displayId?: string): Promise<void> {
   const task = overlayToggle
     .catch(() => {})
     .then(async () => {
@@ -1110,7 +1137,11 @@ function toggleDesktopOverlay(): Promise<void> {
       const target = await captureExternalFocus();
       if (lifecycle.blocked) return;
       overlayFocusTarget = target;
-      await desktopLayer.openOverlay();
+      await pluginWindowCoordinator?.resumeCreates();
+      pluginWindowCoordinator?.replayCleanup();
+      await pluginWindowAdapters?.restoreCards();
+      await widgetHost?.sync();
+      await desktopLayer.openOverlay(displayId);
     });
   overlayToggle = task;
   return task;
@@ -1118,6 +1149,11 @@ function toggleDesktopOverlay(): Promise<void> {
 let widgetHost: WidgetHost | undefined;
 let utoolsDesktop: UToolsDesktopHost | undefined;
 let windowDesktop: PluginWindowDesktopHost | undefined;
+let pluginWindowLayouts: PluginWindowLayoutStore | undefined;
+let pluginUninstallReceipts: PluginUninstallReceipts | undefined;
+let pluginWindowCoordinator: PluginWindowCoordinator | undefined;
+let pluginWindowAdapters: PluginWindowAdapters | undefined;
+const unifiedOfficialWindows = new Map<string, BrowserWindow>();
 let notesLayer: NotesLayerCoordinator | undefined;
 let screenshotLayer: ScreenshotLayerCoordinator | undefined;
 let notesMigrationError: string | undefined;
@@ -1128,6 +1164,7 @@ const layerStartup = new Promise<string | undefined>((resolve) => {
 });
 let layerStore: LayerLayoutStore | undefined;
 let stopLayerEnvironment = () => {};
+let stopDesktopTrigger = () => {};
 function layerFlags() {
   const preferences = hostConfig?.value.desktopLayer ?? DEFAULT_DESKTOP_LAYER_PREFERENCES;
   // Plugin installation holds the manager's maintenance fence and can block
@@ -1159,6 +1196,7 @@ async function syncDesktopLayer(strict = false): Promise<void> {
   desktopLayer?.refresh();
 }
 async function flushDesktopLayer(): Promise<void> {
+  await pluginWindowCoordinator?.drain();
   if (desktopLayer?.snapshot().editing)
     throw new AppError("saveFailed", "Apply or cancel desktop layout editing before continuing");
   await layerStore?.flush();
@@ -1166,11 +1204,36 @@ async function flushDesktopLayer(): Promise<void> {
   await screenshotLayer?.flush();
 }
 async function reloadDesktopLayer(): Promise<void> {
+  pluginWindowLayouts?.reload();
+  pluginUninstallReceipts?.reload();
+  await reconcilePluginWindowCleanup();
   await notesLayer?.resetAfterRestore();
   await layerStore?.reloadAfterRestore();
   screenshotLayer?.reload();
   await widgetHost?.reloadAfterRestore();
   await syncDesktopLayer();
+}
+async function reconcilePluginWindowCleanup(): Promise<void> {
+  if (!pluginHost || !pluginWindowCoordinator || !pluginWindowLayouts) return;
+  await pluginWindowCoordinator.reconcileCleanup(async (intent) => {
+    const record = pluginHost!.manager.list().find((value) => value.pluginId === intent.pluginId);
+    if (!intent.contentId) {
+      if (pluginUninstallReceipts?.outcome(intent) === "removed") return "removed";
+      return record ? "retained" : "unknown";
+    }
+    if (intent.pluginId !== "spark233.notes" || !record?.enabled || record.lastError)
+      return "unknown";
+    try {
+      await notesClient.get(intent.contentId);
+      return "retained";
+    } catch (error) {
+      if (error instanceof AppError && error.code === "noteNotFound") return "removed";
+      throw error;
+    }
+  });
+  pluginUninstallReceipts?.retain(
+    new Set(pluginWindowLayouts.load().cleanup.map((value) => value.id)),
+  );
 }
 let mcpServer: McpServer;
 let lastBalloonReminder: ReminderItem | undefined;
@@ -1191,7 +1254,7 @@ const hostShortcuts = new ShortcutManager({
   commands: () => pluginHost?.manager.commands() ?? [],
   activate: activateHostCommand,
   onError: reportError,
-  isBlocked: () => lifecycle.blocked,
+  isBlocked: () => lifecycle.shellBlocked,
   getLocale: () => hostConfig?.value.locale ?? "zh-CN",
 });
 const lifecycle = new HostLifecycle({
@@ -1201,7 +1264,6 @@ const lifecycle = new HostLifecycle({
   exiting: () => exiting,
 });
 const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
-  isBlocked: () => maintenance && !backupRecoveryPending,
   awaitWrites: async () => {
     cancelSelection();
     await mutations.catch(() => {});
@@ -1214,16 +1276,6 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
     if (errors.length) throw new AggregateError(errors, "Window release failed");
   },
   windows: () => (backupRecoveryPending ? [] : windows.values()),
-  prepare,
-  describe: (win) => {
-    const label = labelOf(win);
-    const layout = layouts.get(label);
-    const name = layout?.pluginId
-      ? (pluginHost?.trayPlugins().find((p) => p.pluginId === layout.pluginId)?.displayName ??
-        layout.pluginId)
-      : (layout?.hostPage ?? label);
-    return `${name || win.getTitle()}${ready.has(win.id) ? "" : ui("（未就绪）", " (not ready)")}`;
-  },
   remember,
   persist: async () => {
     flushPluginWindowStates();
@@ -1249,6 +1301,14 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
     }
   },
   onCommit: async () => {
+    exiting = true;
+    const exitTimer = setTimeout(() => app.exit(0), 1000);
+    try {
+      await pluginHost?.manager.forceTerminateProcesses();
+    } catch (error) {
+      console.error("shutdown-processes", error);
+    }
+    stopDesktopTrigger();
     stopLayerEnvironment();
     for (const cleanup of [
       () => notesLayer?.dispose(),
@@ -1261,8 +1321,8 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
       } catch (error) {
         console.error("desktop-layer-shutdown", error);
       }
-    exiting = true;
     if (updateInstallApply) {
+      clearTimeout(exitTimer);
       const apply = updateInstallApply;
       updateInstallApply = undefined;
       updateInstallCommitted = true;
@@ -1282,78 +1342,12 @@ const hostShutdown = new ShutdownCoordinator<BrowserWindow>({
       setTimeout(relaunch, 8000).unref();
       return;
     }
-    app.quit();
+    app.exit(0);
   },
-  onError: async (error) => {
-    preparedWindows.clear();
-    if (!(error instanceof AppError) || !["pluginSaveRefused", "saveFailed"].includes(error.code)) {
-      reportError(error);
-      return;
-    }
-    const options: Electron.MessageBoxOptions = {
-      type: "warning",
-      title: "spark233",
-      message: ui(
-        "插件未能确认保存，退出已取消。",
-        "A plugin could not confirm saving. Quitting was cancelled.",
-      ),
-      // Say which window or plugin refused; otherwise the user cannot act on it.
-      detail:
-        error.message +
-        "\n\n" +
-        ui(
-          "可保留应用并重试。强制退出将结束应用拥有的插件进程，未保存的内容可能丢失。",
-          "Keep the app open and retry, or force quit its owned plugin processes. Unsaved work may be lost.",
-        ),
-      buttons: [ui("保留应用", "Keep open"), ui("强制退出", "Force quit")],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    };
-    const candidates = [...windows.values()].filter(
-      (win) => !win.isDestroyed() && ready.has(win.id),
-    );
-    const parent =
-      candidates.find((win) => win.isFocused()) ??
-      candidates.find((win) => win.isVisible()) ??
-      candidates[0];
-    if (parent) {
-      nativeDialogDepth.set(parent.id, (nativeDialogDepth.get(parent.id) ?? 0) + 1);
-      if (parent.isMinimized()) parent.restore();
-      if (!parent.isVisible()) parent.show();
-      parent.focus();
-    }
-    let choice: Electron.MessageBoxReturnValue;
-    try {
-      choice = parent
-        ? await dialog.showMessageBox(parent, options)
-        : await dialog.showMessageBox(options);
-    } finally {
-      if (parent) {
-        const depth = (nativeDialogDepth.get(parent.id) ?? 1) - 1;
-        if (depth) nativeDialogDepth.set(parent.id, depth);
-        else nativeDialogDepth.delete(parent.id);
-      }
-    }
-    if (choice.response !== 1) return;
-    try {
-      await pluginHost?.manager.forceTerminateProcesses();
-      stopFullscreen();
-      mcpServer?.stop();
-      backupScheduler?.stop();
-      hostShortcuts.dispose();
-      exiting = true;
-      app.exit(0);
-    } catch (failure) {
-      reportError(failure);
-    }
-  },
-  getLocale: () => hostConfig?.value.locale ?? "zh-CN",
+  onError: (error) => console.error("shutdown-cleanup", error),
 });
 /**
- * Installs a downloaded update only after the shutdown coordinator confirmed
- * that every window saved. Failure leaves the app running with the update
- * still pending.
+ * Install a downloaded update after the bounded shutdown cleanup.
  */
 async function requestUpdateInstall(apply: () => void): Promise<void> {
   updateInstallApply = apply;
@@ -1387,6 +1381,7 @@ const emit = (name: string, payload?: unknown, target?: BrowserWindow) => {
 };
 let launcherShow: Promise<BrowserWindow> | undefined;
 function reportError(error: unknown, win?: BrowserWindow): void {
+  if (error instanceof AppError && error.code === "cancelled") return;
   diagnostics?.record({
     kind: "host",
     code: "failed",
@@ -1451,7 +1446,7 @@ app.on("second-instance", (_event, argv) => {
     void quit();
     return;
   }
-  if (!startupComplete) {
+  if (!shellReady || (!startupComplete && (file || (command && command !== "show")))) {
     if (command || !file) pendingCliCommand = command ?? "show";
     return;
   }
@@ -1480,6 +1475,7 @@ app.on("before-quit", (event) => {
   }
 });
 app.on("will-quit", () => {
+  stopDesktopTrigger();
   updateService?.dispose();
   backupScheduler?.stop();
   hostShortcuts.dispose();
@@ -1539,8 +1535,16 @@ export function startDesktopHost(): void {
       });
       updateService.start();
       launcher = new LauncherController({
+        getMaintenance: () => maintenance,
         commandMatcher,
-        getWarnings: () => (shortcutWarning ? [shortcutWarning] : []),
+        getWarnings: () => [
+          ...(!startupComplete ? [ui("正在初始化插件…", "Loading plugins…")] : []),
+          ...(maintenance
+            ? [ui("正在备份或恢复，相关操作暂不可用", "Backup or restore in progress")]
+            : []),
+          ...(pluginHostStartupError ? [pluginHostStartupError] : []),
+          ...(shortcutWarning ? [shortcutWarning] : []),
+        ],
         stateFile: path.join(hostConfigDir, "launcher.json"),
         manager: () => pluginHost?.manager,
         onQueryUpdate: deliverLauncherQueryUpdate,
@@ -1630,6 +1634,7 @@ export function startDesktopHost(): void {
           path.join(configDir, "desktop-overlay-layout.json"),
         ),
         onOverlayClosed: async (restore) => {
+          await widgetHost?.sync();
           const target = overlayFocusTarget;
           overlayFocusTarget = 0;
           if (restore && target) await restoreExternalFocus(target);
@@ -1637,11 +1642,10 @@ export function startDesktopHost(): void {
         onOverlaySettings: async () => {
           await openHostSettings({ page: "desktop" });
         },
-        // "Add plugin" in the plugin bar: every command that opens a plugin window.
+        // Window declarations, independent of public launcher commands.
         overlayLaunchers: () => {
           const manager = pluginHost?.manager;
           if (!manager) return [];
-          const favorites = overlayFavorites.load();
           const locale = hostConfig.value.locale;
           return manager.list().flatMap((record) => {
             if (!record.enabled || record.lastError) return [];
@@ -1650,14 +1654,15 @@ export function startDesktopHost(): void {
                 manager.describe(record.pluginId, true).spark233,
                 locale,
               );
-              return manifest.commands
-                .filter((command) => command.window && !command.internal)
-                .map((command) => ({
+              return pluginWindowCatalog(manifest, locale)
+                .filter((window) => window.cardDesktop && window.purpose === "business")
+                .map((window) => ({
                   pluginId: record.pluginId,
-                  commandId: command.id,
-                  title: command.title,
+                  commandId: window.windowId,
+                  windowId: window.windowId,
+                  title: window.title,
                   plugin: manifest.displayName,
-                  favorite: favorites.has(`${record.pluginId}/${command.id}`),
+                  favorite: false,
                 }));
             } catch {
               return [];
@@ -1665,8 +1670,158 @@ export function startDesktopHost(): void {
           });
         },
         // Windows are single-instance: activating again focuses or locates it.
-        onOverlayLaunch: async (pluginId, commandId) => {
-          await pluginHost?.manager.activate(pluginId, { commandId });
+        onOverlayLaunch: async (pluginId, commandId, creationId) => {
+          if (!pluginWindowCoordinator) throw new Error("Window coordinator is unavailable");
+          const placement = await pluginWindowCoordinator.open({
+            pluginId,
+            windowId: commandId,
+            environment: "card-desktop",
+            action: "create",
+            creationId,
+          });
+          return { instanceId: placement.instanceId };
+        },
+        onOverlayPanelClose: async (card) => {
+          const placement = pluginWindowLayouts
+            ?.load()
+            .placements.find(
+              (value) =>
+                value.environment === "card-desktop" &&
+                ("placement:" + value.id === card.id ||
+                  card.widget?.widgetInstanceId === value.instanceId ||
+                  card.renderRef === value.instanceId),
+            );
+          if (placement) await pluginWindowCoordinator?.close(placement.id);
+          await widgetHost?.sync();
+        },
+        onOverlayArrange: (displayId) => {
+          const display = screen.getAllDisplays().find((value) => String(value.id) === displayId);
+          if (!display) return;
+          pluginWindowLayouts?.commit((draft) => {
+            let x = 24,
+              y = 110,
+              rowHeight = 0;
+            draft.placements
+              .filter((value) => value.environment === "card-desktop")
+              .sort((a, b) => a.order - b.order)
+              .forEach((placement) => {
+                if (x > 24 && x + placement.bounds.width > display.workArea.width - 24) {
+                  x = 24;
+                  y += rowHeight + 24;
+                  rowHeight = 0;
+                }
+                placement.bounds.x = x;
+                placement.bounds.y = y;
+                x += placement.bounds.width + 24;
+                rowHeight = Math.max(rowHeight, placement.bounds.height);
+              });
+          });
+        },
+        onOverlayRetry: async (card) => {
+          const state = pluginWindowLayouts?.load();
+          const placement = state?.placements.find(
+            (value) =>
+              value.environment === "card-desktop" &&
+              ("placement:" + value.id === card.id ||
+                card.widget?.widgetInstanceId === value.instanceId ||
+                card.renderRef === value.instanceId),
+          );
+          const instance = state?.instances.find((value) => value.id === placement?.instanceId);
+          if (!instance || !placement) return;
+          await pluginWindowCoordinator!.open({
+            pluginId: instance.pluginId,
+            windowId: instance.binding.windowId,
+            binding: instance.binding,
+            instanceId: instance.id,
+            environment: "card-desktop",
+            action: "restore",
+          });
+        },
+        overlaySelected: (card) =>
+          pluginWindowLayouts
+            ?.load()
+            .placements.find(
+              (value) =>
+                value.environment === "card-desktop" &&
+                ("placement:" + value.id === card.id ||
+                  card.widget?.widgetInstanceId === value.instanceId ||
+                  card.renderRef === value.instanceId),
+            )?.visible,
+        overlayEligible: (card) => !!card.cardDesktopMember || !!card.cardDesktopOnly,
+        onOverlayPanelAction: async (card, action) => {
+          const state = pluginWindowLayouts?.load();
+          const placement = state?.placements.find(
+            (value) =>
+              value.environment === "card-desktop" &&
+              ("placement:" + value.id === card.id ||
+                card.widget?.widgetInstanceId === value.instanceId ||
+                card.renderRef === value.instanceId),
+          );
+          const instance = state?.instances.find((value) => value.id === placement?.instanceId);
+          if (!placement || !instance) return false;
+          if (action === "pin" || action === "passthrough")
+            throw new AppError("permissionDenied", "卡片桌面不支持置顶或鼠标穿透");
+          if (action === "close") await pluginWindowCoordinator!.close(placement.id);
+          else if (action === "show" || action === "hide")
+            pluginWindowLayouts!.commit((draft) => {
+              const target = draft.placements.find((value) => value.id === placement.id)!;
+              target.visible = action === "show";
+              if (action === "show")
+                target.order = Math.max(
+                  Date.now(),
+                  ...draft.placements.map((value) => value.order + 1),
+                );
+            });
+          else if (action === "open") {
+            await desktopLayer!.closeOverlay(false);
+            await pluginWindowCoordinator!.open({
+              pluginId: instance.pluginId,
+              windowId: instance.binding.windowId,
+              binding: instance.binding,
+              instanceId: instance.id,
+              environment: "desktop",
+              action: "open",
+            });
+          }
+          await widgetHost?.sync();
+          return true;
+        },
+        overlayPosition: (card, area) => {
+          const placement = pluginWindowLayouts
+            ?.load()
+            .placements.find(
+              (value) =>
+                value.environment === "card-desktop" &&
+                ("placement:" + value.id === card.id ||
+                  card.widget?.widgetInstanceId === value.instanceId ||
+                  card.renderRef === value.instanceId),
+            );
+          if (!placement) return;
+          const bounds = placement.bounds;
+          return {
+            ...bounds,
+            x:
+              area.x +
+              Math.max(0, Math.min(bounds.x, Math.max(0, area.width - Math.min(80, bounds.width)))),
+            y: area.y + Math.max(90, Math.min(bounds.y, Math.max(90, area.height - 32))),
+          };
+        },
+        onOverlayPosition: (card, bounds, area) => {
+          const placement = pluginWindowLayouts
+            ?.load()
+            .placements.find(
+              (value) =>
+                value.environment === "card-desktop" &&
+                ("placement:" + value.id === card.id ||
+                  card.widget?.widgetInstanceId === value.instanceId ||
+                  card.renderRef === value.instanceId),
+            );
+          if (!placement) return;
+          const relative = { ...bounds, x: bounds.x - area.x, y: bounds.y - area.y };
+          if (JSON.stringify(placement.bounds) === JSON.stringify(relative)) return;
+          pluginWindowLayouts!.commit((state) => {
+            state.placements.find((value) => value.id === placement.id)!.bounds = relative;
+          });
         },
         onOverlayFavorite: (pluginId, commandId, value) =>
           overlayFavorites.set(`${pluginId}/${commandId}`, value),
@@ -1731,22 +1886,223 @@ export function startDesktopHost(): void {
           if (!spec.card) {
             bindDevToolsShortcut(layer.win, { isolatedSession: true });
             layer.win.on("focus", () => desktopLayer?.restackOverlay());
-            layer.win.on("blur", () => {
-              setTimeout(() => {
-                if (
-                  !layer.win.isDestroyed() &&
-                  !desktopLayer?.hasOverlayFocus() &&
-                  !layer.win.webContents.isDevToolsOpened() &&
-                  desktopLayer?.isOverlayWindow(layer.win)
-                )
-                  void desktopLayer.closeOverlay(false);
-              }, 80);
-            });
           }
           return { window: layer, entryURL };
         },
       });
+      pluginWindowLayouts = new PluginWindowLayoutStore(
+        path.join(hostConfigDir, "plugin-window-layout.json"),
+      );
+      pluginUninstallReceipts = new PluginUninstallReceipts(
+        path.join(hostConfigDir, "plugin-uninstall-receipts.json"),
+      );
+      pluginWindowLayouts.subscribe(() => {
+        desktopLayer?.refresh();
+        emit("desktop-pins-changed");
+      });
+      const windowDefinition = (pluginId: string, windowId: string) => {
+        try {
+          const metadata = pluginHost?.manager.describe(pluginId, true);
+          return (
+            metadata &&
+            pluginWindowCatalog(metadata.spark233, hostConfig.value.locale).find(
+              (value) => value.windowId === windowId,
+            )
+          );
+        } catch {
+          return undefined;
+        }
+      };
+      pluginWindowAdapters = new PluginWindowAdapters({
+        store: pluginWindowLayouts,
+        layer: desktopLayer,
+        manager: () => pluginHost?.manager,
+        definition: windowDefinition,
+        icon: (pluginId) => getPluginIcon(pluginId),
+        changed: () => emit("desktop-pins-changed"),
+        close: (placementId) => pluginWindowCoordinator!.close(placementId),
+        open: async (instance, environment) => {
+          if (environment === "desktop") await desktopLayer!.closeOverlay(false);
+          await pluginWindowCoordinator!.open({
+            pluginId: instance.pluginId,
+            windowId: instance.binding.windowId,
+            instanceId: instance.id,
+            binding: instance.binding,
+            environment,
+            action: "open",
+          });
+          if (environment === "card-desktop" && !desktopLayer!.overlayActive)
+            await toggleDesktopOverlay();
+        },
+      });
+      pluginWindowCoordinator = new PluginWindowCoordinator({
+        unavailable: (pluginId) => {
+          const record = pluginHost?.manager.list().find((value) => value.pluginId === pluginId);
+          return !record?.enabled || !!record.lastError;
+        },
+        blocked: () => lifecycle.blocked,
+        store: pluginWindowLayouts,
+        definition: windowDefinition,
+        adapter: (definition) =>
+          definition.bridge === "widget"
+            ? {
+                restore: async (instance) => {
+                  await widgetHost?.sync();
+                  if (
+                    widgetHost
+                      ?.list()
+                      .instances.some(
+                        (value) =>
+                          value.widgetInstanceId === instance.id && value.status === "fault",
+                      )
+                  )
+                    await widgetHost.retry(instance.id);
+                },
+                prepareClose: async () => ({ ok: true }),
+                closePlacement: async () => {
+                  await widgetHost?.sync();
+                },
+              }
+            : pluginWindowAdapters!,
+      });
+      registerWindowRouter(async (request) => {
+        const definition = windowDefinition(request.pluginId, request.windowId);
+        if (
+          request.environment === "card-desktop" &&
+          definition?.purpose === "business" &&
+          !definition.cardDesktop
+        )
+          request = { ...request, environment: "desktop" };
+        if (request.environment === "desktop" && desktopLayer?.overlayActive)
+          await desktopLayer.closeOverlay(false);
+        await pluginWindowCoordinator!.open(request);
+      });
       utoolsDesktop = new UToolsDesktopHost({
+        ordinaryAction: async (pluginId, action, value) => {
+          const state = pluginWindowLayouts!.load();
+          const instance = state.instances.find(
+            (item) => item.pluginId === pluginId && item.binding.windowId === "utools-main",
+          );
+          const placement = state.placements.find(
+            (item) => item.instanceId === instance?.id && item.environment === "desktop",
+          );
+          if (!placement) return;
+          if (action === "close") return pluginWindowCoordinator!.close(placement.id);
+          pluginWindowLayouts!.commit((draft) => {
+            const target = draft.placements.find((item) => item.id === placement.id)!;
+            if (action === "topmost" && typeof value === "boolean") target.topmost = value;
+            if (action === "bounds" && value && typeof value === "object") target.bounds = value;
+          });
+        },
+        rememberFeature: (instanceId, featureCode) => {
+          pluginWindowLayouts!.commit((draft) => {
+            const instance = draft.instances.find((value) => value.id === instanceId);
+            if (instance) instance.binding.parameters = { featureCode };
+          });
+        },
+        addToCardDesktop: async (pluginId, featureCode) => {
+          await pluginWindowCoordinator!.open({
+            pluginId,
+            windowId: "utools-main",
+            action: "open",
+            environment: "card-desktop",
+            binding: { windowId: "utools-main", parameterVersion: 1, parameters: { featureCode } },
+          });
+          if (!desktopLayer!.overlayActive) await toggleDesktopOverlay();
+        },
+        openIndependent: async (instanceId) => {
+          const instance = pluginWindowLayouts!
+            .load()
+            .instances.find((value) => value.id === instanceId);
+          if (!instance) return;
+          await desktopLayer!.closeOverlay(false);
+          await pluginWindowCoordinator!.open({
+            pluginId: instance.pluginId,
+            windowId: instance.binding.windowId,
+            instanceId,
+            binding: instance.binding,
+            action: "open",
+            environment: "desktop",
+          });
+        },
+        workspaceCards: () => {
+          const state = pluginWindowLayouts?.load();
+          const display = screen.getPrimaryDisplay();
+          return (
+            state?.instances
+              .filter(
+                (instance) =>
+                  windowDefinition(instance.pluginId, instance.binding.windowId)?.bridge ===
+                  "utools",
+              )
+              .map(
+                (instance) =>
+                  state.placements.find(
+                    (value) =>
+                      value.instanceId === instance.id &&
+                      value.environment ===
+                        (desktopLayer?.overlayActive ? "card-desktop" : "desktop"),
+                  ) ?? state.placements.find((value) => value.instanceId === instance.id)!,
+              )
+              .filter(Boolean)
+              .flatMap((placement) => {
+                const instance = state.instances.find((value) => value.id === placement.instanceId);
+                if (
+                  !instance ||
+                  windowDefinition(instance.pluginId, instance.binding.windowId)?.bridge !==
+                    "utools"
+                )
+                  return [];
+                const parameters = instance.binding.parameters;
+                const featureCode =
+                  parameters &&
+                  typeof parameters === "object" &&
+                  !Array.isArray(parameters) &&
+                  typeof parameters.featureCode === "string"
+                    ? parameters.featureCode
+                    : "main";
+                return [
+                  {
+                    kind: "utools" as const,
+                    unifiedWindow: true,
+                    cardDesktopOnly: !state.placements.some(
+                      (value) =>
+                        value.instanceId === instance.id && value.environment === "desktop",
+                    ),
+                    cardDesktopMember: state.placements.some(
+                      (value) =>
+                        value.instanceId === instance.id && value.environment === "card-desktop",
+                    ),
+                    pluginId: instance.pluginId,
+                    utoolsInstanceId: instance.id,
+                    featureCode,
+                    displayId: String(display.id),
+                    workAreaAtSave: display.workArea,
+                    bounds: {
+                      ...placement.bounds,
+                      x:
+                        placement.environment === "card-desktop"
+                          ? display.workArea.x + placement.bounds.x
+                          : placement.bounds.x,
+                      y:
+                        placement.environment === "card-desktop"
+                          ? display.workArea.y + placement.bounds.y
+                          : placement.bounds.y,
+                    },
+                    group:
+                      placement.environment === "desktop" && placement.topmost
+                        ? ("top" as const)
+                        : ("normal" as const),
+                    inputMode: "interactive" as const,
+                    order: placement.order,
+                    visible: placement.visible,
+                    restore: false,
+                    createdAt: 0,
+                  },
+                ];
+              }) ?? []
+          );
+        },
         layer: desktopLayer,
         store: layerStore,
         pluginHost: () => pluginHost,
@@ -1781,6 +2137,139 @@ export function startDesktopHost(): void {
         },
       });
       widgetHost = new WidgetHost({
+        presentWindow: async (instanceId, environment) => {
+          const instance = pluginWindowLayouts!
+            .load()
+            .instances.find((value) => value.id === instanceId);
+          if (!instance) throw new AppError("window.notFound", "此窗口尚未迁入统一管理");
+          if (environment === "desktop") await desktopLayer!.closeOverlay(false);
+          await pluginWindowCoordinator!.open({
+            pluginId: instance.pluginId,
+            windowId: instance.binding.windowId,
+            instanceId,
+            binding: instance.binding,
+            action: "open",
+            environment,
+          });
+          if (environment === "card-desktop" && !desktopLayer!.overlayActive)
+            await toggleDesktopOverlay();
+        },
+        closeWorkspace: async (instanceId) => {
+          const placement = pluginWindowLayouts
+            ?.load()
+            .placements.find(
+              (value) =>
+                value.instanceId === instanceId &&
+                value.environment === (desktopLayer?.overlayActive ? "card-desktop" : "desktop"),
+            );
+          if (!placement) return false;
+          await pluginWindowCoordinator!.close(placement.id);
+          return true;
+        },
+        updateWorkspace: async (instanceId, patch) => {
+          const placement = pluginWindowLayouts
+            ?.load()
+            .placements.find(
+              (value) =>
+                value.instanceId === instanceId &&
+                value.environment === (desktopLayer?.overlayActive ? "card-desktop" : "desktop"),
+            );
+          if (!placement) return false;
+          if (placement.environment === "card-desktop" && patch.group)
+            throw new AppError("permissionDenied", "卡片桌面不支持置顶");
+          pluginWindowLayouts!.commit((draft) => {
+            const target = draft.placements.find((value) => value.id === placement.id)!;
+            if (patch.bounds) {
+              const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+              target.bounds =
+                placement.environment === "card-desktop"
+                  ? { ...patch.bounds, x: patch.bounds.x - area.x, y: patch.bounds.y - area.y }
+                  : patch.bounds;
+            }
+            if (patch.visible !== undefined) target.visible = patch.visible;
+            if (patch.group) target.topmost = patch.group === "top";
+          });
+          return true;
+        },
+        openWindow: async (pluginId, windowId, input) => {
+          await pluginWindowCoordinator!.open({
+            pluginId,
+            windowId,
+            environment: "card-desktop",
+            action: "open",
+            binding: {
+              windowId,
+              parameterVersion: 1,
+              ...(input === undefined ? {} : { parameters: input }),
+            },
+          });
+        },
+        workspaceCards: () => {
+          const state = pluginWindowLayouts?.load();
+          const display = screen.getPrimaryDisplay();
+          return (
+            state?.instances
+              .filter(
+                (instance) =>
+                  windowDefinition(instance.pluginId, instance.binding.windowId)?.bridge ===
+                  "widget",
+              )
+              .map(
+                (instance) =>
+                  state.placements.find(
+                    (value) =>
+                      value.instanceId === instance.id &&
+                      value.environment ===
+                        (desktopLayer?.overlayActive ? "card-desktop" : "desktop"),
+                  ) ?? state.placements.find((value) => value.instanceId === instance.id)!,
+              )
+              .filter(Boolean)
+              .flatMap((placement) => {
+                const instance = state.instances.find((value) => value.id === placement.instanceId);
+                if (
+                  !instance ||
+                  windowDefinition(instance.pluginId, instance.binding.windowId)?.bridge !==
+                    "widget"
+                )
+                  return [];
+                return [
+                  {
+                    kind: "widget" as const,
+                    cardDesktopOnly: !state.placements.some(
+                      (value) =>
+                        value.instanceId === instance.id && value.environment === "desktop",
+                    ),
+                    cardDesktopMember: state.placements.some(
+                      (value) =>
+                        value.instanceId === instance.id && value.environment === "card-desktop",
+                    ),
+                    pluginId: instance.pluginId,
+                    widgetDefinitionId: instance.binding.windowId,
+                    widgetInstanceId: instance.id,
+                    displayId: String(display.id),
+                    workAreaAtSave: display.workArea,
+                    bounds: {
+                      ...placement.bounds,
+                      x:
+                        placement.environment === "card-desktop"
+                          ? display.workArea.x + placement.bounds.x
+                          : placement.bounds.x,
+                      y:
+                        placement.environment === "card-desktop"
+                          ? display.workArea.y + placement.bounds.y
+                          : placement.bounds.y,
+                    },
+                    group: placement.topmost ? ("top" as const) : ("normal" as const),
+                    inputMode: "interactive" as const,
+                    order: placement.order,
+                    visible: true,
+                    restore: true,
+                    createdAt: 0,
+                  },
+                ];
+              }) ?? []
+          );
+        },
         layer: desktopLayer,
         store: layerStore,
         notesActive: () => notesActive && notesLayer?.isEnabled === true,
@@ -1892,6 +2381,7 @@ export function startDesktopHost(): void {
         if (lifecycle.blocked) throw new AppError("maintenance", "Desktop cards are stopping");
         return desktopLayer!.handle(event, value);
       });
+      const triggerSuppressed = new Set<string>();
       stopLayerEnvironment = LayerWindow.observeEnvironment({
         screen,
         powerMonitor,
@@ -1903,6 +2393,8 @@ export function startDesktopHost(): void {
             .catch((error) => console.error("desktop-display", error));
         },
         onSuppressed: (reason, value) => {
+          if (value) triggerSuppressed.add(reason);
+          else triggerSuppressed.delete(reason);
           desktopLayer?.setVisibility(reason, value);
           screenshotLayer?.refresh();
         },
@@ -1912,6 +2404,19 @@ export function startDesktopHost(): void {
         configDir: () => configDir,
         context: () => ({ permission: hostConfig.value.mcpPermission, ops: mcpOps }),
         onLog: (message, error) => (error ? console.error(message, error) : console.log(message)),
+      });
+      stopDesktopTrigger = startDesktopTrigger({
+        here,
+        configDir,
+        label: ui("打开卡片桌面", "Open card desktop"),
+        enabled: () =>
+          layerFlags().enabled &&
+          (hostConfig.value.desktopLayer?.topTriggerEnabled ?? true) &&
+          !desktopLayer?.overlayActive &&
+          !triggerSuppressed.has("locked") &&
+          !triggerSuppressed.has("suspend") &&
+          !lifecycle.blocked,
+        open: (displayId) => toggleDesktopOverlay(displayId),
       });
       stopFullscreen = watchFullscreen(
         here,
@@ -2013,8 +2518,110 @@ export function startDesktopHost(): void {
         (_contents, permission) => permission === "clipboard-sanitized-write",
       );
       setupIpc();
+      prepareSelectionReader();
+      tray = new TrayController({
+        icon: path.join(here, "assets", process.platform === "win32" ? "icon.ico" : "32x32.png"),
+        getIcon: () => getHostIcon("tray") ?? path.join(here, "assets/tray-light.png"),
+        ...(process.platform === "win32"
+          ? {
+              themeIcons: {
+                dark: path.join(here, "assets/tray-light.png"),
+                light: path.join(here, "assets/tray-dark.png"),
+              },
+            }
+          : {}),
+        title: "spark233",
+        getMenu: globalMenu,
+        onClick: requestLauncher,
+        onBalloonClick: () => {
+          const item = lastBalloonReminder;
+          lastBalloonReminder = undefined;
+          if (item) void openNoteWithAnchor(item.noteId, item.taskText).catch(reportError);
+        },
+      });
+      preloadLauncher();
+      try {
+        registerShortcuts(hostConfig.value, true);
+      } catch (error) {
+        console.error("shortcut-registration", error);
+      }
+      shellReady = true;
+      const shellCommand = pendingCliCommand ?? cliArgs.command;
+      if (shellCommand === "exit") {
+        executeCliCommand("exit");
+        return;
+      }
+      if (!shellCommand || shellCommand === "show") {
+        if (shellCommand === "show" || launcher.state().firstRun) requestLauncher();
+        pendingCliCommand = undefined;
+      }
       try {
         pluginHost = new DesktopPluginHost({
+          onUninstallBegin: (pluginId) => pluginWindowCoordinator!.beginCleanup(pluginId),
+          onUninstallCommitted: (receipt) => {
+            const intent = pluginWindowLayouts!
+              .load()
+              .cleanup.find((value) => value.id === receipt);
+            if (!intent || intent.contentId)
+              throw new AppError("window.uninstallReceiptMismatch", "卸载清理意图无法确认");
+            pluginUninstallReceipts!.record(intent);
+            pluginWindowCoordinator!.confirmCleanup(receipt);
+            pluginUninstallReceipts!.retain(
+              new Set(pluginWindowLayouts!.load().cleanup.map((value) => value.id)),
+            );
+            desktopLayer?.refresh();
+          },
+          onWindowAttach: (instanceId, window) =>
+            pluginWindowAdapters?.attach(instanceId, window) ?? (() => {}),
+          openOfficialWindow: async (pluginId, instanceId, binding) => {
+            let win = unifiedOfficialWindows.get(instanceId);
+            if (!win || win.isDestroyed()) {
+              if (pluginId === "spark233.notes") {
+                if (binding.windowId === "main") {
+                  showMain();
+                  win = [...windows.values()].find(
+                    (item) => layouts.get(labelOf(item))?.view === "main",
+                  );
+                } else {
+                  if (!binding.contentId) throw new Error("Note window needs a stable note ID");
+                  const label = await openNote(
+                    binding.contentId,
+                    binding.windowId === "tile" ? "tile" : "notepad",
+                  );
+                  win = windows.get(label);
+                }
+              } else win = await openPluginWindow(pluginId, binding.windowId, binding.parameters);
+              if (!win) throw new Error("Official window could not be opened");
+              unifiedOfficialWindows.set(instanceId, win);
+              const layout = layouts.get(labelOf(win));
+              if (
+                layout &&
+                windowOpenContext.getStore()?.environment === "card-desktop" &&
+                !pluginWindowLayouts!
+                  .load()
+                  .placements.some(
+                    (value) => value.instanceId === instanceId && value.environment === "desktop",
+                  )
+              )
+                layout.visible = false;
+              const release = pluginWindowAdapters!.attach(instanceId, win);
+              win.once("closed", () => {
+                release();
+                if (unifiedOfficialWindows.get(instanceId) === win)
+                  unifiedOfficialWindows.delete(instanceId);
+              });
+            }
+          },
+          prepareOfficialWindowClose: async (instanceId) => {
+            const win = unifiedOfficialWindows.get(instanceId);
+            return { ok: !win || win.isDestroyed() || (await prepare(win)) };
+          },
+          closeOfficialWindow: async (instanceId) => {
+            const win = unifiedOfficialWindows.get(instanceId);
+            if (!win || win.isDestroyed()) return;
+            preparedWindows.add(win.id);
+            win.destroy();
+          },
           utoolsDesktop,
           windowDesktop,
           root: path.join(configDir, "plugins"),
@@ -2029,6 +2636,8 @@ export function startDesktopHost(): void {
           resolveDataDirectory: (id) =>
             id === "spark233.notes" ? hostConfig.value.dataDir : undefined,
           onBackendHostCall: async (call, { owner, signal }) => {
+            if (call.operation === "window.open")
+              throw new AppError("permissionDenied", "窗口调用必须经过插件请求范围校验");
             if (
               signal.aborted ||
               owner.pluginId !== "spark233.notes" ||
@@ -2134,6 +2743,24 @@ export function startDesktopHost(): void {
           );
         }
         await pluginHost.initialize();
+        await reconcilePluginWindowCleanup();
+        await migratePluginWindowLayout({
+          store: pluginWindowLayouts!,
+          layer: layerStore!,
+          hostRoot: hostConfigDir,
+          configRoot: configDir,
+          definition: (pluginId, windowId) => {
+            try {
+              return pluginWindowCatalog(
+                pluginHost!.manager.describe(pluginId, true).spark233,
+              ).find((value) => value.windowId === windowId);
+            } catch {
+              return undefined;
+            }
+          },
+          displayId: String(screen.getPrimaryDisplay().id),
+          area: screen.getPrimaryDisplay().workArea,
+        });
         backupScheduler = new BackupScheduler(
           hostConfigDir,
           (directory) => backupService!.create(directory),
@@ -2142,44 +2769,19 @@ export function startDesktopHost(): void {
         );
         backupScheduler.start();
       } catch (error) {
-        if (error instanceof AppError && error.code === "backupRecoveryRequired") throw error;
+        if (error instanceof AppError && error.code === "backupRecoveryRequired") {
+          backupRecoveryPending = true;
+          setMaintenance(true);
+        }
         pluginHostStartupError = String(error);
         console.error("plugin-host-initialization", error);
       }
-      prepareSelectionReader();
       notesActive = !!pluginHost?.manager
         .list()
         .find(
           (record) => record.pluginId === "spark233.notes" && record.enabled && !record.lastError,
         );
       capsules.setEnabled(notesActive);
-      tray = new TrayController({
-        icon: path.join(here, "assets", process.platform === "win32" ? "icon.ico" : "32x32.png"),
-        getIcon: () => getHostIcon("tray") ?? path.join(here, "assets/tray-light.png"),
-        ...(process.platform === "win32"
-          ? {
-              themeIcons: {
-                dark: path.join(here, "assets/tray-light.png"),
-                light: path.join(here, "assets/tray-dark.png"),
-              },
-            }
-          : {}),
-        title: "spark233",
-        getMenu: globalMenu,
-        onClick: requestLauncher,
-        onBalloonClick: () => {
-          const item = lastBalloonReminder;
-          lastBalloonReminder = undefined;
-          if (item) void openNoteWithAnchor(item.noteId, item.taskText).catch(reportError);
-        },
-      });
-      preloadLauncher();
-      if (launcher.state().firstRun) await showLauncher();
-      try {
-        registerShortcuts(hostConfig.value, true);
-      } catch (error) {
-        console.error("shortcut-registration", error);
-      }
       syncMcp();
       refreshTray();
       publishNoteStates();
@@ -2189,14 +2791,35 @@ export function startDesktopHost(): void {
       if (pluginHost && !pluginHostStartupError) {
         layerStartupReady = true;
         await syncDesktopLayer();
+        await pluginWindowAdapters?.restoreDesktop();
       }
       completeLayerStartup(pluginHostStartupError);
       startupComplete = true;
+      emit("launcher-status-changed");
       if (startupFile && notesActive) showMain();
-      const initialCommand = pendingCliCommand ?? cliArgs.command;
+      const initialCommand =
+        pendingCliCommand ?? (cliArgs.command === "show" ? undefined : cliArgs.command);
       pendingCliCommand = undefined;
       if (initialCommand) executeCliCommand(initialCommand);
       if (smokeOutput) {
+        if (process.argv.includes("--smoke-plugin-windows")) {
+          const { runPluginWindowSmoke } = await import("./smoke.js");
+          await runPluginWindowSmoke({
+            output: smokeOutput,
+            layer: desktopLayer!,
+            coordinator: pluginWindowCoordinator!,
+            store: pluginWindowLayouts!,
+            notes: notesClient,
+            manager: pluginHost!.manager,
+            configDir,
+            management: () => listLayerInstances(runtimeContext),
+            quit: () => {
+              // This probe owns an isolated profile and generated fixtures.
+              void pluginHost!.manager.forceTerminateProcesses().finally(() => app.exit());
+            },
+          });
+          return;
+        }
         const { runSmoke } = await import("./smoke.js");
         await runSmoke({
           output: smokeOutput,

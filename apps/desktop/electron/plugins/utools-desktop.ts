@@ -24,6 +24,9 @@ const bounds = z.strictObject({
 });
 const revision = z.number().int().nonnegative().safe();
 const requestSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("ordinary-close") }),
+  z.strictObject({ type: z.literal("ordinary-topmost"), value: z.boolean() }),
+  z.strictObject({ type: z.literal("ordinary-bounds"), bounds }),
   z.strictObject({ type: z.literal("pin"), bounds, featureCode: z.string().min(1).max(160) }),
   z.strictObject({ type: z.literal("unpin") }),
   z.strictObject({ type: z.literal("focus"), focused: z.boolean() }),
@@ -32,7 +35,7 @@ const requestSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("panel"),
     revision,
-    action: z.enum(["show", "hide", "pin", "passthrough", "open"]),
+    action: z.enum(["show", "hide", "pin", "passthrough", "open", "close"]),
     value: z.boolean().optional(),
   }),
 ]);
@@ -52,12 +55,23 @@ interface Session {
  * compatibility process keeps ownership of its existing HWND and WebContents. */
 export class UToolsDesktopHost {
   private sessions = new Map<string, Session>();
+  private workspaceFeatures = new Map<string, string>();
+  private workspacePlugins = new Map<string, string>();
   private syncing?: Promise<void>;
   constructor(
     private readonly options: {
       layer: DesktopLayer;
       store: LayerLayoutStore;
       pluginHost(): DesktopPluginHost | undefined;
+      workspaceCards?: () => UToolsLayoutCard[];
+      addToCardDesktop?: (pluginId: string, featureCode: string) => Promise<void>;
+      openIndependent?: (instanceId: string) => Promise<void>;
+      rememberFeature?: (instanceId: string, featureCode: string) => void;
+      ordinaryAction?: (
+        pluginId: string,
+        action: "close" | "topmost" | "bounds",
+        value?: boolean | import("../../src/features/capsules/types.js").Rect,
+      ) => Promise<void>;
     },
   ) {
     options.layer.register({
@@ -70,9 +84,50 @@ export class UToolsDesktopHost {
     });
   }
   private stored(): Array<[string, UToolsLayoutCard]> {
-    return Object.entries(this.options.store.load().cards).filter(
+    const legacy = Object.entries(this.options.store.load().cards).filter(
       (entry): entry is [string, UToolsLayoutCard] => entry[1].kind === "utools",
     );
+    const workspace = (this.options.workspaceCards?.() ?? []).map((card) => ({
+      ...card,
+      featureCode: this.workspaceFeatures.get(card.utoolsInstanceId) ?? card.featureCode,
+    }));
+    return [
+      ...legacy.filter(([, card]) => !workspace.some((value) => value.pluginId === card.pluginId)),
+      ...workspace.map((card): [string, UToolsLayoutCard] => [
+        "utools:" + card.utoolsInstanceId,
+        card,
+      ]),
+    ];
+  }
+  async openWorkspace(pluginId: string, instanceId: string, featureCode: string): Promise<void> {
+    const session = this.sessions.get(pluginId);
+    if (!session) throw new Error("uTools runtime session is unavailable");
+    const card = this.options
+      .workspaceCards?.()
+      .find((value) => value.utoolsInstanceId === instanceId);
+    if (!card) throw new Error("uTools workspace placement is unavailable");
+    this.workspaceFeatures.set(instanceId, featureCode);
+    this.workspacePlugins.set(instanceId, pluginId);
+    this.options.rememberFeature?.(instanceId, featureCode);
+    if (!session.release) this.register(session);
+    this.options.layer.refresh();
+  }
+  releaseWorkspace(instanceId: string): void {
+    const pluginId = this.workspacePlugins.get(instanceId);
+    const session = pluginId ? this.sessions.get(pluginId) : undefined;
+    session?.release?.();
+    if (session) session.release = undefined;
+    this.workspaceFeatures.delete(instanceId);
+    this.workspacePlugins.delete(instanceId);
+  }
+  workspaceInstance(pluginId: string): string | undefined {
+    return [...this.workspacePlugins].find(([, value]) => value === pluginId)?.[0];
+  }
+  async closeWorkspace(pluginId: string, instanceId: string): Promise<void> {
+    const session = this.sessions.get(pluginId);
+    this.releaseWorkspace(instanceId);
+    if (session) await session.present(null);
+    this.options.layer.refresh();
   }
   private cards(): LayerCard[] {
     return this.stored().flatMap(([id, card]) => {
@@ -83,6 +138,8 @@ export class UToolsDesktopHost {
           id,
           title: session.metadata.spark233.displayName,
           ...card,
+          pluginId: card.pluginId,
+          pluginTitle: session.metadata.spark233.displayName,
           renderKind: "utools" as const,
           renderRef: card.utoolsInstanceId,
           fullscreenAutoHide: false,
@@ -119,15 +176,23 @@ export class UToolsDesktopHost {
         throw new AppError("pluginBusy", "正在取消固定，请稍后重试");
       if (input.type === "focus") {
         session.focused = input.focused;
-        if (input.focused) this.options.layer.restackOverlay();
-        else
-          setTimeout(() => {
-            if (this.options.layer.overlayActive && !this.options.layer.hasOverlayFocus())
-              void this.options.layer.closeOverlay(false);
-          }, 100).unref();
+        if (input.focused) {
+          const cardId = this.stored().find(([, card]) => card.pluginId === pluginId)?.[0];
+          if (cardId) this.options.layer.noteOverlayFocus(cardId);
+          this.options.layer.restackOverlay();
+        }
         return;
       }
+      if (this.options.layer.overlayInputBlocked)
+        throw new AppError("pluginBusy", "请先关闭桌面管理面板");
+      if (input.type === "ordinary-close") return this.options.ordinaryAction?.(pluginId, "close");
+      if (input.type === "ordinary-topmost")
+        return this.options.ordinaryAction?.(pluginId, "topmost", input.value);
+      if (input.type === "ordinary-bounds")
+        return this.options.ordinaryAction?.(pluginId, "bounds", input.bounds);
       if (input.type === "pin") {
+        if (this.options.addToCardDesktop)
+          return this.options.addToCardDesktop(pluginId, input.featureCode);
         if (!this.options.layer.options.flags().enabled)
           throw new AppError("layer.disabled", "请先在设置中开启桌面插件层");
         const previous = this.stored().find(([, c]) => c.pluginId === pluginId);
@@ -187,6 +252,12 @@ export class UToolsDesktopHost {
       if (input.revision !== session.revision)
         throw new AppError("layer.layoutConflict", "窗口布局已变化，请重试");
       if (input.type === "close-overlay") return this.options.layer.closeOverlay(true);
+      if (
+        input.type === "panel" &&
+        input.action === "open" &&
+        this.workspacePlugins.has(stored[1].utoolsInstanceId)
+      )
+        return this.options.openIndependent?.(stored[1].utoolsInstanceId);
       if (input.type === "bounds")
         return this.options.layer.externalBounds(stored[0], input.bounds);
       if (input.action === "show" && !stored[1].visible)
@@ -200,6 +271,28 @@ export class UToolsDesktopHost {
     if (!entry) return;
     const [id, card] = entry;
     session.release = this.options.layer.registerExternal(id, {
+      reveal: () => {
+        const value = this.options.layer.externalPresentation(id);
+        const expectedRevision = session.revision;
+        if (!value) return;
+        session.queue = session.queue
+          .catch(() => {})
+          .then(async () => {
+            if (
+              session.revision !== expectedRevision ||
+              !session.release ||
+              session.detaching ||
+              this.sessions.get(card.pluginId) !== session
+            )
+              return;
+            await session.present({
+              ...value,
+              revision: expectedRevision,
+              featureCode: this.workspaceFeatures.get(card.utoolsInstanceId) ?? card.featureCode,
+            });
+          });
+        return session.queue;
+      },
       present: (value) => {
         const current = ++session.revision;
         session.queue = session.queue
@@ -213,7 +306,9 @@ export class UToolsDesktopHost {
             )
               return;
             try {
-              await session.present({ ...value, revision: current, featureCode: card.featureCode });
+              const featureCode =
+                this.workspaceFeatures.get(card.utoolsInstanceId) ?? card.featureCode;
+              await session.present({ ...value, revision: current, featureCode });
               session.failure = undefined;
             } catch (error) {
               session.failure = error instanceof Error ? error.message : String(error);
@@ -223,6 +318,31 @@ export class UToolsDesktopHost {
         return session.queue;
       },
       focus: () => session.focused,
+      activate: () => {
+        const expected = this.options.layer.externalPresentation(id);
+        session.queue = session.queue
+          .catch(() => {})
+          .then(async () => {
+            const current = this.options.layer.externalPresentation(id);
+            if (
+              !current?.visible ||
+              current.inputBlocked ||
+              current.mode !== "overlay" ||
+              current.epoch !== expected?.epoch ||
+              !session.release ||
+              session.detaching ||
+              this.sessions.get(card.pluginId) !== session
+            )
+              return;
+            await session.present({
+              ...current,
+              revision: session.revision,
+              featureCode: this.workspaceFeatures.get(card.utoolsInstanceId) ?? card.featureCode,
+              activate: true,
+            });
+          });
+        return session.queue;
+      },
       restack: () => {
         if (!this.options.layer.overlayActive) return;
         // A fresh presentation raises the same HWND after the shade gains focus.
@@ -232,6 +352,7 @@ export class UToolsDesktopHost {
             const current = this.options.layer.externalPresentation(id);
             if (
               !current ||
+              current.inputBlocked ||
               !session.release ||
               session.detaching ||
               this.sessions.get(card.pluginId) !== session
@@ -240,7 +361,7 @@ export class UToolsDesktopHost {
             await session.present({
               ...current,
               revision: session.revision,
-              featureCode: card.featureCode,
+              featureCode: this.workspaceFeatures.get(card.utoolsInstanceId) ?? card.featureCode,
             });
           });
         void session.queue.catch(() => {});

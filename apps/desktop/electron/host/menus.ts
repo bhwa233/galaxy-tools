@@ -4,6 +4,7 @@ import { REMINDER_PRESETS } from "../../src/features/reminders/presets.js";
 import { buildPluginTrayMenu } from "../host/plugin-tray.js";
 import { listLayerInstances, updateLayerInstance } from "./layer-instances.js";
 import { AppError } from "../persistence.js";
+import { unifiedWindowControl } from "./plugin-window-adapters.js";
 import type { ReminderNotification } from "../reminders.js";
 import type { RuntimeContext } from "../runtime.js";
 
@@ -13,6 +14,9 @@ const NOTES_PLUGIN_ID = "spark233.notes";
 export function createMenus(
   ctx: Pick<
     RuntimeContext,
+    | "pluginWindowCoordinator"
+    | "pluginWindowAdapters"
+    | "pluginWindowLayouts"
     | "notesActive"
     | "notesScope"
     | "maintenance"
@@ -101,7 +105,7 @@ export function createMenus(
     return Menu.buildFromTemplate([
       { label: ctx.ui("打开启动器", "Open launcher"), click: ctx.requestLauncher },
       {
-        label: ctx.ui("桌面插件栏", "Desktop plugin bar"),
+        label: ctx.ui("打开卡片桌面", "Open card desktop"),
         click: () => void ctx.toggleDesktopOverlay().catch(ctx.reportError),
       },
       {
@@ -164,6 +168,7 @@ export function createMenus(
 
   async function paperMenu(win: BrowserWindow): Promise<Electron.Menu> {
     const layout = ctx.layouts.get(ctx.labelOf(win))!;
+    const unified = unifiedWindowControl(win);
     const noteReminders = layout.noteId ? await ctx.notesClient.listReminders(layout.noteId) : [];
     return Menu.buildFromTemplate([
       ...(layout.view === "tile"
@@ -174,14 +179,29 @@ export function createMenus(
             },
           ]
         : []),
-      {
-        label: ctx.ui("折叠成胶囊", "Fold into capsule"),
-        click: () => void ctx.foldAndRelease(win).catch((error) => ctx.reportError(error, win)),
-      },
-      {
-        label: ctx.ui("隐藏到托盘", "Hide to tray"),
-        click: () => void ctx.hideAndRelease(win).catch((error) => ctx.reportError(error, win)),
-      },
+      ...(unified?.state().environment === "card-desktop"
+        ? [
+            {
+              label: ctx.ui("关闭", "Close"),
+              click: () => void unified.close().catch((error) => ctx.reportError(error, win)),
+            },
+          ]
+        : [
+            {
+              label: ctx.ui("折叠成胶囊", "Fold into capsule"),
+              click: () =>
+                void ctx.foldAndRelease(win).catch((error) => ctx.reportError(error, win)),
+            },
+          ]),
+      ...(unified?.state().environment === "card-desktop"
+        ? []
+        : [
+            {
+              label: ctx.ui("隐藏到托盘", "Hide to tray"),
+              click: () =>
+                void ctx.hideAndRelease(win).catch((error) => ctx.reportError(error, win)),
+            },
+          ]),
       { type: "separator" },
       ...(layout.noteId
         ? [
@@ -225,17 +245,21 @@ export function createMenus(
             { type: "separator" as const },
           ]
         : []),
-      {
-        label: ctx.ui("置顶", "Always on top"),
-        type: "checkbox",
-        checked: layout.topmost,
-        click: (item) => {
-          if (layout.noteId)
-            void ctx
-              .setNotePinned(layout.noteId, item.checked)
-              .catch((error) => ctx.reportError(error, win));
-        },
-      },
+      ...(unified?.state().environment === "card-desktop"
+        ? []
+        : [
+            {
+              label: ctx.ui("置顶", "Always on top"),
+              type: "checkbox" as const,
+              checked: layout.topmost,
+              click: (item: Electron.MenuItem) => {
+                if (layout.noteId)
+                  void ctx
+                    .setNotePinned(layout.noteId, item.checked)
+                    .catch((error) => ctx.reportError(error, win));
+              },
+            },
+          ]),
     ]);
   }
 

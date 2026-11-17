@@ -114,7 +114,7 @@ export async function createNotesRuntime(
     return operation;
   }
   return {
-    activate: (activation) => tracked(activation),
+    activate: (activation, signal) => tracked(activation, signal),
     query: (activation, signal) => tracked(activation, signal, true),
   };
 }

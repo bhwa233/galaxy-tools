@@ -67,7 +67,7 @@ it("keeps a newer plugin activation when the initial read finishes late and neve
   }
 });
 
-it("keeps the plugin window and its input when preparation refuses a close", async () => {
+it("honors close without letting a save guard veto it", async () => {
   const desktop = transport(() => ({ revision: 1, owner, payload: { query: "unsaved" } }));
   const unregister = registerHostPreparation(async () => {
     throw new Error("Save refused");
@@ -89,8 +89,16 @@ it("keeps the plugin window and its input when preparation refuses a close", asy
   try {
     await expect.element(page.getByRole("textbox", { name: "Draft" })).toHaveValue("unsaved");
     await page.getByRole("button", { name: "Close fixture" }).click();
-    await expect.element(page.getByRole("alert")).toHaveTextContent("Save refused");
-    expect(desktop.calls.some((call) => call.command === "window_control")).toBe(false);
+    await expect
+      .poll(() =>
+        desktop.calls.some(
+          (call) =>
+            call.command === "window_control" &&
+            (call.args as { action?: string }).action === "close",
+        ),
+      )
+      .toBe(true);
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
     await expect.element(page.getByRole("textbox", { name: "Draft" })).toHaveValue("unsaved");
   } finally {
     unregister();

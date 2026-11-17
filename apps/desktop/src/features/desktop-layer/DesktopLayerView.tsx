@@ -19,6 +19,7 @@ import { LayerCardContent } from "./LayerCardContent";
 import { LayerErrorBoundary } from "./LayerErrorBoundary";
 import { LayerEditor } from "./LayerEditor";
 import { WidgetFrame } from "./WidgetFrame";
+import { Button } from "../../components/ui/button";
 import { DesktopOverlayView, LayerCardFrame } from "./DesktopOverlayView";
 import "./desktop-layer.css";
 
@@ -35,6 +36,7 @@ function isSnapshot(value: unknown): value is LayerSnapshot {
 export function DesktopLayerView({ client }: { client: LayerClient }) {
   const [snapshot, setSnapshot] = useState<LayerSnapshot>();
   const latest = useRef<LayerSnapshot | undefined>(undefined);
+  const [overlaySnapshot, setOverlaySnapshot] = useState<LayerSnapshot>();
   const epoch = snapshot?.overlay?.epoch;
   const request = useCallback<LayerClient["request"]>(
     (input) =>
@@ -174,6 +176,7 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
       }
       latest.current = next;
       setSnapshot(next);
+      if (next.overlay && next.overlay.host !== false) setOverlaySnapshot(next);
       document.documentElement.classList.toggle("dark", next.theme === "dark");
       document.documentElement.dataset.theme = next.theme;
       document.documentElement.lang = next.locale;
@@ -350,14 +353,15 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
     card.title ??
     card.widget?.widgetDefinitionId ??
     (snapshot.locale.startsWith("zh") ? "卡片暂不可用" : "Card unavailable");
+  const overlayHost = snapshot.overlay && snapshot.overlay.host !== false;
   return (
     <main className="desktop-layer-root" data-layer-surface={snapshot.surfaceId}>
-      {snapshot.overlay && snapshot.overlay.host !== false && (
-        <DesktopOverlayView snapshot={snapshot} client={client} />
+      {overlaySnapshot && (
+        <DesktopOverlayView snapshot={overlaySnapshot} client={client} active={!!overlayHost} />
       )}
       {snapshot.cards.map((card, index) => {
         const bounds = drafts[card.id] ?? card.bounds;
-        const unavailable = card.status && card.status !== "active";
+        const unavailable = card.unavailableReason || (card.status && card.status !== "active");
         return (
           <LayerCardFrame
             card={{ ...card, bounds }}
@@ -405,7 +409,18 @@ export function DesktopLayerView({ client }: { client: LayerClient }) {
             <LayerErrorBoundary label={label(card)} onError={(error) => fault(card.id, error)}>
               {unavailable ? (
                 <div className="layer-card-fault" role="status">
-                  {card.reason ?? label(card)}
+                  {card.unavailableReason ?? card.reason ?? label(card)}
+                  {snapshot.overlay && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        void request({ type: "overlay-retry", cardId: card.id }).catch(() => {})
+                      }
+                    >
+                      {snapshot.locale.startsWith("zh") ? "重试" : "Retry"}
+                    </Button>
+                  )}
                 </div>
               ) : card.renderKind === "web" && web ? (
                 <WidgetFrame

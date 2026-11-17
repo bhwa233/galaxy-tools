@@ -37,37 +37,38 @@ const TEXT = {
     mode: "窗口模式",
     normal: "普通窗口",
     topmost: "置顶",
-    desktop: "常驻桌面",
+    desktop: "卡片桌面",
     more: "更多",
     minimize: "最小化",
     maximize: "最大化",
     restore: "还原",
     close: "关闭",
-    unpin: "移出桌面",
+    unpin: "从卡片桌面移除",
     unsaved: "有未保存的修改",
     busy: "正在处理",
     error: "出错",
     lock: "锁定位置",
     locked: "位置已锁定",
-    hint: (shortcut: string) => `已放到桌面，按 ${shortcut} 随时呼出`,
+    hint: (shortcut: string) => `已添加到卡片桌面，按 ${shortcut} 随时呼出`,
   },
   en: {
     mode: "Window mode",
     normal: "Normal window",
     topmost: "Always on top",
-    desktop: "Keep on desktop",
+    desktop: "Card desktop",
     more: "More",
     minimize: "Minimize",
     maximize: "Maximize",
     restore: "Restore",
     close: "Close",
-    unpin: "Remove from desktop",
+    unpin: "Remove from card desktop",
     unsaved: "Unsaved changes",
     busy: "Working",
     error: "Error",
     lock: "Lock position",
     locked: "Position locked",
-    hint: (shortcut: string) => `Kept on the desktop. Press ${shortcut} to bring it up anytime`,
+    hint: (shortcut: string) =>
+      `Added to the card desktop. Press ${shortcut} to bring it up anytime`,
   },
 };
 export const statusBarText = (locale: string) => (locale.startsWith("en") ? TEXT.en : TEXT.zh);
@@ -93,6 +94,7 @@ export function StatusBar({
   menu,
   maximized,
   maximizable = true,
+  minimizable = true,
   onMinimize,
   onToggleMaximize,
   onClose,
@@ -115,6 +117,7 @@ export function StatusBar({
   menu?: StatusBarMenuItem[];
   maximized: boolean;
   maximizable?: boolean;
+  minimizable?: boolean;
   onMinimize: () => void;
   onToggleMaximize: () => void;
   onClose: () => void;
@@ -310,15 +313,17 @@ export function StatusBar({
         <div className="mx-1 h-4 w-px bg-border" />
         {!onDesktop && (
           <>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onMinimize}
-              title={text.minimize}
-              aria-label={text.minimize}
-            >
-              <Minus />
-            </Button>
+            {minimizable && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onMinimize}
+                title={text.minimize}
+                aria-label={text.minimize}
+              >
+                <Minus />
+              </Button>
+            )}
             {maximizable && (
               <Button
                 variant="ghost"
@@ -337,8 +342,8 @@ export function StatusBar({
           size="icon-sm"
           className="hover:bg-destructive/10 hover:text-destructive"
           onClick={onClose}
-          title={onDesktop ? text.unpin : text.close}
-          aria-label={onDesktop ? text.unpin : text.close}
+          title={text.close}
+          aria-label={text.close}
         >
           <X />
         </Button>

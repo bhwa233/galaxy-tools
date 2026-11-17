@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { SettingsWindow } from "./SettingsWindow";
+import { prepareHostWindow } from "../windows/hostPreparation";
 import { installDesktopBridge } from "../../test/browser/desktop-bridge";
 import type { InstallPreview, PluginManagementState } from "../plugins/types";
 
@@ -27,7 +28,7 @@ const pluginState = (): PluginManagementState => ({
   checking: false,
 });
 
-it("keeps the latest accent choice while an earlier settings save is pending", async () => {
+it("keeps queued settings edits and permits closing after a refused edit is rolled back", async () => {
   const oldUrl = location.href;
   const oldAccent = document.documentElement.dataset.accent;
   const oldCache = localStorage.getItem("theme-accent");
@@ -59,6 +60,7 @@ it("keeps the latest accent choice while an earlier settings save is pending", a
     launcher_state: () => ({ firstRun: false, pluginsReady: true, commands: [], preferences: [] }),
     config_patch: async (args) => {
       if (++saves === 1) await first;
+      if (saves === 3) throw new Error("Settings write refused");
       config = { ...config, ...(args as { patch: typeof config }).patch };
       return config;
     },
@@ -78,6 +80,14 @@ it("keeps the latest accent choice while an earlier settings save is pending", a
       .element(page.getByRole("button", { name: "蓝", exact: true }))
       .toHaveAttribute("aria-pressed", "true");
     expect(localStorage.getItem("theme-accent")).toBe("blue");
+    // A refused write used to remain in the close guard even after rollback,
+    // leaving settings trapped behind “save incomplete” on every close attempt.
+    await page.getByRole("button", { name: "紫", exact: true }).click();
+    await expect.element(page.getByText("Settings write refused", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "蓝", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect(prepareHostWindow()).resolves.toBeUndefined();
   } finally {
     finishFirst?.();
     await view.unmount();

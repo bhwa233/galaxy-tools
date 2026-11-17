@@ -77,7 +77,7 @@
 - 标题栏空白区域支持拖动，双击可拖动空白区域执行最大化/还原。
 - 搜索框、按钮和其他可交互元素正常响应点击、输入、选择，不触发拖动或双击最大化。
 - 最大化后按钮显示还原状态；还原后恢复原有窗口尺寸与位置行为。
-- 点击关闭沿用当前窗口自己的关闭流程；有取消任务、保存确认等步骤时，必须完整保留。
+- 点击关闭立即撤销该展示；取消与清理不阻塞关闭，最后一个展示关闭才取消页面临时任务。保存确认保留给停用、更新、卸载、备份和恢复等管理操作。
 - 最小化和最大化不重置输入、结果、选中项、滚动位置或正在执行的业务任务。
 - macOS 保留平台原生窗口控制位置，避免与标题和功能入口重叠；本轮视觉评审优先以 Windows 为准。
 
@@ -190,7 +190,7 @@
 2. 空结果、服务未就绪、查询失败、权限不足等继续在内容区提供反馈，不只在标题栏显示一个图标。
 3. 窗口大小变化不能清空搜索词、查词结果、OCR 编辑文字或便签内容。
 4. 最小化不等于关闭，不停止记录，也不自行取消正在进行的搜索或翻译。
-5. 关闭继续调用每个窗口现有流程。便签保存失败或确认超时，不能因此自动终止仍在运行的业务进程。
+5. 用户关闭和退出不受保存失败或确认超时否决。关闭页面不停止插件后台；管理操作保留保存和数据一致性校验，按[统一接入方案](launcher-availability-and-plugin-integration.md)执行。
 6. 插件停用、能力不可用时，保留原有禁用和提示规则，不因按钮换位改变权限边界。
 
 ## 7. 验收要求（实施阶段使用）
@@ -232,11 +232,11 @@
 以下为本次文档编写时读取的工作区文件，包含尚未提交的修改；用于说明当前布局，不作为此前版本已经发布的证据。
 
 - [便签标题栏](../apps/desktop/src/features/notes/NoteTitleBar.tsx)
-- [文件搜索](../apps/desktop/src/features/search/SearchWorkspace.tsx)
-- [词典与翻译](../apps/desktop/src/features/translation/TranslationWorkspace.tsx)
+- [文件搜索（由启动器承载）](../packages/official/search/README.md)
+- [词典与翻译](../packages/official/translation/renderer/workspace/TranslationWorkspace.tsx)
 - [剪贴板历史与快捷剪贴板](../apps/desktop/src/features/clipboard/ClipboardWorkspace.tsx)
-- [截图历史](../apps/desktop/src/features/screenshot/ScreenshotHistoryWorkspace.tsx)
-- [OCR 取字结果](../apps/desktop/src/features/ocr/OcrWorkspace.tsx)
+- [截图历史](../packages/official/screenshot/renderer/workspace/ScreenshotHistoryWorkspace.tsx)
+- [OCR 取字结果](../packages/official/ocr/renderer/workspace/OcrWorkspace.tsx)
 
 ## 10. 本轮实现与验证
 

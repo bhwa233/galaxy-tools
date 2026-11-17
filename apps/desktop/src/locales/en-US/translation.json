@@ -1,4 +1,11 @@
 {
+  "shell": {
+    "configTimeout": "Reading settings timed out. Retry or close this window.",
+    "loading": "Loading page…",
+    "loadFailed": "Page could not load",
+    "close": "Close window",
+    "maintenance": "Backup or restore is in progress. Related settings are temporarily unavailable. You can still view status, close windows or quit."
+  },
   "notifications": {
     "dismiss": "Dismiss notification",
     "copied": "Copied",
@@ -109,6 +116,8 @@
       "externalConflict": "Another application changed this file. Overwrite the disk version with your current content?"
     },
     "editor": {
+      "editingElsewhere": "This note is being edited in an independent window",
+      "locateEditor": "Locate editor",
       "viewMode": "Editor view",
       "confirmDelete": "Confirm delete?",
       "contentPlaceholder": "Start writing…",
@@ -189,6 +198,7 @@
     }
   },
   "noteMenu": {
+    "addToCardDesktop": "Add to card desktop",
     "delete": "Delete Note",
     "export": "Export Markdown",
     "moveToCategory": "Move to category…",
@@ -767,8 +777,18 @@
       "prepare": "Prepare installation",
       "preparing": "Preparing official offline plugin",
       "installed": "Installed",
+      "currentVersionLabel": "Currently installed:",
       "currentVersion": "Currently installed: {{version}}"
     },
+    "development": {
+      "label": "Development",
+      "details": "Development build information",
+      "buildId": "Build identifier",
+      "builtAt": "Built at",
+      "commit": "Commit"
+    },
+    "currentVersionLabel": "Current version:",
+    "candidateVersionLabel": "Candidate version:",
     "updateSource": "Automatic update source",
     "status": {
       "error": "Needs attention",
@@ -1084,6 +1104,8 @@
     "backGeneral": "Back to general"
   },
   "desktopSettings": {
+    "topTriggerEnabled": "Desktop top entrance",
+    "topTriggerDescription": "Click the short line at the top of the desktop to open the card desktop. The shortcut and tray entrance remain available when disabled.",
     "enabled": "Desktop plugin layer",
     "enabledDescription": "Turning this off keeps cards and layout.",
     "webEnabled": "Web cards",

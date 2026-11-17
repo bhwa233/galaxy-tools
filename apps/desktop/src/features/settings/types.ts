@@ -12,6 +12,7 @@ export interface DesktopLayerPreferences {
   enabled: boolean;
   webEnabled: boolean;
   notesEnabled: boolean;
+  topTriggerEnabled?: boolean;
 }
 
 export interface AppConfig {

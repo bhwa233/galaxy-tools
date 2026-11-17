@@ -11,8 +11,163 @@ import type {
   LayerSnapshot,
 } from "../../../shared/layer-contract";
 import { DesktopLayerView } from "./DesktopLayerView";
+import { DesktopOverlayView } from "./DesktopOverlayView";
 import hud from "../../../../../packages/official/traffic/widgets/hud.json";
 import hover from "../../../../../packages/official/traffic/widgets/traffic-hover.json";
+
+it("keeps management chrome mounted across sessions and rejects a late dialog open", async () => {
+  const base: LayerSnapshot = {
+    protocol: 1,
+    surfaceId: "host",
+    surfaceGeneration: 1,
+    revision: 1,
+    theme: "light",
+    locale: "zh-CN",
+    scaleFactor: 1,
+    editing: false,
+    cards: [],
+    bounds: { x: 0, y: 0, width: 1100, height: 850 },
+  };
+  const overlay = (epoch: number) => ({
+    displayId: "primary",
+    epoch,
+    host: true,
+    panels: [],
+    launchers: [],
+  });
+  let listener!: (event: LayerEvent) => void;
+  let finishOpen!: () => void;
+  const client: LayerClient = {
+    subscribe: (next) => {
+      listener = next;
+      return () => {};
+    },
+    request: async (request) => {
+      if (request.type === "ready") return { ...base, overlay: overlay(1) };
+      if (request.type === "overlay-transient" && request.open)
+        await new Promise<void>((resolve) => {
+          finishOpen = resolve;
+        });
+    },
+  };
+  const view = await render(<DesktopLayerView client={client} />);
+  try {
+    await expect.poll(() => view.container.querySelector(".desktop-overlay-toolbar")).toBeTruthy();
+    const toolbar = view.container.querySelector(".desktop-overlay-toolbar");
+    const host = view.container.querySelector<HTMLElement>(".desktop-overlay")!;
+    await userEvent.click(page.getByRole("button", { name: "添加插件", exact: true }));
+    listener({ type: "snapshot", snapshot: base });
+    await expect.poll(() => host.hidden).toBe(true);
+    listener({ type: "snapshot", snapshot: { ...base, overlay: overlay(2) } });
+    await expect.poll(() => host.hidden).toBe(false);
+    expect(view.container.querySelector(".desktop-overlay-toolbar")).toBe(toolbar);
+    finishOpen();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await userEvent.click(page.getByRole("button", { name: "添加插件", exact: true }));
+    finishOpen();
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeTruthy();
+  } finally {
+    finishOpen?.();
+    await view.unmount();
+  }
+});
+
+it("opens add only after host priority, keeps failed creates for retry and dismisses one UI layer per Escape", async () => {
+  const requests: LayerClientRequest[] = [];
+  let allowOpen!: () => void;
+  let rejectLaunch!: (error: Error) => void;
+  let finishLaunch!: (value: { cardId: string }) => void;
+  const opening = new Promise<void>((resolve) => {
+    allowOpen = resolve;
+  });
+  const snapshot: LayerSnapshot = {
+    protocol: 1,
+    surfaceId: "host",
+    surfaceGeneration: 1,
+    revision: 1,
+    theme: "light",
+    locale: "zh-CN",
+    scaleFactor: 1,
+    editing: false,
+    cards: [],
+    bounds: { x: 0, y: 0, width: 1100, height: 850 },
+    overlay: {
+      displayId: "primary",
+      epoch: 9,
+      host: true,
+      panels: [],
+      launchers: [
+        {
+          pluginId: "fixture",
+          commandId: "document",
+          title: "Fixture document",
+          plugin: "Fixture",
+          favorite: false,
+          windowId: "document",
+        },
+      ],
+    },
+  };
+  const client: LayerClient = {
+    subscribe: () => () => {},
+    request: async (request) => {
+      requests.push(request);
+      if (request.type === "overlay-transient" && request.open) await opening;
+      if (request.type === "overlay-transient" && !request.open) return { focusHost: true };
+      if (request.type === "overlay-launch")
+        return new Promise<{ cardId: string }>((resolve, reject) => {
+          finishLaunch = resolve;
+          rejectLaunch = reject;
+        });
+    },
+  };
+  const view = await render(<DesktopOverlayView snapshot={snapshot} client={client} />);
+  try {
+    await userEvent.click(page.getByRole("button", { name: "添加插件", exact: true }));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    allowOpen();
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeTruthy();
+    await expect.poll(() => document.activeElement?.getAttribute("placeholder")).toBe("搜索插件");
+    const input = document.activeElement!;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true }),
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+    await userEvent.click(page.getByText("Fixture document", { exact: true }));
+    await userEvent.keyboard("{Enter}{Enter}");
+    expect(requests.filter((request) => request.type === "overlay-launch")).toHaveLength(1);
+    rejectLaunch(new Error("Fixture presentation failed"));
+    await expect
+      .poll(() => document.querySelector('[role="dialog"]')?.textContent)
+      .toContain("Fixture presentation failed");
+    await userEvent.click(page.getByText("Fixture document", { exact: true }));
+    const launches = requests.filter((request) => request.type === "overlay-launch");
+    expect(launches).toHaveLength(2);
+    expect(launches[0]).toEqual(launches[1]);
+    finishLaunch({ cardId: "created-card" });
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeNull();
+    expect(
+      requests.some(
+        (request) =>
+          request.type === "overlay-transient" &&
+          !request.open &&
+          request.activateCardId === "created-card",
+      ),
+    ).toBe(true);
+    await userEvent.click(page.getByRole("button", { name: "添加插件", exact: true }));
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeNull();
+    expect(requests.some((request) => request.type === "overlay-close")).toBe(false);
+    await userEvent.keyboard("{Escape}");
+    await expect
+      .poll(() => requests.some((request) => request.type === "overlay-close"))
+      .toBe(true);
+  } finally {
+    await view.unmount();
+  }
+});
 
 it("preserves desktop content in both themes while bar controls move and hide only bar panels", async () => {
   // The bar formerly enlarged traffic text/gaps and replaced note capsules with
@@ -278,6 +433,39 @@ it("preserves desktop content in both themes while bar controls move and hide on
     await expect.poll(() => view.container.querySelector("[data-overlay-panel]")).toBeNull();
     assertSameNodes();
     expect(cards[1]!.bounds).toEqual({ x: 360, y: 220, width: 170, height: 32 });
+    const sessionSnapshot: LayerSnapshot = {
+      ...base,
+      presentationRevision: 7,
+      overlay: {
+        displayId: "primary",
+        epoch: 20,
+        host: true,
+        panels,
+        launchers: [
+          {
+            pluginId: "fixture",
+            commandId: "document",
+            title: "Fixture document",
+            plugin: "Fixture",
+            favorite: false,
+            windowId: "document",
+          },
+        ],
+      },
+    };
+    listener({ type: "snapshot", snapshot: sessionSnapshot });
+    await userEvent.click(page.getByRole("button", { name: "添加插件", exact: true }));
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeTruthy();
+    listener({
+      type: "snapshot",
+      snapshot: {
+        ...sessionSnapshot,
+        presentationRevision: 8,
+        overlay: { ...sessionSnapshot.overlay!, epoch: 21 },
+      },
+    });
+    await expect.poll(() => document.querySelector('[role="dialog"]')).toBeNull();
+    assertSameNodes();
   } finally {
     await view.unmount();
   }

@@ -19,6 +19,7 @@ export interface LauncherState {
   pluginIcons?: Record<string, string>;
   pluginIconMonochrome?: Record<string, boolean>;
   pluginsReady: boolean;
+  maintenance?: boolean;
   contextLabel?: string;
   contextRevision?: number;
   warnings?: string[];

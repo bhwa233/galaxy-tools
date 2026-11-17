@@ -11,9 +11,17 @@ export interface UToolsDesktopPresentation {
   visible: boolean;
   locale: string;
   epoch?: number;
+  /** A trusted host menu/dialog owns all input until it is dismissed. */
+  inputBlocked?: boolean;
+  deferReveal?: boolean;
   featureCode?: string;
+  /** Host management request to focus this already presented window. */
+  activate?: boolean;
 }
 export type UToolsDesktopRequest =
+  | { type: "ordinary-close" }
+  | { type: "ordinary-topmost"; value: boolean }
+  | { type: "ordinary-bounds"; bounds: Rect }
   | { type: "pin"; bounds: Rect; featureCode: string }
   | { type: "unpin" }
   | { type: "focus"; focused: boolean }
@@ -26,7 +34,7 @@ export type UToolsDesktopRequest =
   | {
       type: "panel";
       revision: number;
-      action: "show" | "hide" | "pin" | "passthrough" | "open";
+      action: "show" | "hide" | "pin" | "passthrough" | "open" | "close";
       value?: boolean;
     };
 export interface ExternalLayerPresentation {
@@ -36,10 +44,15 @@ export interface ExternalLayerPresentation {
   visible: boolean;
   locale: string;
   epoch?: number;
+  inputBlocked?: boolean;
+  /** Prepare geometry now; the host reveals the ready group together. */
+  deferReveal?: boolean;
 }
 export interface ExternalLayerParticipant {
   present(value: ExternalLayerPresentation): Promise<void>;
+  reveal?(): void | Promise<void>;
   focus?(): boolean;
+  activate?(): void | Promise<void>;
   restack?(): void;
   update?(patch: { group?: "normal" | "top"; inputMode?: LayerInputMode }): Promise<void>;
 }

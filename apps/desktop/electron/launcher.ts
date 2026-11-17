@@ -137,6 +137,7 @@ export interface LauncherOptions {
   getAvailabilityRevision?: () => number;
   getLocale?: () => string;
   getWarnings?: () => string[];
+  getMaintenance?: () => boolean;
   getPluginIcon?: (pluginId: string) => string | undefined;
   commandMatcher?: CommandPinyinMatcher;
   onQueryUpdate?: (callerId: string, result: LauncherQueryResult) => void;
@@ -233,6 +234,7 @@ export class LauncherController {
           ]),
       ]),
       pluginsReady: !!manager,
+      maintenance: this.options.getMaintenance?.() ?? false,
       pluginIcons: Object.fromEntries(
         (manager?.list() ?? []).flatMap((record) => {
           const icon = this.options.getPluginIcon?.(record.pluginId);
@@ -267,7 +269,7 @@ export class LauncherController {
         title: command.title,
         description: command.description,
         keywords: [...command.keywords, ...command.aliases],
-        enabled: true,
+        enabled: !this.options.getMaintenance?.(),
         ...(command.launcher ? { launcher: command.launcher } : {}),
         ...(command.progress ? { progress: command.progress } : {}),
         ...(command.mode && !command.window ? { mode: `${pluginId}:${command.mode}` } : {}),

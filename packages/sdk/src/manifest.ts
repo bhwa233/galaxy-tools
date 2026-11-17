@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { isWidgetRankRows } from "./widget.js";
 
-export const HOST_API_VERSION = "1.7.0";
+export const HOST_API_VERSION = "1.8.0";
 export const THEME_API_VERSION = "1.0.0";
 
 // Reuse Zod already present in the toolchain for one shared runtime/type schema;
@@ -85,11 +85,12 @@ export const pluginIconSchema = rasterIconSchema.extend({
     .optional(),
 });
 const windowSizeSchema = z.strictObject({
-  width: z.number().int().min(160).max(8192),
-  height: z.number().int().min(60).max(8192),
+  width: z.number().int().min(80).max(8192),
+  height: z.number().int().min(32).max(8192),
 });
-export const pluginWindowSchema = z.strictObject({
-  entry: packagePath.refine((value) => /\.html$/i.test(value)),
+const pageEntry = packagePath.refine((value) => /\.html$/i.test(value));
+const windowFields = z.strictObject({
+  entry: pageEntry.optional(),
   title: label.optional(),
   translations: z
     .strictObject({
@@ -100,12 +101,25 @@ export const pluginWindowSchema = z.strictObject({
   icon: pluginIconSchema.optional(),
   size: windowSizeSchema.optional(),
   minSize: windowSizeSchema.optional(),
+  maxSize: windowSizeSchema.optional(),
+  cardDesktop: z.boolean().optional(),
+  purpose: z.enum(["business", "dialog"]).optional(),
+  chrome: z.enum(["host", "none"]).optional(),
+  minimizable: z.boolean().optional(),
+  create: z.strictObject({ commandId: localId }).optional(),
+  restore: z
+    .strictObject({
+      commandId: localId.optional(),
+      parameterVersion: z.number().int().min(1).max(1000),
+      autoOpen: z.boolean().optional(),
+    })
+    .optional(),
   /** Host API 1.7: smallest size of this window while it is kept on the desktop. */
   desktopMinSize: windowSizeSchema.optional(),
   resizable: z.boolean().optional(),
   maximizable: z.boolean().optional(),
   taskbar: z.boolean().optional(),
-  reuse: z.enum(["singleton", "document"]).optional(),
+  reuse: z.enum(["singleton", "document", "multiple"]).optional(),
   presentation: z.enum(["standard", "compact"]).optional(),
   /**
    * @deprecated Host API 1.7: every plugin window gets the host status bar.
@@ -114,7 +128,6 @@ export const pluginWindowSchema = z.strictObject({
   titleBar: z.enum(["native", "custom"]).optional(),
   legacyLabels: z.array(localId).max(8).optional(),
 });
-export type PluginWindow = z.infer<typeof pluginWindowSchema>;
 export type PluginIcon = z.infer<typeof pluginIconSchema>;
 export const launcherPresentationSchema = z.strictObject({
   role: z.enum(["entry", "action", "keyword-only", "hidden"]),
@@ -387,6 +400,60 @@ export type WidgetDataSource = z.infer<typeof widgetDataSourceSchema>;
 export type WidgetAction = z.infer<typeof widgetActionSchema>;
 export type WidgetDataFormat = WidgetDataSource["format"];
 
+/** Reuse widget validation and its restricted bridge; a web widget is not a page. */
+export const pluginWindowSchema = windowFields
+  .extend({
+    content: z
+      .union([z.strictObject({ kind: z.literal("page"), entry: pageEntry }), pluginWidgetSchema])
+      .optional(),
+  })
+  .superRefine((window, ctx) => {
+    const issue = (path: string[], message: string) =>
+      ctx.addIssue({ code: "custom", path, message });
+    if (!!window.entry === !!window.content)
+      issue(["content"], "Declare exactly one of entry or content");
+    if (window.titleBar && window.chrome)
+      issue(["chrome"], "Do not combine deprecated titleBar with chrome");
+    if (window.purpose === "dialog" && window.cardDesktop)
+      issue(["cardDesktop"], "Dialogs cannot be added to the card desktop");
+    const widget = window.content?.kind !== "page" ? window.content : undefined;
+    const size = window.size ?? widget?.size ?? { width: 800, height: 600 };
+    const min = window.minSize ?? widget?.minSize ?? { width: 80, height: 32 };
+    const max = window.maxSize ?? widget?.maxSize ?? { width: 8192, height: 8192 };
+    if (min.width > max.width || min.height > max.height)
+      issue(["minSize"], "Window minimum size cannot exceed its maximum size");
+    if (
+      size &&
+      (size.width < min.width ||
+        size.height < min.height ||
+        size.width > max.width ||
+        size.height > max.height)
+    )
+      issue(["size"], "Window size must be within minSize and maxSize");
+  });
+export type PluginWindow = z.infer<typeof pluginWindowSchema>;
+
+/** Undefined for restricted web widgets and declarative windows. */
+export function pluginWindowPageEntry(window: PluginWindow): string | undefined {
+  return window.content?.kind === "page" ? window.content.entry : window.entry;
+}
+
+/** Compatibility view for the existing restricted widget carriers. */
+export function pluginWidgetDefinitions(manifest: {
+  ui?: {
+    widgets?: Record<string, PluginWidget>;
+    windows?: Record<string, PluginWindow>;
+  };
+}): Record<string, PluginWidget> {
+  const result = { ...manifest.ui?.widgets };
+  for (const [id, window] of Object.entries(manifest.ui?.windows ?? {})) {
+    if (!window.content || window.content.kind === "page") continue;
+    if (Object.hasOwn(result, id)) throw new Error("Duplicate window/widget ID: " + id);
+    result[id] = window.content;
+  }
+  return result;
+}
+
 type WidgetManifestChecks = {
   entry?: string;
   backend?: { entry: string };
@@ -401,13 +468,19 @@ type WidgetManifestChecks = {
   }>;
   ui?: { widgets?: Record<string, PluginWidget>; windows?: Record<string, unknown> };
 };
-function refineWidgets(m: WidgetManifestChecks, ctx: z.RefinementCtx): void {
+function refineWidgets(m: WidgetManifestChecks, ctx: z.RefinementCtx, windowContent = false): void {
   const issue = (path: (string | number)[], message: string) =>
     ctx.addIssue({ code: "custom", path, message });
   const widgets = m.ui?.widgets ?? {};
-  if (!m.entry && !m.backend && !Object.keys(m.native).length && !Object.keys(widgets).length)
+  if (
+    !m.entry &&
+    !m.backend &&
+    !Object.keys(m.native).length &&
+    !Object.keys(widgets).length &&
+    !Object.keys(m.ui?.windows ?? {}).length
+  )
     issue([], "A plugin needs a web, backend, native or widget entry");
-  if (Object.keys(widgets).length > 8)
+  if (!windowContent && Object.keys(widgets).length > 8)
     issue(["ui", "widgets"], "A plugin can declare at most 8 widget definitions");
   const nativeEntry = (id?: string) =>
     id
@@ -415,7 +488,7 @@ function refineWidgets(m: WidgetManifestChecks, ctx: z.RefinementCtx): void {
       : Object.keys(m.native).length === 1 || Object.hasOwn(m.native, "main");
   for (const [id, w] of Object.entries(widgets)) {
     const p = ["ui", "widgets", id];
-    if (Object.hasOwn(m.ui?.windows ?? {}, id))
+    if (!windowContent && Object.hasOwn(m.ui?.windows ?? {}, id))
       issue(p, "Widget ID must not duplicate a window ID");
     for (const commandId of w.commands) {
       if (!m.commands.some((c) => c.id === commandId && !c.internal))
@@ -473,11 +546,27 @@ function refineWidgets(m: WidgetManifestChecks, ctx: z.RefinementCtx): void {
   }
 }
 
+/** Local build identity is independent of the package's semantic release version. */
+export const pluginDevelopmentBuildSchema = z.strictObject({
+  buildId: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/),
+  builtAt: z.iso.datetime(),
+  commit: z
+    .string()
+    .regex(/^[a-f0-9]{7,40}$/)
+    .optional(),
+});
+export type PluginDevelopmentBuild = z.infer<typeof pluginDevelopmentBuildSchema>;
+
 export const pluginManifestSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     id: localId.refine(isPluginPackagePath, "Plugin ID must also be a portable directory name"),
     displayName: label,
+    development: pluginDevelopmentBuildSchema.optional(),
     translations: z
       .strictObject({
         "zh-CN": z.strictObject({ displayName: label }).optional(),
@@ -524,6 +613,13 @@ export const pluginManifestSchema = z
     )
       issue("Windows native entries must use .exe files");
     refineWidgets(manifest, context);
+    const windowWidgets = Object.fromEntries(
+      Object.entries(manifest.ui?.windows ?? {}).flatMap(([id, window]) =>
+        window.content && window.content.kind !== "page" ? [[id, window.content]] : [],
+      ),
+    );
+    if (Object.keys(windowWidgets).length)
+      refineWidgets({ ...manifest, ui: { ...manifest.ui, widgets: windowWidgets } }, context, true);
     if (manifest.backend && !manifest.capabilities.includes("node.backend"))
       issue("Backend entry requires node.backend");
     if (manifest.migration && !manifest.capabilities.includes("node.backend"))
@@ -569,6 +665,15 @@ export const pluginManifestSchema = z
     if (manifest.commands.filter((command) => command.launcher?.role === "entry").length > 1)
       issue("A plugin can declare at most one launcher entry");
     for (const window of Object.values(manifest.ui?.windows ?? {})) {
+      for (const commandId of [window.create?.commandId, window.restore?.commandId]) {
+        if (
+          commandId &&
+          !manifest.commands.some(
+            (command) => command.id === commandId && command.internal && !command.window,
+          )
+        )
+          issue("Window create/restore must reference an internal headless command: " + commandId);
+      }
       if (
         window.size &&
         window.minSize &&
@@ -631,6 +736,14 @@ export function localizePluginManifest(manifest: PluginManifest, locale: string)
                       id,
                       {
                         ...window,
+                        ...(window.content && window.content.kind !== "page"
+                          ? {
+                              content: {
+                                ...window.content,
+                                ...window.content.translations?.[language],
+                              },
+                            }
+                          : {}),
                         ...window.translations?.[language],
                       },
                     ]),

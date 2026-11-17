@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-clipboard",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "spark233 local multi-format clipboard history",
   "license": "MIT",
   "files": [
@@ -39,8 +39,8 @@
     "schemaVersion": 1,
     "id": "spark233.clipboard",
     "displayName": "剪贴板历史",
-    "api": "^1.0.0",
-    "host": ">=0.0.1 <1",
+    "api": "^1.8.0",
+    "host": ">=0.1.7 <1",
     "platforms": [
       "win32"
     ],
@@ -227,7 +227,12 @@
           "presentation": "standard",
           "legacyLabels": [
             "clipboard"
-          ]
+          ],
+          "cardDesktop": true,
+          "chrome": "host",
+          "restore": {
+            "parameterVersion": 1
+          }
         },
         "quick": {
           "entry": "renderer/index.html",
@@ -252,7 +257,12 @@
           "presentation": "compact",
           "legacyLabels": [
             "clipboard-quick"
-          ]
+          ],
+          "cardDesktop": true,
+          "chrome": "host",
+          "restore": {
+            "parameterVersion": 1
+          }
         }
       }
     },

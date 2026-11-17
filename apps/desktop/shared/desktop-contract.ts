@@ -92,6 +92,7 @@ interface CommandResults {
   layer_create: { widgetInstanceId: string };
   layer_remove: void;
   layer_retry: void;
+  layer_locate: void;
   layer_update: void;
   layer_edit: { editSession: string };
   desktop_overlay_toggle: void;

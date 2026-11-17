@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Spinner } from "./components/ui/spinner";
+import { ShellFallback } from "./platform/mount";
 import {
   DesktopAppearance,
   DesktopWindow,
@@ -37,11 +37,7 @@ const TileShowcase = lazy(() =>
 
 export default function App() {
   const route = getInitialRoute();
-  const loading = (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <Spinner />
-    </div>
-  );
+  const loading = <ShellFallback />;
   if (route.view === "layer")
     return (
       <Suspense fallback={null}>

@@ -34,13 +34,9 @@ export function LayerCardContent({
   const cardId = card.id;
   const onAction = useCallback(
     async (actionId: string) => {
-      await request(
-        overlay && actionId === "open"
-          ? { type: "overlay-panel", cardId, action: "open" }
-          : { type: "widget-invoke", cardId, actionId },
-      );
+      await request({ type: "widget-invoke", cardId, actionId });
     },
-    [request, cardId, overlay],
+    [request, cardId],
   );
   const onContentHeight = useCallback(
     (height: number) => {

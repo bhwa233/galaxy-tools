@@ -21,6 +21,20 @@ export interface LayerScreenshotImage {
   editable: boolean;
 }
 export interface LayerCard {
+  chrome?: "host" | "none";
+  primaryAction?: string;
+  resize?: {
+    minSize: { width: number; height: number };
+    maxSize: { width: number; height: number };
+  };
+  unifiedWindow?: boolean;
+  cardDesktopMember?: boolean;
+  unavailableReason?: string;
+  /** Unified workspace membership is independent of ordinary desktop visibility. */
+  cardDesktopOnly?: boolean;
+  pluginId?: string;
+  pluginTitle?: string;
+  pluginIcon?: string;
   id: string;
   title?: string;
   displayId: string;
@@ -91,6 +105,9 @@ export interface LayerSnapshot {
   presentationRevision?: number;
 }
 export interface DesktopOverlayPanel {
+  pluginId?: string;
+  pluginTitle?: string;
+  pluginIcon?: string;
   cardId: string;
   title: string;
   kind: "notes" | "traffic" | "screenshot" | "utools" | "window";
@@ -105,6 +122,7 @@ export interface DesktopOverlayLauncher {
   title: string;
   plugin: string;
   favorite: boolean;
+  windowId?: string;
 }
 export interface DesktopOverlayState {
   displayId: string;
@@ -113,6 +131,8 @@ export interface DesktopOverlayState {
   launchers?: DesktopOverlayLauncher[];
   epoch?: number;
   host?: boolean;
+  /** Session-only management UI; never part of saved card placement. */
+  transient?: { id: string; kind: "modal" | "menu" };
   workArea?: Rect;
 }
 export interface LayerPointerEvent {
@@ -168,15 +188,24 @@ export interface LayerMutation {
 }
 export type LayoutMutation = readonly LayerMutation[];
 type OverlayClientRequest = (
+  | {
+      type: "overlay-transient";
+      id: string;
+      kind: "modal" | "menu";
+      open: boolean;
+      activateCardId?: string;
+    }
+  | { type: "overlay-arrange" }
+  | { type: "overlay-retry"; cardId: string }
   | { type: "overlay-close" }
   | { type: "overlay-settings" }
   | {
       type: "overlay-panel";
       cardId: string;
-      action: "show" | "hide" | "pin" | "passthrough" | "open";
+      action: "show" | "hide" | "pin" | "passthrough" | "open" | "close";
       value?: boolean;
     }
-  | { type: "overlay-launch"; pluginId: string; commandId: string }
+  | { type: "overlay-launch"; pluginId: string; commandId: string; transientId?: string }
   | { type: "overlay-favorite"; pluginId: string; commandId: string; value: boolean }
   | { type: "overlay-layout"; cardId: string; bounds: Rect }
   | { type: "overlay-preview"; cardId: string; visible: boolean; region?: "menu" | "preview" }
@@ -185,6 +214,7 @@ type OverlayClientRequest = (
       cardId: string;
       pointerId: number;
       phase: "start" | "move" | "end" | "cancel";
+      mode?: "move" | "resize";
       clientPoint?: { x: number; y: number };
     }
 ) & { overlayEpoch?: number };
@@ -271,10 +301,14 @@ export interface LayerTemplateSummary {
   pluginId: string;
   widgetDefinitionId: string;
   title: string;
-  kind: "web" | "declarative";
+  kind: "web" | "declarative" | "window";
   quota: { active: number; limit: number };
 }
 export interface LayerInstanceSummary {
+  canRetry?: boolean;
+  canLocate?: boolean;
+  pendingCreation?: boolean;
+  environment?: "desktop" | "card-desktop";
   title?: string;
   widgetInstanceId: string;
   pluginId: string;

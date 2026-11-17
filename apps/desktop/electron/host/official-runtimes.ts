@@ -23,6 +23,7 @@ import { createNotesRuntime } from "../plugins/official/notes.js";
 import { createQuicklinksRuntime } from "../plugins/official/quicklinks.js";
 import type { RuntimeContext } from "../runtime.js";
 import type { JsonValue, PluginActivation } from "@spark233/sdk";
+import { routePluginWindow, windowOpenContext } from "./plugin-window-routing.js";
 
 /** A file action the search backend asks the host to perform. */
 function searchHostAction(
@@ -41,6 +42,8 @@ export function createOfficialRuntimeFactory(
   ctx: Pick<
     RuntimeContext,
     | "launcherPresentationGuard"
+    | "beginExclusiveTask"
+    | "lifecycle"
     | "showMain"
     | "enqueueMutation"
     | "notesClient"
@@ -59,6 +62,7 @@ export function createOfficialRuntimeFactory(
     | "labelOf"
     | "prepare"
     | "persistLayout"
+    | "pluginWindowLayouts"
     | "pendingNotesMigration"
     | "notesActive"
     | "notesRendererRoot"
@@ -93,6 +97,7 @@ export function createOfficialRuntimeFactory(
     | "exiting"
     | "requestLauncher"
     | "windowDesktop"
+    | "pluginWindowAdapters"
   >,
 ): NonNullable<DesktopPluginHostOptions["createOfficialRuntime"]> {
   return async (installation, metadata, scope, backend, startupCheckOnly = false) => {
@@ -152,19 +157,25 @@ export function createOfficialRuntimeFactory(
       return createNotesRuntime({
         scope,
         backend,
-        openManager: () => {
-          if (ctx.launcherPresentationGuard()()) ctx.showMain();
+        openManager: async () => {
+          if (
+            ctx.launcherPresentationGuard()() &&
+            !(await routePluginWindow(id, { windowId: "main", parameterVersion: 1 }))
+          )
+            ctx.showMain();
         },
         newNote: async (activation) => {
           if (activation.context?.kind === "text") {
-            const note = await ctx.enqueueMutation(() =>
-              ctx.notesClient.save({
-                title: "",
-                content: activation.context!.kind === "text" ? activation.context!.text : "",
-                category: "",
-              }),
+            const note = await windowOpenContext.exit(() =>
+              ctx.enqueueMutation(() =>
+                ctx.notesClient.save({
+                  title: "",
+                  content: activation.context!.kind === "text" ? activation.context!.text : "",
+                  category: "",
+                }),
+              ),
             );
-            ctx.changed();
+            windowOpenContext.exit(() => ctx.changed());
             if (ctx.launcherPresentationGuard()()) await ctx.openNote(note.id);
           } else if (activation.context?.kind === "image") {
             const image = ctx.pluginImages.get(activation.context.resource.id);
@@ -172,10 +183,10 @@ export function createOfficialRuntimeFactory(
             // Snapshot the accepted input before it waits behind a host write or
             // maintenance. Closing the panel may revoke/delete its temporary file.
             const acceptedImage = fs.readFileSync(image.path).toString("base64");
-            const note = await ctx.enqueueMutation(() =>
-              ctx.notesClient.createFromImage(acceptedImage, "png"),
+            const note = await windowOpenContext.exit(() =>
+              ctx.enqueueMutation(() => ctx.notesClient.createFromImage(acceptedImage, "png")),
             );
-            ctx.changed();
+            windowOpenContext.exit(() => ctx.changed());
             if (ctx.launcherPresentationGuard()()) await ctx.openNote(note.id);
           } else if (ctx.launcherPresentationGuard()()) await ctx.openNote();
         },
@@ -287,9 +298,16 @@ export function createOfficialRuntimeFactory(
               layout.view !== "launcher" &&
               layout.visible &&
               !layout.folded &&
+              !ctx.pluginWindowLayouts
+                ?.load()
+                .instances.some(
+                  (value) =>
+                    value.pluginId === "spark233.notes" &&
+                    value.binding.contentId === layout.noteId,
+                ) &&
               // Initial startup restores desktop notes; reopening the manager is
               // reserved for an explicit later enable or restore.
-              (layout.noteId || (ctx.tray && layout.view === "main"))
+              (layout.noteId || (ctx.lifecycle.phase !== "starting" && layout.view === "main"))
             )
               ctx.createWindow(layout);
           for (const [label, win] of ctx.windows)
@@ -323,17 +341,21 @@ export function createOfficialRuntimeFactory(
           signal?.throwIfAborted();
           return result;
         },
-        activate: async (activation) => {
+        activate: async (activation, signal) => {
           const parameters =
             activation.parameters &&
             typeof activation.parameters === "object" &&
             !Array.isArray(activation.parameters)
               ? activation.parameters
               : {};
-          const value = await backend.activate({
-            ...activation,
-            parameters: { ...parameters, locale: ctx.hostConfig.value.locale },
-          });
+          const value = await backend.activate(
+            {
+              ...activation,
+              parameters: { ...parameters, locale: ctx.hostConfig.value.locale },
+            },
+            signal,
+          );
+          signal?.throwIfAborted();
           if (["launch", "reveal", "copy-path"].includes(activation.commandId ?? "")) {
             await performIndexedApplicationAction(value);
             return;
@@ -355,6 +377,8 @@ export function createOfficialRuntimeFactory(
         getTheme: () => ctx.getPluginTheme(),
         subscribeTheme: (listener) => ctx.subscribePluginTheme(listener),
         desktop: ctx.windowDesktop,
+        onWindowAttach: (instanceId, window) =>
+          ctx.pluginWindowAdapters?.attach(instanceId, window) ?? (() => {}),
       });
     }
     if (id === "spark233.translation") {
@@ -372,7 +396,7 @@ export function createOfficialRuntimeFactory(
             },
             signal,
           ),
-        activate: async (activation) => {
+        activate: async (activation, signal) => {
           const window = metadata.spark233.commands.find(
             (command) => command.id === activation.commandId,
           )?.window;
@@ -391,13 +415,17 @@ export function createOfficialRuntimeFactory(
             });
             return;
           }
-          const result = await backend.activate({
-            ...activation,
-            parameters: {
-              ...(activation.parameters as Record<string, never>),
-              hostConfiguration: ctx.translationSettings() as never,
+          const result = await backend.activate(
+            {
+              ...activation,
+              parameters: {
+                ...(activation.parameters as Record<string, never>),
+                hostConfiguration: ctx.translationSettings() as never,
+              },
             },
-          });
+            signal,
+          );
+          signal?.throwIfAborted();
           const parameters =
             activation.parameters &&
             typeof activation.parameters === "object" &&
@@ -457,8 +485,9 @@ export function createOfficialRuntimeFactory(
       });
       return {
         query: (activation, signal) => call(activation, signal, true),
-        activate: async (activation) => {
-          const value = await call(activation);
+        activate: async (activation, signal) => {
+          const value = await call(activation, signal);
+          signal?.throwIfAborted();
           const action = searchHostAction(value);
           if (!action) return value;
           const target = path.win32.resolve(action.path);
@@ -603,8 +632,9 @@ export function createOfficialRuntimeFactory(
         },
       });
       return {
-        activate: async (activation) => {
+        activate: async (activation, signal) => {
           if (activation.commandId === "cancel") return runtime.activate(activation);
+          signal?.throwIfAborted();
           if (!activation.context) {
             const chosen = await dialog.showOpenDialog({
               title: ctx.ui("选择需要取字的图片", "Choose an image for OCR"),
@@ -612,6 +642,7 @@ export function createOfficialRuntimeFactory(
               filters: [{ name: "PNG / JPEG", extensions: ["png", "jpg", "jpeg"] }],
             });
             if (chosen.canceled || !chosen.filePaths[0]) return;
+            signal?.throwIfAborted();
             if (scope.state !== "active") throw new Error("OCR 插件正在停止");
             const filename = chosen.filePaths[0];
             if (fs.statSync(filename).size > 32 * 1024 * 1024) throw new Error("图片超过 32 MiB");
@@ -631,9 +662,9 @@ export function createOfficialRuntimeFactory(
               resource: { id, kind: "image", mimeType: "image/png" },
             };
             ctx.pluginImages.set(id, imported);
-            return runtime.recognize(imported);
+            return runtime.recognize(imported, signal);
           }
-          return runtime.activate(activation);
+          return runtime.activate(activation, signal);
         },
       };
     }
@@ -654,8 +685,17 @@ export function createOfficialRuntimeFactory(
             if (image.owner.instanceId === scope.owner.instanceId) ctx.pluginImages.delete(key);
         },
       });
+      let presentationTask:
+        | { sessionId?: string; finish: (outcome: { resultPresented: boolean }) => Promise<void> }
+        | undefined;
       const runtime = await createCaptureRuntime({
         ...common,
+        onComplete: (outcome) => {
+          if (presentationTask?.sessionId !== outcome.sessionId) return;
+          const task = presentationTask;
+          presentationTask = undefined;
+          void task.finish(outcome).catch((error) => console.error("capture-presentation", error));
+        },
         descriptor: entries.native.capture,
         getLocale: () => ctx.hostConfig.value.locale,
         getOcrStatus: () => ({
@@ -708,7 +748,7 @@ export function createOfficialRuntimeFactory(
           edit: (input) => runtime.editPin(input),
         });
       return {
-        activate: async (activation) => {
+        activate: async (activation, signal) => {
           // Startup restores durable pins without starting a selection or history.
           if (!activation.commandId) {
             ctx.screenshotLayer?.refresh();
@@ -724,23 +764,21 @@ export function createOfficialRuntimeFactory(
             );
             return;
           }
-          if (activation.commandId !== "cancel") {
-            const launcherWindow = ctx.windows.get("launcher");
-            if (launcherWindow) ctx.hideHostWindow(launcherWindow);
-          }
-          let pinned = false;
-          try {
-            const result = await runtime.activate(activation);
-            pinned =
-              !!result &&
-              typeof result === "object" &&
-              !Array.isArray(result) &&
-              result.status === "pinned";
-            return result;
-          } finally {
-            if (!pinned && !ctx.hostShutdown.isQuitting && !ctx.exiting && scope.state === "active")
-              ctx.requestLauncher();
-          }
+          if (activation.commandId === "cancel") return runtime.activate(activation);
+          if (runtime.activeSession) throw new Error("请先完成或取消当前截图");
+          const task = await ctx.beginExclusiveTask(
+            () => runtime.cancel(),
+            () => runtime.activeProcessId,
+          );
+          presentationTask = task;
+          const operation = runtime.activate(activation, signal);
+          presentationTask.sessionId = runtime.activeSession;
+          return operation.finally(() => {
+            if (presentationTask === task) {
+              presentationTask = undefined;
+              void task.finish({ resultPresented: false }).catch(console.error);
+            }
+          });
         },
       };
     }

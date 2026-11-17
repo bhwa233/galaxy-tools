@@ -59,6 +59,9 @@ export class NotesDataClient {
   save(request: SaveNoteRequest, id?: string) {
     return this.call("note.save", { request, ...(id === undefined ? {} : { id }) });
   }
+  create(creationId: string, request: SaveNoteRequest) {
+    return this.call("note.create", { creationId, request });
+  }
   append(id: string, content: string) {
     return this.call("note.append", { id, content });
   }

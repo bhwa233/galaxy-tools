@@ -1,5 +1,7 @@
 # 桌面窗口层（Desktop Layer）实现方案 v3
 
+> 2026-11-10：显示环境与卡片桌面的新产品方案见[插件显示与卡片桌面方案](plugin-display-and-card-desktop.md)，尚未实施。涉及普通桌面／卡片桌面两种环境、添加清单、完整／精简视图、插件按视图声明标题栏显隐、窗口操作、关闭和跨屏布局时，以新方案为准；本文保留底层技术设计及既有验证记录。
+
 > 日期：2026-10-31；续验：2026-11-01。状态：**平台、便签可逆迁移、接口总量流量 HUD 及截图常驻贴图迁移已实现；三个桌面开关按用户决定默认开启**。新配置及旧配置缺失字段补 `true`，已经明确保存的 `false` 保持不变。最终构建、lint、75文件/316测试及截图真实Electron自动集成23项已通过；原生图钉/继续标注/撤销重做/取消恢复代表链、默认值、超额便签兼容恢复和两次新进程贴图恢复也已有证据。此前两轮launcher-preferences rename EPERM失败日志保留，最终通过不等于该Windows间歇写入问题已根治。100/125/150%双屏既有证据、未完成的完整跨窗口拖动及长期验收均按原范围保留。详见[首版记录](evidence/desktop-widget-layer-implementation-2026-10-31.md)、[第二阶段记录](evidence/desktop-widget-layer-expansion-2026-10-31.md)和[截图迁移与默认值记录](evidence/desktop-widget-layer-screenshot-2026-10-31.md)。
 > v3 替代 v2 的进程数、故障隔离、资源放行、输入、持久化回滚和 HUD 决策。不列人日或工期。
 > 关联：[启动器架构](launcher-architecture.md) §13.2、[当前架构](architecture.md)、[胶囊行为](edge-capsules.md)、[插件窗口布局](plugin-window-layout-prd.md)、[原生协议](native-plugin-protocol.md)、[流量技术方案](traffic-monitor-per-process-tech-design.md)、[本次决策证据](evidence/desktop-widget-layer-decision-2026-10-31.md)。

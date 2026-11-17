@@ -101,3 +101,118 @@ it("loads uTools on demand, resets pagination on sort, ignores stale replies and
     else localStorage.setItem(key, saved);
   }
 });
+
+it("keeps base versions visible and refreshes release notes when a development build changes", async () => {
+  const development = {
+    buildId: "dev-20261112-a",
+    builtAt: "2026-11-12T03:04:05.000Z",
+    commit: "1234567890abcdef",
+  };
+  const plugin = {
+    pluginId: "fixture.development",
+    packageName: "@fixture/development",
+    displayName: "开发构建插件",
+    version: "0.1.6",
+    development,
+    enabled: true,
+    status: "idle",
+    source: { kind: "directory" as const, location: "C:/fixtures/development" },
+    capabilities: [],
+    commands: [],
+    dependencies: {},
+    optionalDependencies: {},
+  };
+  let state: PluginManagementState = {
+    plugins: [
+      plugin,
+      {
+        ...plugin,
+        pluginId: "fixture.release",
+        packageName: "@fixture/release",
+        displayName: "正式发布插件",
+        development: undefined,
+      },
+    ],
+    catalog: [
+      {
+        ...plugin,
+        installedVersion: plugin.version,
+        installedDevelopment: development,
+        pending: false,
+        canPrepare: true,
+      },
+      {
+        ...plugin,
+        pluginId: "fixture.release",
+        packageName: "@fixture/release",
+        displayName: "正式发布插件",
+        development: undefined,
+        installedVersion: plugin.version,
+        pending: false,
+        canPrepare: false,
+      },
+    ],
+    pending: [],
+    updates: [],
+    tasks: [],
+    checking: false,
+  };
+  const desktop = installDesktopBridge({
+    plugins_list: () => state,
+    plugins_release_notes: () => ({
+      status: "available",
+      content: `Release notes for ${state.plugins[0]!.development!.buildId}`,
+    }),
+  });
+  const view = await render(<PluginManagementDialog embedded open onOpenChange={() => {}} />);
+  try {
+    const catalog = page.getByRole("listitem", { name: "开发构建插件", exact: true });
+    await expect.element(catalog).toBeVisible();
+    expect(catalog.element().textContent).toContain("0.1.6");
+    expect(catalog.element().textContent).toContain("开发版");
+    expect(
+      page.getByRole("listitem", { name: "正式发布插件", exact: true }).element().textContent,
+    ).not.toContain("开发版");
+    await page.getByRole("button", { name: "已安装", exact: true }).first().click();
+    await expect.element(page.getByText(development.buildId, { exact: true })).toBeVisible();
+    const devCard = page
+      .getByText(development.buildId, { exact: true })
+      .element()
+      .closest('[data-slot="card"]')!;
+    const releaseCard = page
+      .getByText("@fixture/release ·", { exact: true })
+      .element()
+      .closest('[data-slot="card"]')!;
+    expect(devCard.querySelector("time")?.dateTime).toBe(development.builtAt);
+    expect(devCard.querySelector("time")?.textContent).toContain("UTC");
+    expect(devCard.textContent).toContain("1234567890ab");
+    expect(releaseCard.querySelector("time")).toBeNull();
+    expect(releaseCard.textContent).not.toContain("开发版");
+    const notes = devCard.querySelector("summary")!;
+    notes.click();
+    await expect
+      .element(page.getByText(`Release notes for ${development.buildId}`, { exact: true }))
+      .toBeVisible();
+    state = {
+      ...state,
+      plugins: [
+        { ...plugin, development: { ...development, buildId: "dev-20261112-b" } },
+        state.plugins[1]!,
+      ],
+    };
+    desktop.emit("plugins-changed");
+    await expect.element(page.getByText("dev-20261112-b", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByText(`Release notes for ${development.buildId}`, { exact: true }))
+      .not.toBeInTheDocument();
+    notes.click();
+    notes.click();
+    await expect
+      .element(page.getByText("Release notes for dev-20261112-b", { exact: true }))
+      .toBeVisible();
+    expect(devCard.textContent).toContain("0.1.6");
+  } finally {
+    await view.unmount();
+    desktop.restore();
+  }
+});

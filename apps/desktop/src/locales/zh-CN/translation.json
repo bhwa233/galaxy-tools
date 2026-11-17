@@ -1,4 +1,11 @@
 {
+  "shell": {
+    "configTimeout": "读取配置超时，请重试。窗口仍可关闭。",
+    "loading": "正在加载页面…",
+    "loadFailed": "页面加载失败",
+    "close": "关闭窗口",
+    "maintenance": "正在备份或恢复，相关配置暂不可修改。你仍可查看状态、关闭窗口或退出。"
+  },
   "notifications": {
     "dismiss": "关闭通知",
     "copied": "已复制",
@@ -109,6 +116,8 @@
       "externalConflict": "文件已被其他程序修改。是否用当前内容覆盖磁盘版本？"
     },
     "editor": {
+      "editingElsewhere": "此便签正在独立窗口编辑",
+      "locateEditor": "定位编辑窗口",
       "viewMode": "编辑视图",
       "confirmDelete": "确认删除？",
       "contentPlaceholder": "开始写作……",
@@ -189,6 +198,7 @@
     }
   },
   "noteMenu": {
+    "addToCardDesktop": "添加到卡片桌面",
     "delete": "删除便签",
     "export": "导出 Markdown",
     "moveToCategory": "移动到分类…",
@@ -767,8 +777,18 @@
       "prepare": "准备安装",
       "preparing": "正在准备官方离线插件",
       "installed": "已安装",
+      "currentVersionLabel": "当前安装：",
       "currentVersion": "当前安装：{{version}}"
     },
+    "development": {
+      "label": "开发版",
+      "details": "开发构建信息",
+      "buildId": "构建标识",
+      "builtAt": "构建时间",
+      "commit": "提交"
+    },
+    "currentVersionLabel": "当前版本：",
+    "candidateVersionLabel": "候选版本：",
     "updateSource": "自动更新来源",
     "status": {
       "error": "需要处理",
@@ -1084,6 +1104,8 @@
     "backGeneral": "返回常规设置"
   },
   "desktopSettings": {
+    "topTriggerEnabled": "桌面顶部入口",
+    "topTriggerDescription": "点击普通桌面顶部的短横线打开卡片桌面。关闭后仍可使用快捷键和托盘入口。",
     "enabled": "桌面插件层",
     "enabledDescription": "关闭后保留卡片和布局。",
     "webEnabled": "网页卡片",

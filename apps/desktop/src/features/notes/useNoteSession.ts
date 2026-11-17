@@ -99,6 +99,9 @@ export function useNoteSession({
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteExiting, setDeleteExiting] = useState(false);
   const noteWindowStates = useNoteWindowStates();
+  const noteWindowStatesRef = useRef(noteWindowStates);
+  noteWindowStatesRef.current = noteWindowStates;
+  const editingElsewhere = !!selectedId && !!noteWindowStates[selectedId]?.editingElsewhere;
   const pinnedIds = useMemo(
     () =>
       new Set(
@@ -168,6 +171,8 @@ export function useNoteSession({
   const contentValueRef = useRef(content);
   contentValueRef.current = content;
   const setDraftContent = useCallback((next: string) => {
+    const id = selectedIdRef.current;
+    if (id && noteWindowStatesRef.current[id]?.editingElsewhere) return;
     contentValueRef.current = next;
     setContent(next);
   }, []);
@@ -366,6 +371,8 @@ export function useNoteSession({
       if (!force && !isUnsaved(saveStateRef.current)) return true;
       const id = selectedIdRef.current;
       if (!id) return false;
+      if (noteWindowStatesRef.current[id]?.editingElsewhere)
+        return !isUnsaved(saveStateRef.current);
 
       // 在保存瞬间对当前便签做快照；之后用户切换便签不影响本次写入的内容，
       // 保存完成后也只在"仍停留在这张便签"时才更新保存状态
@@ -686,7 +693,12 @@ export function useNoteSession({
         })();
       }
 
-      if (imagePaths.length > 0 && selectedIdRef.current && !isExternalRef.current) {
+      if (
+        imagePaths.length > 0 &&
+        selectedIdRef.current &&
+        !isExternalRef.current &&
+        !noteWindowStatesRef.current[selectedIdRef.current]?.editingElsewhere
+      ) {
         const noteId = selectedIdRef.current;
         void (async () => {
           const textarea = contentRef.current;
@@ -694,7 +706,11 @@ export function useNoteSession({
           try {
             const rels = await Promise.all(imagePaths.map((p) => saveImageFromPath(noteId, p)));
             const markdown = rels.map((rel) => `![](${rel})`).join("\n");
-            if (selectedIdRef.current !== noteId) return;
+            if (
+              selectedIdRef.current !== noteId ||
+              noteWindowStatesRef.current[noteId]?.editingElsewhere
+            )
+              return;
             insertTextAtCursor(textarea, setDraftContent, markdown);
             saveStateRef.current = "dirty";
             setSaveState("dirty");
@@ -1067,12 +1083,15 @@ export function useNoteSession({
 
   const markDirty = useCallback(() => {
     if (!selectedIdRef.current) return;
+    if (noteWindowStatesRef.current[selectedIdRef.current]?.editingElsewhere) return;
     saveStateRef.current = "dirty";
     setSaveState("dirty");
   }, []);
 
   const handlePreviewContentChange = useCallback(
     (nextContent: string) => {
+      const id = selectedIdRef.current;
+      if (id && noteWindowStatesRef.current[id]?.editingElsewhere) return;
       if (contentValueRef.current !== deferredContent) return;
       contentValueRef.current = nextContent;
       setContent(nextContent);
@@ -1103,14 +1122,15 @@ export function useNoteSession({
     setContent: setDraftContent,
     markDirty,
     onEnsureNoteSaved: ensureNoteSaved,
-    disabled: isExternal,
+    disabled: isExternal || editingElsewhere,
     autoCompress: settingsConfig?.imageAutoCompress ?? true,
     onError: showToast,
     t,
   });
 
   const handleCleanUnusedImages = useCallback(async () => {
-    if (!selectedId || isExternal) return;
+    if (!selectedId || isExternal || noteWindowStatesRef.current[selectedId]?.editingElsewhere)
+      return;
     try {
       const removed = await cleanUnusedImages(selectedId, content);
       if (removed.length > 0) {
@@ -1130,7 +1150,7 @@ export function useNoteSession({
   }, [selectedId, isExternal, content, t]);
 
   const handleUndo = useCallback(() => {
-    if (!selectedId) return;
+    if (!selectedId || noteWindowStatesRef.current[selectedId]?.editingElsewhere) return;
     const textarea = contentRef.current;
     if (runEditorCommand(textarea, "undo")) {
       setDraftContent(textarea?.value ?? content);
@@ -1139,7 +1159,7 @@ export function useNoteSession({
   }, [selectedId, contentRef, setDraftContent, content, markDirty]);
 
   const handleRedo = useCallback(() => {
-    if (!selectedId) return;
+    if (!selectedId || noteWindowStatesRef.current[selectedId]?.editingElsewhere) return;
     const textarea = contentRef.current;
     if (runEditorCommand(textarea, "redo")) {
       setDraftContent(textarea?.value ?? content);

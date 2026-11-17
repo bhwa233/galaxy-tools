@@ -1,6 +1,6 @@
 {
   "name": "@spark233/plugin-notes",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "license": "MIT",
   "files": [
     "legal/**",
@@ -32,8 +32,8 @@
     "schemaVersion": 1,
     "id": "spark233.notes",
     "displayName": "便签",
-    "api": "^1.0.0",
-    "host": ">=0.0.1 <1",
+    "api": "^1.8.0",
+    "host": ">=0.1.7 <1",
     "platforms": [
       "win32"
     ],
@@ -147,6 +147,11 @@
         "launcher": {
           "role": "keyword-only"
         }
+      },
+      {
+        "id": "window-create",
+        "title": "Create note window",
+        "internal": true
       }
     ],
     "modes": [
@@ -248,7 +253,12 @@
           "maximizable": true,
           "taskbar": true,
           "reuse": "singleton",
-          "presentation": "standard"
+          "presentation": "standard",
+          "cardDesktop": true,
+          "chrome": "host",
+          "restore": {
+            "parameterVersion": 1
+          }
         },
         "notepad": {
           "entry": "renderer/index.html",
@@ -270,7 +280,15 @@
           "maximizable": true,
           "taskbar": true,
           "reuse": "document",
-          "presentation": "standard"
+          "presentation": "standard",
+          "cardDesktop": true,
+          "chrome": "none",
+          "restore": {
+            "parameterVersion": 1
+          },
+          "create": {
+            "commandId": "window-create"
+          }
         },
         "tile": {
           "entry": "renderer/index.html",
@@ -292,7 +310,15 @@
           "maximizable": true,
           "taskbar": true,
           "reuse": "document",
-          "presentation": "standard"
+          "presentation": "standard",
+          "cardDesktop": true,
+          "chrome": "none",
+          "restore": {
+            "parameterVersion": 1
+          },
+          "create": {
+            "commandId": "window-create"
+          }
         }
       }
     },

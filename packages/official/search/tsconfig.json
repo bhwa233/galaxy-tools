@@ -1,5 +1,9 @@
 {
   "extends": "../../../apps/desktop/electron/tsconfig.json",
-  "compilerOptions": { "noEmit": true, "types": ["node", "electron"], "rootDir": "../../.." },
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "../../../apps/desktop/node_modules/electron"],
+    "rootDir": "../../.."
+  },
   "include": ["backend.ts", "search-runtime.ts", "everything-instance.ts", "everything-ipc.ts"]
 }

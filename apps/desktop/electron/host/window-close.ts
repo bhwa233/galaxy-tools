@@ -1,8 +1,8 @@
 import { BrowserWindow } from "electron";
 import { randomUUID } from "node:crypto";
-import { AppError } from "../persistence.js";
 import type { RuntimeContext } from "../runtime.js";
-import { presentationCount } from "./presentation-epoch.js";
+import { unifiedWindowControl } from "./plugin-window-adapters.js";
+import { supersedePresentation } from "./presentation-epoch.js";
 
 /** window-close owns this domain; shared state remains in the composition root. */
 export function createWindowClose(
@@ -73,6 +73,9 @@ export function createWindowClose(
   }
 
   function hideAndRelease(win: BrowserWindow): Promise<void> {
+    supersedePresentation();
+    const control = unifiedWindowControl(win);
+    if (control) return control.close();
     return releaseWindow(win, false);
   }
 
@@ -81,33 +84,35 @@ export function createWindowClose(
   }
 
   function releaseWindow(win: BrowserWindow, fold: boolean): Promise<void> {
-    if (process.env.SPARK233_SMOKE === "1")
-      console.info(
-        "smoke-release",
-        JSON.stringify({ at: Date.now(), windowId: win.id, fold, stack: new Error().stack }),
-      );
     const existing = ctx.releasing.get(win.id);
     if (existing) return existing;
     const operation = (async () => {
-      // A save acknowledgement may take seconds. If the user re-opens the same
-      // window while we wait, the stale close must not hide it or flip layout.
-      const presented = presentationCount(win);
-      if (!(await prepare(win)))
-        throw new AppError("saveFailed", "保存未完成，已保留窗口，请先保存再收起");
       const layout = ctx.layouts.get(ctx.labelOf(win));
       if (!layout || win.isDestroyed()) return;
-      if (presentationCount(win) !== presented) return;
-      ctx.remember(win);
-      if (fold && layout.view !== "main" && layout.noteId) await ctx.capsules.fold(layout);
+      // User close never waits for a renderer save acknowledgement. Autosave
+      // owns persistence; the explicit preparation path remains for backups.
+      try {
+        ctx.remember(win);
+      } catch (error) {
+        console.error("window-close-layout", error);
+      }
+      if (fold && unifiedWindowControl(win)?.state().environment === "card-desktop") {
+        // Capsule folding is an ordinary-desktop presentation. Keep the live
+        // editor in this workspace and collapse its containing desktop instead.
+        await unifiedWindowControl(win)!.collapse();
+        return;
+      }
+      if (fold && layout.view !== "main" && layout.noteId)
+        void ctx.capsules.fold(layout).catch((error) => console.error("window-close-fold", error));
       else {
         layout.visible = false;
         layout.folded = false;
-        if (layout.hostPage !== "settings") await ctx.persistLayout();
+        if (layout.hostPage !== "settings")
+          void ctx.persistLayout().catch((error) => console.error("window-close-layout", error));
       }
       ctx.hideHostWindow(win);
       if (layout.noteId) ctx.emit("tile-window-closed", layout.noteId);
-      // The search panel keeps its renderer warm; business workspaces still
-      // release only after the save acknowledgement above. The most recently
+      // The search panel keeps its renderer warm. The most recently
       // closed workspace keeps its renderer and plugin backend alive so that
       // re-opening it does not pay a full reload.
       if (layout.label !== "launcher") {

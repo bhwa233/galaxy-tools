@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke, listen, getCurrentWindow } from "../../platform/desktop";
 import type { PluginWindowActivation, PluginWindowInfo } from "../../../shared/plugin-windows";
 import { PluginWindowContext } from "./PluginWindowContext";
-import { prepareHostWindow } from "./hostPreparation";
 import { DesktopWindow } from "./DesktopWindow";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
@@ -71,7 +70,6 @@ export function PluginWindow({
   }, [retry]);
   const onClose = async () => {
     try {
-      await prepareHostWindow();
       await getCurrentWindow().close();
     } catch (value) {
       setError(getErrorMessage(value));

@@ -12,5 +12,7 @@ export interface PluginWindowInfo {
   icon?: string;
   presentation: "standard" | "compact";
   maximizable?: boolean;
+  chrome?: "host" | "none";
+  minimizable?: boolean;
   commands: string[];
 }
